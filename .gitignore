@@ -1,0 +1,10 @@
+poc/build/
+build/
+%SystemDrive%/
+__pycache__/
+dist/
+
+# logo sources that build_logo.py can recreate / re-download (see art/logo/CREDITS.md)
+art/logo/assets/*.hdr
+art/logo/*.blend
+art/logo/*.blend1

@@ -1,0 +1,205 @@
+/* =====================================================================
+   PZ2QoL Kin in Compare Mates, Genealogy and Animal Storage
+   (kinmates.js, kinstorage.js). Colours come from pz2qol_kin.css.
+   Gameface: every element sets display:flex explicitly.
+   ===================================================================== */
+
+.PZ2QoL_kmHost, .PZ2QoL_kmHost *,
+.PZ2QoL_kmOffspringHost, .PZ2QoL_kmOffspringHost *,
+.PZ2QoL_kmSort, .PZ2QoL_kmSort *,
+.PZ2QoL_kmGenTags, .PZ2QoL_kmGenTags *,
+.PZ2QoL_ksWarn, .PZ2QoL_ksWarn * {
+  display: flex;
+  flex-direction: row;
+}
+
+/* ------------------------------------------ Compare Mates: candidate rows */
+
+/* on the row root, level with the "♀ Female" line, after its label (the
+   name column clips its own overflow, so the badge cannot live inside it) */
+.AnimalListButton_root > .PZ2QoL_kmHost,
+.PZ2QoL_kmHost {
+  position: absolute;
+  left: 10.6rem;
+  bottom: 0.45rem;
+  z-index: 4;
+  align-items: center;
+  margin-left: 0;
+}
+.PZ2QoL_kin.PZ2QoL_kmRel {
+  height: 1.25rem;
+  font-size: 0.72rem;
+  font-style: normal;
+}
+
+/* -------------------------------------------- Compare Mates: offspring box */
+
+/* zero-height host at the end of the box; the line hangs below it */
+.PZ2QoL_kmOffspringHost {
+  position: relative;
+  height: 0;
+  flex-shrink: 0;
+  overflow: visible;
+}
+.PZ2QoL_kmOffspring {
+  position: absolute;
+  top: 0.55rem;
+  left: 0;
+  right: 0;
+  z-index: 3;
+  align-items: center;
+  padding: 0.4rem 0.6rem 0.45rem 0.45rem;
+  border-radius: 0.6rem;
+  border-left: 0.25rem solid var(--kin-ok);
+  background-color: #FFF9EE;
+  box-shadow: 0 0.08rem 0.35rem rgba(60, 45, 30, 0.2);
+  color: var(--kin-ok);
+  cursor: pointer;
+}
+.PZ2QoL_kmOffspring .PZ2QoL_kinIcon {
+  width: 1.2rem;
+  height: 1.2rem;
+  margin-right: 0.5rem;
+  filter: var(--brown-filter);
+  opacity: 0.85;
+}
+.PZ2QoL_kmTexts {
+  flex-direction: column;
+  flex: 1;
+  min-width: 0;
+}
+.PZ2QoL_kmTitle {
+  font-size: 0.86rem;
+  font-weight: bold;
+  line-height: 1.1rem;
+  white-space: normal;
+}
+.PZ2QoL_kmSub {
+  margin-top: 0.1rem;
+  font-size: 0.74rem;
+  line-height: 1rem;
+  color: rgba(114, 91, 74, 0.8);
+  white-space: normal;
+}
+.PZ2QoL_kmOffspring.sev_risk { color: var(--kin-risk); border-left-color: var(--kin-risk); background-color: #FBEDE6; }
+.PZ2QoL_kmOffspring.sev_kin { color: #9A5B12; border-left-color: var(--kin-kin); background-color: #FBF0DF; }
+.PZ2QoL_kmOffspring.sev_distant { color: #725B4A; border-left-color: rgba(114, 91, 74, 0.35); }
+.PZ2QoL_kmOffspring.sev_none { color: var(--kin-ok); border-left-color: var(--kin-ok); }
+
+/* ------------------------------------------ Compare Mates: sort toggle */
+
+.PZ2QoL_kmSort {
+  align-self: flex-end;
+  align-items: center;
+  flex-shrink: 0;
+  height: 1.6rem;
+  margin: 0 0.3rem 0.35rem 0;
+  padding: 0 0.35rem 0 0.4rem;
+  border-radius: 0.8rem;
+  background-color: rgba(114, 91, 74, 0.1);
+  color: #725B4A;
+  font-size: 0.78rem;
+  font-weight: bold;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background-color 0.15s ease-out;
+}
+.PZ2QoL_kmSort:hover { background-color: rgba(114, 91, 74, 0.18); }
+.PZ2QoL_kmSort .PZ2QoL_kinIcon { margin-right: 0.3rem; filter: var(--brown-filter); opacity: 0.8; }
+.PZ2QoL_kmSwitch {
+  align-items: center;
+  width: 1.7rem;
+  height: 0.95rem;
+  margin-left: 0.45rem;
+  padding: 0.1rem;
+  border-radius: 0.5rem;
+  background-color: rgba(114, 91, 74, 0.3);
+  transition: background-color 0.15s ease-out;
+}
+.PZ2QoL_kmKnob {
+  width: 0.75rem;
+  height: 0.75rem;
+  border-radius: 0.4rem;
+  background-color: #FFFFFF;
+  transition: transform 0.15s ease-out;
+}
+.PZ2QoL_kmSort.on .PZ2QoL_kmSwitch { background-color: var(--kin-ok); }
+.PZ2QoL_kmSort.on .PZ2QoL_kmKnob { transform: translateX(0.75rem); }
+
+/* ------------------------------------------------- Genealogy rows */
+
+/* first in the row's right-hand icons */
+.PZ2QoL_kmGenTags {
+  order: -1;
+  align-items: center;
+  flex-shrink: 1;
+  min-width: 0;
+}
+.PZ2QoL_kmPlace {
+  flex-shrink: 1;
+  min-width: 0;
+  max-width: 9.5rem;
+  height: 1.3rem;
+  align-items: center;
+  padding: 0 0.5rem;
+  border-radius: 0.65rem;
+  background-color: rgba(89, 105, 67, 0.16);
+  color: #4D5C38;
+  font-size: 0.74rem;
+  font-weight: bold;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.PZ2QoL_kmPlace.out {
+  background-color: rgba(114, 91, 74, 0.1);
+  color: rgba(114, 91, 74, 0.7);
+  font-style: italic;
+  font-weight: normal;
+}
+.PZ2QoL_kmGenTags .PZ2QoL_kin { margin-left: 0.3rem; }
+
+/* summary under the focus animal's header */
+.PZ2QoL_kinLine.PZ2QoL_kmGenLine {
+  align-self: stretch;
+  flex-shrink: 0;
+  height: auto;
+  min-height: 1.6rem;
+  padding: 0.15rem 0.6rem 0.15rem 0.4rem;
+  white-space: normal;
+}
+
+/* ------------------------------------------------- Animal Storage */
+
+.PZ2QoL_kinHost.marketRow.PZ2QoL_ksHost { top: -0.45rem; right: 3.4rem; }
+
+/* the toolbar's "Kin" chip before the storage lineage has arrived */
+.PZ2QoL_bar.storage .PZ2QoL_chip.disabled { opacity: 0.4; cursor: default; }
+
+/* warning above Send to Zoo in the storage info panel */
+.PZ2QoL_ksWarn {
+  flex-shrink: 0;
+  align-items: center;
+  margin: 0.15rem 0 0.4rem 0;
+  padding: 0.45rem 0.6rem 0.5rem 0.45rem;
+  border-radius: 0.6rem;
+  border-left: 0.25rem solid var(--kin-kin);
+  background-color: #FBF0DF;
+  color: #9A5B12;
+  cursor: pointer;
+}
+.PZ2QoL_ksWarn.sev_risk { border-left-color: var(--kin-risk); background-color: #FBEDE6; color: var(--kin-risk); }
+.PZ2QoL_ksWarn.sev_future { border-left-color: var(--kin-future); background-color: #F8F1DC; color: #7E6914; }
+.PZ2QoL_ksWarn .PZ2QoL_kinIcon {
+  width: 1.2rem;
+  height: 1.2rem;
+  margin-right: 0.5rem;
+  filter: var(--brown-filter);
+  opacity: 0.85;
+}
+.PZ2QoL_ksWarnTitle {
+  font-size: 0.86rem;
+  font-weight: bold;
+  line-height: 1.12rem;
+  white-space: normal;
+}

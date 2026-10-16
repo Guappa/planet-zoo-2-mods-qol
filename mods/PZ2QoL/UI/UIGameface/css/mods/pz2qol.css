@@ -1,0 +1,685 @@
+/* =====================================================================
+   PZ2QoL design system ("field kit")
+   Matches Planet Zoo 2's own look: warm cream cards, brown ink, olive and
+   pink accents, the game's StandardFont and icons. Gameface notes: every
+   element is display:flex/row by default, so direction is always explicit;
+   no CSS grid, no backdrop-filter, no conic-gradient.
+   ===================================================================== */
+
+.PZ2QoL {
+  --qol-ink: #725B4A;
+  --qol-ink-soft: rgba(114, 91, 74, 0.72);
+  --qol-ink-faint: rgba(114, 91, 74, 0.45);
+  --qol-line: rgba(114, 91, 74, 0.14);
+  --qol-card: #FFF9EE;
+  --qol-card-2: #F6ECDA;
+  --qol-chip: rgba(114, 91, 74, 0.08);
+  --qol-chip-hover: rgba(114, 91, 74, 0.15);
+  --qol-olive: #596943;
+  --qol-land: #899751;
+  --qol-pink: #E77C98;
+  --qol-gold: #E29741;
+  --qol-red: #C9524E;
+  --qol-amber: #D9932E;
+  --qol-teal: #4F8A86;
+  --qol-male: #666584;
+  --qol-female: #C27B84;
+  --qol-great: #4E8B4F;
+  --qol-good: #4C7A9E;
+  --qol-fair: #C9932E;
+  --qol-poor: #BF5A50;
+  --qol-shadow: 0 0.35rem 1.1rem rgba(60, 45, 30, 0.22), 0 0.05rem 0.2rem rgba(60, 45, 30, 0.18);
+  --qol-radius: 0.9rem;
+}
+
+/* ---------------------------------------------------------------- base */
+
+/* Gameface does NOT default elements to flex (the game's CSS sets
+   display:flex explicitly everywhere). Every mod element must be a flex
+   container, or children stack like blocks. Listed first so the specific
+   display:none / display:flex rules further down win. */
+.PZ2QoL_card, .PZ2QoL_card *,
+.PZ2QoL_badge, .PZ2QoL_badge *,
+.PZ2QoL_errorBanner, .PZ2QoL_errorBanner *,
+.PZ2QoL_dim {
+  display: flex;
+  flex-direction: row;
+}
+
+
+.PZ2QoL_flex1 { flex: 1; }
+.PZ2QoL_icon {
+  flex-shrink: 0;
+  width: 1.2rem;
+  height: 1.2rem;
+  background-repeat: no-repeat;
+  background-size: contain;
+  background-position: center;
+}
+.PZ2QoL_icon.xs { width: 0.85rem; height: 0.85rem; }
+.PZ2QoL_icon.sm { width: 1rem; height: 1rem; }
+.PZ2QoL_icon.md { width: 1.6rem; height: 1.6rem; }
+.PZ2QoL_icon.lg { width: 1.9rem; height: 1.9rem; }
+.PZ2QoL_icon.tint_brown { filter: var(--brown-filter); }
+.PZ2QoL_icon.tint_white { filter: var(--white-filter); }
+
+.PZ2QoL_card {
+  position: fixed;
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  padding: 0.55rem 0.75rem;
+  border-radius: var(--qol-radius);
+  background-color: var(--qol-card);
+  border: 0.08rem solid var(--qol-line);
+  box-shadow: var(--qol-shadow);
+  color: var(--qol-ink);
+  font-size: 0.95rem;
+}
+
+.PZ2QoL_pill {
+  align-items: center;
+  height: 1.55rem;
+  margin-left: 0.4rem;
+  padding: 0 0.7rem;
+  border-radius: 0.8rem;
+  font-size: 0.82rem;
+  font-weight: bold;
+  white-space: nowrap;
+  background-color: var(--qol-chip);
+  color: var(--qol-ink);
+}
+.PZ2QoL_pill.subtle { background-color: var(--qol-card-2); color: var(--qol-ink-soft); font-weight: normal; }
+.PZ2QoL_pill.ok { background-color: rgba(78, 139, 79, 0.16); color: var(--qol-great); }
+.PZ2QoL_pill.warn { background-color: rgba(217, 147, 46, 0.18); color: #9A6414; }
+.PZ2QoL_pill.pulse { animation: PZ2QoL_pulse 0.9s ease-out 1; }
+@keyframes PZ2QoL_pulse {
+  0% { background-color: rgba(137, 151, 81, 0.55); }
+  100% { background-color: var(--qol-card-2); }
+}
+
+/* -------------------------------------------------------------- toolbars */
+
+.PZ2QoL_bar { display: none; flex-direction: row; flex-wrap: nowrap; align-items: center; padding: 0.25rem 0.5rem; }
+/* the filters take the free space and wrap inside it; everything to their
+   right (prices, stats, lister switch) stays on the first line */
+.PZ2QoL_expandOnly { flex: 1; min-width: 0; flex-direction: row; flex-wrap: wrap; align-items: center; }
+.PZ2QoL_bar.collapsed .PZ2QoL_expandOnly { display: none; }
+.PZ2QoL_bar > .PZ2QoL_flex1 { display: none; }
+.PZ2QoL_bar.collapsed > .PZ2QoL_flex1 { display: flex; }
+.PZ2QoL_bar > .PZ2QoL_pill, .PZ2QoL_bar > .PZ2QoL_stats, .PZ2QoL_bar > .PZ2QoL_switch, .PZ2QoL_bar > .PZ2QoL_btn { flex-shrink: 0; }
+.PZ2QoL_collapse {
+  flex-direction: row;
+  align-items: center;
+  height: 1.75rem;
+  margin-right: 0.4rem;
+  padding: 0 0.6rem 0 0.4rem;
+  border-radius: 0.9rem;
+  cursor: pointer;
+  color: var(--qol-ink-soft);
+  transition: background-color 0.15s ease-out;
+}
+.PZ2QoL_collapse:hover { background-color: var(--qol-chip); }
+.PZ2QoL_collapseArrow { width: 1rem; justify-content: center; font-size: 0.9rem; }
+.PZ2QoL_collapseLabel { margin-left: 0.2rem; font-size: 0.72rem; font-weight: bold; letter-spacing: 0.08rem; text-transform: uppercase; }
+.PZ2QoL_barRow { flex-direction: row; flex-wrap: wrap; align-items: center; }
+
+.PZ2QoL_group { flex-direction: row; align-items: center; flex-wrap: wrap; }
+.PZ2QoL_groupLabel {
+  margin: 0 0.5rem 0 0.15rem;
+  font-size: 0.72rem;
+  font-weight: bold;
+  letter-spacing: 0.08rem;
+  text-transform: uppercase;
+  color: var(--qol-ink-faint);
+}
+.PZ2QoL_groupBody { flex-direction: row; flex-wrap: wrap; align-items: center; }
+.PZ2QoL_divider { width: 0.08rem; height: 1.6rem; margin: 0 0.55rem; background-color: var(--qol-line); }
+
+.PZ2QoL_chip {
+  flex-direction: row;
+  align-items: center;
+  height: 1.6rem;
+  margin: 0.1rem 0.15rem;
+  padding: 0 0.65rem 0 0.5rem;
+  border-radius: 0.9rem;
+  background-color: var(--qol-chip);
+  color: var(--qol-ink);
+  font-size: 0.86rem;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background-color 0.15s ease-out, color 0.15s ease-out, transform 0.12s ease-out;
+}
+.PZ2QoL_chip .PZ2QoL_icon { margin-right: 0.35rem; }
+.PZ2QoL_chip:hover { background-color: var(--qol-chip-hover); }
+.PZ2QoL_chip:active { transform: scale(0.96); }
+.PZ2QoL_chip.on { background-color: var(--qol-olive); color: #FFFFFF; }
+.PZ2QoL_chip.on .PZ2QoL_icon { filter: var(--white-filter); }
+.PZ2QoL_chip.ghost { background-color: transparent; color: var(--qol-ink-soft); }
+.PZ2QoL_chip.ghost:hover { background-color: var(--qol-chip); }
+.PZ2QoL_chip.hiddenSoft { opacity: 0.35; }
+.PZ2QoL_chipCount {
+  display: none;
+  align-items: center;
+  justify-content: center;
+  min-width: 1.15rem;
+  height: 1.15rem;
+  margin-left: 0.4rem;
+  padding: 0 0.3rem;
+  border-radius: 0.6rem;
+  background-color: rgba(114, 91, 74, 0.14);
+  font-size: 0.72rem;
+  font-weight: bold;
+}
+.PZ2QoL_chipCount.show { display: flex; }
+.PZ2QoL_chip.on .PZ2QoL_chipCount { background-color: rgba(255, 255, 255, 0.25); }
+
+.PZ2QoL_segmented {
+  flex-direction: row;
+  align-items: center;
+  height: 1.75rem;
+  padding: 0.15rem;
+  border-radius: 0.9rem;
+  background-color: var(--qol-chip);
+}
+.PZ2QoL_segLabel { margin: 0 0.45rem; font-size: 0.72rem; font-weight: bold; letter-spacing: 0.06rem; text-transform: uppercase; color: var(--qol-ink-faint); }
+.PZ2QoL_segItem {
+  align-items: center;
+  height: 1.45rem;
+  padding: 0 0.6rem;
+  border-radius: 0.75rem;
+  font-size: 0.82rem;
+  color: var(--qol-ink-soft);
+  cursor: pointer;
+  transition: background-color 0.15s ease-out, color 0.15s ease-out;
+}
+.PZ2QoL_segItem:hover { color: var(--qol-ink); }
+.PZ2QoL_segItem.on { background-color: var(--qol-card); color: var(--qol-ink); font-weight: bold; box-shadow: 0 0.05rem 0.2rem rgba(60, 45, 30, 0.2); }
+
+.PZ2QoL_switch { flex-direction: row; align-items: center; cursor: pointer; padding: 0.15rem 0.3rem; }
+.PZ2QoL_switchTrack {
+  width: 2.3rem;
+  height: 1.3rem;
+  padding: 0.15rem;
+  border-radius: 0.65rem;
+  background-color: rgba(114, 91, 74, 0.22);
+  transition: background-color 0.2s ease-out;
+}
+.PZ2QoL_switchKnob {
+  width: 1rem;
+  height: 1rem;
+  border-radius: 0.5rem;
+  background-color: #FFFFFF;
+  box-shadow: 0 0.05rem 0.2rem rgba(0, 0, 0, 0.25);
+  transform: translateX(0);
+  transition: transform 0.2s ease-out;
+}
+.PZ2QoL_switch.on .PZ2QoL_switchTrack { background-color: var(--qol-olive); }
+.PZ2QoL_switch.on .PZ2QoL_switchKnob { transform: translateX(1rem); }
+.PZ2QoL_switchLabel { margin-left: 0.5rem; font-size: 0.86rem; font-weight: bold; }
+
+.PZ2QoL_stats { flex-direction: row; align-items: center; }
+.PZ2QoL_stat { flex-direction: row; align-items: baseline; margin-left: 0.8rem; }
+.PZ2QoL_statValue { font-size: 0.95rem; font-weight: bold; margin-right: 0.2rem; }
+.PZ2QoL_statLabel { font-size: 0.74rem; color: var(--qol-ink-soft); }
+.PZ2QoL_stat.accent .PZ2QoL_statValue { color: var(--qol-olive); }
+.PZ2QoL_stat.male .PZ2QoL_statValue { color: var(--qol-male); }
+.PZ2QoL_stat.female .PZ2QoL_statValue { color: var(--qol-female); }
+.PZ2QoL_stat.tier_great .PZ2QoL_statValue { color: var(--qol-great); }
+.PZ2QoL_stat.tier_good .PZ2QoL_statValue { color: var(--qol-good); }
+.PZ2QoL_stat.tier_fair .PZ2QoL_statValue { color: var(--qol-fair); }
+.PZ2QoL_stat.tier_poor .PZ2QoL_statValue { color: var(--qol-poor); }
+
+/* ------------------------------------------------------------- buttons */
+
+.PZ2QoL_btn {
+  flex-direction: row;
+  align-items: center;
+  height: 2rem;
+  margin: 0.2rem 0.4rem 0.2rem 0;
+  padding: 0 0.9rem;
+  border-radius: 1rem;
+  background-color: var(--qol-chip);
+  color: var(--qol-ink);
+  font-size: 0.88rem;
+  font-weight: bold;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background-color 0.15s ease-out, transform 0.12s ease-out;
+}
+.PZ2QoL_btn .PZ2QoL_icon { margin-right: 0.45rem; }
+.PZ2QoL_btn:hover { background-color: var(--qol-chip-hover); }
+.PZ2QoL_btn:active { transform: scale(0.97); }
+.PZ2QoL_btn.positive { background-color: var(--qol-olive); color: #FFFFFF; box-shadow: 0 0.15rem 0.5rem rgba(60, 71, 46, 0.35); }
+.PZ2QoL_btn.positive:hover { background-color: #687B4E; }
+.PZ2QoL_btn.accent { background-color: var(--qol-pink); color: #FFFFFF; }
+.PZ2QoL_btn.accent:hover { background-color: #EE8EA6; }
+.PZ2QoL_btn.negative { background-color: var(--qol-red); color: #FFFFFF; }
+.PZ2QoL_btn.disabled { opacity: 0.4; cursor: default; box-shadow: none; }
+
+/* --------------------------------------------------------- row badges */
+
+.PZ2QoL_badge {
+  position: absolute;
+  top: -0.5rem;
+  left: 6.5rem;
+  z-index: 5;
+  flex-direction: row;
+  align-items: center;
+  height: 1.25rem;
+  padding: 0 0.45rem 0 0.15rem;
+  border-radius: 0.65rem;
+  background-color: var(--qol-card);
+  border: 0.08rem solid var(--qol-line);
+  box-shadow: 0 0.1rem 0.35rem rgba(60, 45, 30, 0.22);
+  color: var(--qol-ink);
+  font-size: 0.74rem;
+  pointer-events: none;
+  white-space: nowrap;
+}
+.PZ2QoL_badgeScore {
+  align-items: center;
+  justify-content: center;
+  min-width: 1.6rem;
+  height: 1rem;
+  margin-right: 0.35rem;
+  padding: 0 0.25rem;
+  border-radius: 0.5rem;
+  font-weight: bold;
+  color: #FFFFFF;
+  background-color: var(--qol-ink-faint);
+}
+.PZ2QoL_badge.tier_great .PZ2QoL_badgeScore { background-color: var(--qol-great); }
+.PZ2QoL_badge.tier_good .PZ2QoL_badgeScore { background-color: var(--qol-good); }
+.PZ2QoL_badge.tier_fair .PZ2QoL_badgeScore { background-color: var(--qol-fair); }
+.PZ2QoL_badge.tier_poor .PZ2QoL_badgeScore { background-color: var(--qol-poor); }
+.PZ2QoL_badgeStat { flex-direction: row; align-items: center; margin-left: 0.4rem; }
+.PZ2QoL_badgeKey { margin-right: 0.15rem; color: var(--qol-ink-faint); font-weight: bold; }
+.PZ2QoL_badgeStat.value { color: var(--qol-teal); font-weight: bold; }
+.PZ2QoL_badgeStar { margin-left: 0.3rem; color: var(--qol-gold); font-size: 0.85rem; }
+.PZ2QoL_badge.best { border-color: var(--qol-gold); box-shadow: 0 0 0 0.12rem rgba(226, 151, 65, 0.45), 0 0.1rem 0.35rem rgba(60, 45, 30, 0.22); }
+
+.PZ2QoL_geneBars { flex-direction: row; align-items: flex-end; height: 0.85rem; margin-right: 0.1rem; }
+.PZ2QoL_geneBar {
+  flex-direction: column;
+  justify-content: flex-end;
+  width: 0.3rem;
+  height: 0.85rem;
+  margin-right: 0.1rem;
+  border-radius: 0.1rem;
+  background-color: rgba(114, 91, 74, 0.12);
+}
+.PZ2QoL_geneBar.off { background-color: rgba(114, 91, 74, 0.05); }
+.PZ2QoL_geneBarFill { width: 100%; border-radius: 0.1rem; background-color: var(--qol-ink-faint); }
+.PZ2QoL_geneBarFill.tier_great { background-color: var(--qol-great); }
+.PZ2QoL_geneBarFill.tier_good { background-color: var(--qol-good); }
+.PZ2QoL_geneBarFill.tier_fair { background-color: var(--qol-fair); }
+.PZ2QoL_geneBarFill.tier_poor { background-color: var(--qol-poor); }
+
+.PZ2QoL_dim {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 4;
+  border-radius: 2.3rem;
+  background-color: rgba(246, 236, 218, 0.62);
+  pointer-events: none;
+}
+
+/* -------------------------------------------------------- market lister */
+
+.PZ2QoL_lister { display: none; padding: 0.6rem 0.8rem 0.7rem 0.8rem; }
+.PZ2QoL_cardHeader { flex-direction: row; align-items: center; margin-bottom: 0.45rem; }
+.PZ2QoL_cardHeader > .PZ2QoL_icon { margin-right: 0.6rem; }
+.PZ2QoL_cardTitles { flex-direction: column; }
+.PZ2QoL_cardTitle { font-size: 1.05rem; font-weight: bold; }
+.PZ2QoL_cardSubtitle { font-size: 0.74rem; color: var(--qol-ink-soft); }
+.PZ2QoL_listerBody { flex-direction: column; }
+.PZ2QoL_cols { flex-direction: row; align-items: stretch; }
+.PZ2QoL_col { flex-direction: column; padding: 0.55rem 0.75rem; border-radius: 0.7rem; background-color: var(--qol-card-2); }
+.PZ2QoL_col + .PZ2QoL_col { margin-left: 0.6rem; }
+.PZ2QoL_col.animal { width: 15rem; flex-shrink: 0; }
+.PZ2QoL_col.market { flex: 1; }
+.PZ2QoL_col.multi { flex: 1; }
+.PZ2QoL_col.rec { width: 19rem; flex-shrink: 0; background-color: #FFFFFF; border: 0.08rem solid var(--qol-line); }
+.PZ2QoL_colLabel {
+  margin-bottom: 0.35rem;
+  font-size: 0.7rem;
+  font-weight: bold;
+  letter-spacing: 0.07rem;
+  text-transform: uppercase;
+  color: var(--qol-ink-faint);
+}
+
+.PZ2QoL_empty { flex-direction: row; align-items: center; padding: 0.4rem 0.2rem; color: var(--qol-ink-soft); }
+.PZ2QoL_empty > .PZ2QoL_icon { margin-right: 0.6rem; opacity: 0.7; }
+.PZ2QoL_emptyNote { padding: 0.6rem 0; font-size: 0.8rem; color: var(--qol-ink-soft); }
+
+.PZ2QoL_sexDot {
+  align-items: center;
+  justify-content: center;
+  min-width: 1.25rem;
+  height: 1.25rem;
+  padding: 0 0.2rem;
+  border-radius: 0.625rem;
+  background-color: var(--qol-ink-faint);
+  color: #FFFFFF;
+  font-size: 0.75rem;
+  font-weight: bold;
+}
+.PZ2QoL_sexDot.male { background-color: var(--qol-male); }
+.PZ2QoL_sexDot.female { background-color: var(--qol-female); }
+.PZ2QoL_sexDot.juvenile { background-color: var(--qol-land); }
+.PZ2QoL_sexDot.history { background-color: var(--qol-teal); }
+
+.PZ2QoL_animalName { flex-direction: row; align-items: center; }
+.PZ2QoL_animalSpecies { margin-left: 0.45rem; font-size: 1rem; font-weight: bold; }
+.PZ2QoL_animalNick { margin: 0.1rem 0 0.45rem 1.7rem; font-size: 0.8rem; font-style: italic; color: var(--qol-ink-soft); }
+.PZ2QoL_geneRow { flex-direction: row; align-items: center; }
+.PZ2QoL_bigScore {
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 3rem;
+  height: 3rem;
+  margin-right: 0.7rem;
+  border-radius: 1.5rem;
+  font-size: 1.35rem;
+  font-weight: bold;
+  color: #FFFFFF;
+  background-color: var(--qol-ink-faint);
+}
+.PZ2QoL_bigScore.tier_great { background-color: var(--qol-great); }
+.PZ2QoL_bigScore.tier_good { background-color: var(--qol-good); }
+.PZ2QoL_bigScore.tier_fair { background-color: var(--qol-fair); }
+.PZ2QoL_bigScore.tier_poor { background-color: var(--qol-poor); }
+.PZ2QoL_geneList { flex: 1; flex-direction: column; }
+.PZ2QoL_geneLine { flex-direction: row; align-items: center; height: 0.95rem; }
+.PZ2QoL_geneTrack { flex: 1; height: 0.4rem; margin: 0 0.4rem; border-radius: 0.2rem; background-color: rgba(114, 91, 74, 0.12); }
+.PZ2QoL_geneFill { height: 100%; border-radius: 0.2rem; background-color: var(--qol-ink-faint); }
+.PZ2QoL_geneFill.tier_great { background-color: var(--qol-great); }
+.PZ2QoL_geneFill.tier_good { background-color: var(--qol-good); }
+.PZ2QoL_geneFill.tier_fair { background-color: var(--qol-fair); }
+.PZ2QoL_geneFill.tier_poor { background-color: var(--qol-poor); }
+.PZ2QoL_geneVal { width: 1.5rem; justify-content: flex-end; font-size: 0.74rem; font-weight: bold; }
+
+.PZ2QoL_tiles { flex-direction: row; }
+.PZ2QoL_statTile {
+  flex: 1;
+  flex-direction: column;
+  margin-right: 0.45rem;
+  padding: 0.4rem 0.55rem;
+  border-radius: 0.6rem;
+  background-color: var(--qol-card);
+  border-left: 0.22rem solid var(--qol-ink-faint);
+}
+.PZ2QoL_statTile:last-child { margin-right: 0; }
+.PZ2QoL_statTile.male { border-left-color: var(--qol-male); }
+.PZ2QoL_statTile.female { border-left-color: var(--qol-female); }
+.PZ2QoL_statTile.juvenile { border-left-color: var(--qol-land); }
+.PZ2QoL_statTile.history { border-left-color: var(--qol-teal); }
+.PZ2QoL_statTile.empty { opacity: 0.55; }
+.PZ2QoL_statTileHead { flex-direction: row; align-items: center; }
+.PZ2QoL_statTileLabel { margin-left: 0.35rem; font-size: 0.72rem; color: var(--qol-ink-soft); }
+.PZ2QoL_statTileValue { margin-top: 0.1rem; font-size: 1.15rem; font-weight: bold; }
+.PZ2QoL_statTileSub { font-size: 0.7rem; color: var(--qol-ink-soft); }
+
+.PZ2QoL_strip { flex-direction: column; margin-top: 0.55rem; }
+.PZ2QoL_stripTrack {
+  position: relative;
+  height: 1.7rem;
+  margin: 1rem 0.4rem 0 0.4rem;
+  border-radius: 0.85rem;
+  background-color: var(--qol-card);
+  border: 0.08rem solid var(--qol-line);
+}
+.PZ2QoL_stripDot {
+  position: absolute;
+  top: 0.55rem;
+  width: 0.55rem;
+  height: 0.55rem;
+  margin-left: -0.275rem;
+  border-radius: 0.275rem;
+  background-color: var(--qol-ink-faint);
+  opacity: 0.45;
+}
+.PZ2QoL_stripDot.male { background-color: var(--qol-male); }
+.PZ2QoL_stripDot.female { background-color: var(--qol-female); }
+.PZ2QoL_stripDot.comp { opacity: 1; }
+.PZ2QoL_stripMark { position: absolute; top: -0.2rem; bottom: -0.2rem; width: 0.18rem; margin-left: -0.09rem; border-radius: 0.09rem; }
+.PZ2QoL_stripMark.game { background-color: var(--qol-ink-faint); }
+.PZ2QoL_stripMark.rec { width: 0.26rem; margin-left: -0.13rem; background-color: var(--qol-olive); }
+.PZ2QoL_stripFlag {
+  position: absolute;
+  top: -1.2rem;
+  left: -1.4rem;
+  width: 3rem;
+  height: 0.95rem;
+  justify-content: center;
+  align-items: center;
+  border-radius: 0.475rem;
+  background-color: var(--qol-olive);
+  color: #FFFFFF;
+  font-size: 0.68rem;
+  font-weight: bold;
+}
+.PZ2QoL_stripAxis { flex-direction: row; justify-content: space-between; margin: 0.25rem 0.4rem 0 0.4rem; font-size: 0.68rem; color: var(--qol-ink-soft); }
+.PZ2QoL_stripLegend { flex-direction: row; }
+.PZ2QoL_legendItem { flex-direction: row; align-items: center; margin: 0 0.35rem; }
+.PZ2QoL_legendItem.male { color: var(--qol-male); font-weight: bold; }
+.PZ2QoL_legendItem.female { color: var(--qol-female); font-weight: bold; }
+.PZ2QoL_legendItem.rec { color: var(--qol-olive); font-weight: bold; }
+
+.PZ2QoL_compRow { flex-direction: row; flex-wrap: wrap; align-items: center; margin-top: 0.5rem; }
+.PZ2QoL_compLabel { margin-right: 0.4rem; font-size: 0.7rem; font-weight: bold; text-transform: uppercase; letter-spacing: 0.06rem; color: var(--qol-ink-faint); }
+.PZ2QoL_compChip {
+  flex-direction: row;
+  align-items: center;
+  height: 1.35rem;
+  margin: 0.1rem 0.25rem 0.1rem 0;
+  padding: 0 0.5rem;
+  border-radius: 0.7rem;
+  background-color: var(--qol-card);
+  border-left: 0.2rem solid var(--qol-ink-faint);
+  font-size: 0.74rem;
+}
+.PZ2QoL_compChip.male { border-left-color: var(--qol-male); }
+.PZ2QoL_compChip.female { border-left-color: var(--qol-female); }
+.PZ2QoL_compGene { margin-right: 0.35rem; color: var(--qol-ink-soft); }
+
+.PZ2QoL_recPrice { flex-direction: row; align-items: center; }
+.PZ2QoL_recPrice > .PZ2QoL_icon { margin-right: 0.45rem; }
+.PZ2QoL_listerRecPrice { font-size: 1.75rem; font-weight: bold; color: var(--qol-ink); }
+.PZ2QoL_recPrice.conf_high .PZ2QoL_listerRecPrice { color: var(--qol-great); }
+.PZ2QoL_recPrice.conf_none .PZ2QoL_listerRecPrice { color: var(--qol-ink-soft); }
+/* multi-select: a smaller total leaves room for Sell + Refresh prices */
+.PZ2QoL_recPrice.total .PZ2QoL_listerRecPrice { font-size: 1.2rem; }
+.PZ2QoL_confMeter { flex-direction: row; align-items: center; margin-top: 0.3rem; }
+.PZ2QoL_confSeg { width: 1.4rem; height: 0.35rem; margin-right: 0.18rem; border-radius: 0.175rem; background-color: rgba(114, 91, 74, 0.14); }
+.PZ2QoL_confSeg.on.lvl1 { background-color: var(--qol-fair); }
+.PZ2QoL_confSeg.on.lvl2 { background-color: var(--qol-good); }
+.PZ2QoL_confSeg.on.lvl3 { background-color: var(--qol-great); }
+.PZ2QoL_confLabel { margin-left: 0.35rem; font-size: 0.74rem; color: var(--qol-ink-soft); }
+.PZ2QoL_recWhy { margin-top: 0.3rem; font-size: 0.72rem; line-height: 1rem; color: var(--qol-ink-soft); }
+.PZ2QoL_actions { flex-direction: row; flex-wrap: wrap; margin-top: 0.55rem; }
+.PZ2QoL_recBase { margin-left: 0.6rem; font-size: 0.74rem; color: var(--qol-ink-faint); }
+.PZ2QoL_peekStatus { margin-top: 0.35rem; font-size: 0.72rem; line-height: 1rem; max-height: 2rem; overflow: hidden; color: var(--qol-ink-soft); }
+.PZ2QoL_peekStatus.done { color: var(--qol-great); }
+.PZ2QoL_peekStatus.failed { color: var(--qol-red); }
+
+/* price offset stepper in the lister header */
+.PZ2QoL_offset { flex-shrink: 0; margin-right: 0.6rem; }
+.PZ2QoL_offset .PZ2QoL_segItem { font-weight: bold; }
+.PZ2QoL_offset .PZ2QoL_segItem.disabled { opacity: 0.35; cursor: default; }
+.PZ2QoL_offsetValue { min-width: 3.2rem; justify-content: center; }
+.PZ2QoL_offsetValue.under { color: #9A6414; }
+.PZ2QoL_offsetValue.over { color: var(--qol-great); }
+
+.PZ2QoL_table { flex-direction: column; }
+.PZ2QoL_tableRow { flex-direction: row; align-items: center; height: 1.7rem; padding: 0 0.4rem; border-radius: 0.5rem; }
+.PZ2QoL_tableRow:nth-child(odd) { background-color: rgba(255, 255, 255, 0.55); }
+.PZ2QoL_tableName { flex: 1; margin-left: 0.5rem; font-size: 0.82rem; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.PZ2QoL_miniScore { align-items: center; justify-content: center; width: 1.8rem; height: 1.1rem; margin: 0 0.6rem; border-radius: 0.55rem; font-size: 0.72rem; font-weight: bold; color: #FFFFFF; background-color: var(--qol-ink-faint); }
+.PZ2QoL_miniScore.tier_great { background-color: var(--qol-great); }
+.PZ2QoL_miniScore.tier_good { background-color: var(--qol-good); }
+.PZ2QoL_miniScore.tier_fair { background-color: var(--qol-fair); }
+.PZ2QoL_miniScore.tier_poor { background-color: var(--qol-poor); }
+.PZ2QoL_tablePrice { width: 5.5rem; justify-content: flex-end; font-size: 0.85rem; font-weight: bold; }
+.PZ2QoL_tablePrice.conf_none { color: var(--qol-ink-faint); }
+
+.PZ2QoL_run { flex-direction: column; margin-top: 0.6rem; padding-top: 0.5rem; border-top: 0.08rem solid var(--qol-line); }
+.PZ2QoL_runHead { flex-direction: row; align-items: center; }
+.PZ2QoL_runTitle { font-size: 0.9rem; font-weight: bold; }
+.PZ2QoL_progress { height: 0.4rem; margin: 0.4rem 0 0.3rem 0; border-radius: 0.2rem; background-color: rgba(114, 91, 74, 0.12); }
+.PZ2QoL_progressFill { height: 100%; border-radius: 0.2rem; background-color: var(--qol-olive); transition: width 0.35s ease-out; }
+.PZ2QoL_run.stopped .PZ2QoL_progressFill { background-color: var(--qol-red); }
+.PZ2QoL_listerStatus { font-size: 0.75rem; line-height: 1rem; color: var(--qol-ink-soft); }
+.PZ2QoL_runSkip { margin-top: 0.15rem; font-size: 0.7rem; line-height: 0.95rem; color: #9A6414; }
+.PZ2QoL_listerMsg { font-size: 0.86rem; }
+
+/* --------------------------------------------------------- error toast */
+
+.PZ2QoL_errorBanner {
+  position: fixed;
+  z-index: 1000;
+  top: 0.9rem;
+  left: 27%;
+  right: 27%;
+  flex-direction: column;
+  border-radius: var(--qol-radius);
+  background-color: var(--qol-card);
+  border: 0.08rem solid var(--qol-line);
+  border-left: 0.35rem solid var(--qol-red);
+  box-shadow: 0 0.5rem 1.6rem rgba(60, 45, 30, 0.32);
+  color: var(--qol-ink);
+  font-size: 0.95rem;
+  animation: PZ2QoL_slideIn 0.28s ease-out 1;
+}
+@keyframes PZ2QoL_slideIn {
+  0% { transform: translateY(-1.5rem); opacity: 0; }
+  100% { transform: translateY(0); opacity: 1; }
+}
+.PZ2QoL_errorBanner.hidden { display: none; }
+.PZ2QoL_errorBanner.sev_warn { border-left-color: var(--qol-amber); }
+.PZ2QoL_errorBanner.sev_info { border-left-color: var(--qol-good); }
+.PZ2QoL_errorHeader { flex-direction: row; align-items: center; padding: 0.55rem 0.7rem; }
+.PZ2QoL_errorIcon {
+  flex-shrink: 0;
+  width: 1.5rem;
+  height: 1.5rem;
+  margin-right: 0.65rem;
+  background-repeat: no-repeat;
+  background-size: contain;
+  background-position: center;
+  filter: var(--brown-filter);
+}
+.PZ2QoL_errorTexts { flex: 1; flex-direction: column; overflow: hidden; }
+.PZ2QoL_errorTitleMain { font-weight: bold; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.PZ2QoL_errorCount { font-size: 0.8rem; color: var(--qol-ink-soft); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.PZ2QoL_errorBubble {
+  display: none;
+  align-items: center;
+  justify-content: center;
+  min-width: 1.3rem;
+  height: 1.3rem;
+  margin-left: 0.5rem;
+  padding: 0 0.35rem;
+  border-radius: 0.65rem;
+  background-color: var(--qol-red);
+  color: #FFFFFF;
+  font-size: 0.72rem;
+  font-weight: bold;
+}
+.PZ2QoL_errorBubble.show { display: flex; }
+.PZ2QoL_errorButton {
+  align-items: center;
+  height: 1.6rem;
+  margin-left: 0.45rem;
+  padding: 0 0.7rem;
+  border-radius: 0.8rem;
+  background-color: var(--qol-chip);
+  font-size: 0.82rem;
+  font-weight: bold;
+  cursor: pointer;
+  transition: background-color 0.15s ease-out;
+}
+.PZ2QoL_errorButton:hover { background-color: var(--qol-chip-hover); }
+.PZ2QoL_errorButton.ghost { background-color: transparent; color: var(--qol-ink-soft); }
+.PZ2QoL_errorDrawer { display: none; flex-direction: column; padding: 0 0.7rem 0.6rem 0.7rem; border-top: 0.08rem solid var(--qol-line); }
+.PZ2QoL_errorBanner.expanded .PZ2QoL_errorDrawer { display: flex; }
+.PZ2QoL_errorDrawerHead { flex-direction: row; align-items: center; padding: 0.4rem 0 0.2rem 0; }
+.PZ2QoL_errorDrawerTitle { font-size: 0.7rem; font-weight: bold; letter-spacing: 0.07rem; text-transform: uppercase; color: var(--qol-ink-faint); }
+.PZ2QoL_errorList { flex-direction: column; max-height: 18rem; overflow-y: auto; }
+.PZ2QoL_errorRow { flex-direction: column; margin-top: 0.3rem; padding: 0.35rem 0.5rem; border-radius: 0.5rem; background-color: var(--qol-card-2); border-left: 0.2rem solid var(--qol-good); }
+.PZ2QoL_errorRow.sev_error { border-left-color: var(--qol-red); }
+.PZ2QoL_errorRow.sev_warn { border-left-color: var(--qol-amber); }
+.PZ2QoL_errorRowHead { flex-direction: row; align-items: center; }
+.PZ2QoL_errorRowHead > .PZ2QoL_icon { margin-right: 0.4rem; }
+.PZ2QoL_errorSource { margin-right: 0.45rem; padding: 0 0.35rem; border-radius: 0.3rem; background-color: var(--qol-chip); font-size: 0.7rem; font-weight: bold; text-transform: uppercase; }
+.PZ2QoL_errorTitle { font-size: 0.85rem; font-weight: bold; }
+.PZ2QoL_errorTime { font-size: 0.72rem; color: var(--qol-ink-faint); }
+.PZ2QoL_errorDetail { margin-top: 0.15rem; font-size: 0.78rem; line-height: 1.05rem; color: var(--qol-ink-soft); }
+
+/* ----------------------------------------------- zoo: habitat picker */
+.PZ2QoL_pickerWrap { position: relative; flex-direction: column; }
+.PZ2QoL_chip.picker { max-width: 16rem; }
+.PZ2QoL_chip.picker .PZ2QoL_chipText { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.PZ2QoL_pickerArrow { margin-left: 0.35rem; font-size: 0.75rem; opacity: 0.7; }
+.PZ2QoL_menu {
+  display: none;
+  position: absolute;
+  top: 2rem;
+  left: 0.15rem;
+  z-index: 20;
+  flex-direction: column;
+  min-width: 15rem;
+  max-height: 22rem;
+  overflow-y: auto;
+  padding: 0.3rem;
+  border-radius: 0.7rem;
+  background-color: var(--qol-card);
+  border: 0.08rem solid var(--qol-line);
+  box-shadow: var(--qol-shadow);
+}
+.PZ2QoL_menu.open { display: flex; }
+.PZ2QoL_menuItem {
+  flex-direction: row;
+  align-items: center;
+  height: 1.7rem;
+  padding: 0 0.6rem;
+  border-radius: 0.5rem;
+  font-size: 0.86rem;
+  cursor: pointer;
+}
+.PZ2QoL_menuItem:hover { background-color: var(--qol-chip); }
+.PZ2QoL_menuItem.on { background-color: var(--qol-olive); color: #FFFFFF; }
+.PZ2QoL_menuName { flex: 1; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.PZ2QoL_menuCount { margin-left: 0.8rem; font-size: 0.75rem; font-weight: bold; opacity: 0.7; }
+.PZ2QoL_menuEmpty { padding: 0.4rem 0.6rem; font-size: 0.8rem; color: var(--qol-ink-soft); }
+.PZ2QoL_bar.zoo .PZ2QoL_segmented { margin: 0.1rem 0.15rem; }
+
+/* ---------------------------------------- lister: large selections */
+.PZ2QoL_groupRow { flex-direction: row; flex-wrap: nowrap; overflow: hidden; margin-bottom: 0.35rem; }
+.PZ2QoL_groupChip {
+  flex-direction: column;
+  margin: 0 0.35rem 0.3rem 0;
+  padding: 0.25rem 0.5rem;
+  border-radius: 0.55rem;
+  background-color: var(--qol-card);
+  border: 0.08rem solid var(--qol-line);
+}
+.PZ2QoL_groupName { font-size: 0.78rem; font-weight: bold; max-width: 9.5rem; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.PZ2QoL_groupMeta { flex-direction: row; align-items: center; font-size: 0.72rem; color: var(--qol-ink-soft); }
+.PZ2QoL_groupMeta > span { margin-right: 0.35rem; }
+.PZ2QoL_groupMeta .male { color: var(--qol-male); font-weight: bold; }
+.PZ2QoL_groupMeta .female { color: var(--qol-female); font-weight: bold; }
+.PZ2QoL_groupMeta .PZ2QoL_miniScore { margin: 0 0.35rem 0 0; width: 1.6rem; height: 0.95rem; font-size: 0.66rem; }
+.PZ2QoL_groupCount { font-weight: bold; color: var(--qol-ink); }
+.PZ2QoL_groupTotal { font-weight: bold; color: var(--qol-ink); }
+.PZ2QoL_groupMore { align-self: center; font-size: 0.74rem; color: var(--qol-ink-soft); }
+.PZ2QoL_tableScroll { flex-direction: column; max-height: 7.2rem; overflow-y: auto; border-radius: 0.5rem; }
+
+.PZ2QoL_listerStatus.clamp { max-height: 2.9rem; overflow: hidden; text-overflow: ellipsis; }
+.PZ2QoL_runSkip { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }

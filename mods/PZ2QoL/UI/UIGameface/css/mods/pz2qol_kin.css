@@ -1,0 +1,327 @@
+/* =====================================================================
+   PZ2QoL Kin: relatedness and inbreeding risk.
+   Same "field kit" look as pz2qol.css. Severity colours:
+     risk    red     the game counts the pair as inbred, both can breed
+     kin     amber   close relatives the game does not warn about
+     future  gold    related, one still juvenile
+     covered grey    related, kept apart by contraception / infertility
+   Gameface: every element sets display:flex explicitly.
+   ===================================================================== */
+
+.PZ2QoL {
+  --kin-risk: #C9433E;
+  --kin-risk-soft: rgba(201, 67, 62, 0.14);
+  --kin-kin: #D9862A;
+  --kin-kin-soft: rgba(217, 134, 42, 0.16);
+  --kin-future: #B99A2A;
+  --kin-future-soft: rgba(185, 154, 42, 0.15);
+  --kin-covered: #8F8578;
+  --kin-covered-soft: rgba(143, 133, 120, 0.15);
+  --kin-ok: #4E8B4F;
+  --kin-ok-soft: rgba(78, 139, 79, 0.14);
+}
+
+.PZ2QoL_kin, .PZ2QoL_kin *,
+.PZ2QoL_kinCard, .PZ2QoL_kinCard *,
+.PZ2QoL_kinLine, .PZ2QoL_kinLine *,
+.PZ2QoL_kinPanel, .PZ2QoL_kinPanel *,
+.PZ2QoL_kinToast, .PZ2QoL_kinToast *,
+.PZ2QoL_kinHost, .PZ2QoL_kinHost * {
+  display: flex;
+  flex-direction: row;
+}
+
+/* ---------------------------------------------------------------- badge */
+
+.PZ2QoL_kin {
+  flex-shrink: 0;
+  align-items: center;
+  height: 1.3rem;
+  padding: 0 0.45rem 0 0.2rem;
+  border-radius: 0.65rem;
+  background-color: var(--kin-covered);
+  color: #FFFFFF;
+  font-size: 0.72rem;
+  font-weight: bold;
+  white-space: nowrap;
+  cursor: pointer;
+  box-shadow: 0 0.08rem 0.3rem rgba(60, 45, 30, 0.25);
+  transition: transform 0.12s ease-out, box-shadow 0.12s ease-out;
+}
+.PZ2QoL_kin:hover { transform: scale(1.06); box-shadow: 0 0.12rem 0.45rem rgba(60, 45, 30, 0.35); }
+.PZ2QoL_kin.compact { padding: 0 0.25rem 0 0.2rem; }
+.PZ2QoL_kin.sev_risk { background-color: var(--kin-risk); }
+.PZ2QoL_kin.sev_kin { background-color: var(--kin-kin); }
+.PZ2QoL_kin.sev_future { background-color: var(--kin-future); }
+.PZ2QoL_kin.sev_covered { background-color: var(--kin-covered); }
+.PZ2QoL_kin.sev_distant { background-color: rgba(114, 91, 74, 0.35); }
+.PZ2QoL_kin.sev_risk.pulse { animation: PZ2QoL_kinPulse 1.6s ease-out 2; }
+@keyframes PZ2QoL_kinPulse {
+  0% { box-shadow: 0 0 0 0 rgba(201, 67, 62, 0.65); }
+  100% { box-shadow: 0 0 0 0.6rem rgba(201, 67, 62, 0); }
+}
+.PZ2QoL_kinIcon {
+  flex-shrink: 0;
+  width: 0.95rem;
+  height: 0.95rem;
+  background-image: url(/img/icons/IconGenetics.svg);
+  background-repeat: no-repeat;
+  background-size: contain;
+  background-position: center;
+  filter: var(--white-filter);
+}
+.PZ2QoL_kinLabel { margin-left: 0.2rem; }
+.PZ2QoL_kinCount {
+  align-items: center;
+  justify-content: center;
+  min-width: 0.95rem;
+  height: 0.95rem;
+  margin-left: 0.25rem;
+  padding: 0 0.2rem;
+  border-radius: 0.5rem;
+  background-color: rgba(255, 255, 255, 0.3);
+  font-size: 0.66rem;
+}
+
+/* badge hosts inside game rows (never on the row root) */
+.PZ2QoL_kinHost {
+  position: absolute;
+  z-index: 6;
+  align-items: center;
+}
+.PZ2QoL_kinHost.zooRow { top: 50%; left: 0.2rem; transform: translateY(-50%); }
+.PZ2QoL_kinHost.marketRow { top: -0.5rem; right: 3.2rem; }
+.PZ2QoL_kinHost.statusItem { position: relative; order: -1; margin-right: 0.35rem; }
+.PZ2QoL_kinHost.inline { position: relative; margin-left: 0.4rem; }
+
+/* ---------------------------------------------------------------- tags */
+
+.PZ2QoL_kinTag {
+  flex-shrink: 0;
+  align-items: center;
+  height: 1.2rem;
+  padding: 0 0.45rem;
+  border-radius: 0.6rem;
+  font-size: 0.68rem;
+  font-weight: bold;
+  letter-spacing: 0.03rem;
+  text-transform: uppercase;
+  white-space: nowrap;
+  color: #FFFFFF;
+  background-color: var(--kin-covered);
+}
+.PZ2QoL_kinTag.sev_risk { background-color: var(--kin-risk); }
+.PZ2QoL_kinTag.sev_kin { background-color: var(--kin-kin); }
+.PZ2QoL_kinTag.sev_future { background-color: var(--kin-future); }
+.PZ2QoL_kinTag.sev_distant { background-color: rgba(114, 91, 74, 0.35); }
+.PZ2QoL_kinTag.sev_none { background-color: var(--kin-ok); }
+
+.PZ2QoL_kinName { font-weight: bold; margin: 0 0.4rem; white-space: nowrap; }
+.PZ2QoL_kinName.male { color: var(--qol-male); }
+.PZ2QoL_kinName.female { color: var(--qol-female); }
+
+/* ----------------------------------------------------------- one line */
+
+.PZ2QoL_kinLine {
+  align-items: center;
+  height: 1.5rem;
+  padding: 0 0.6rem 0 0.35rem;
+  border-radius: 0.75rem;
+  font-size: 0.8rem;
+  font-weight: bold;
+  white-space: nowrap;
+  cursor: pointer;
+  color: var(--kin-ok);
+  background-color: var(--kin-ok-soft);
+}
+.PZ2QoL_kinLine .PZ2QoL_kinIcon { margin-right: 0.35rem; filter: var(--brown-filter); opacity: 0.8; }
+.PZ2QoL_kinLine.sev_risk { color: var(--kin-risk); background-color: var(--kin-risk-soft); }
+.PZ2QoL_kinLine.sev_kin { color: #9A5B12; background-color: var(--kin-kin-soft); }
+.PZ2QoL_kinLine.sev_future { color: #7E6914; background-color: var(--kin-future-soft); }
+.PZ2QoL_kinLine.sev_covered { color: var(--kin-covered); background-color: var(--kin-covered-soft); }
+
+/* ----------------------------------------------------------------- card */
+
+.PZ2QoL_kinCard {
+  position: fixed;
+  z-index: 60;
+  flex-direction: column;
+  width: 25rem;
+  padding: 0.6rem 0.75rem;
+  border-radius: var(--qol-radius);
+  background-color: var(--qol-card);
+  border: 0.08rem solid var(--qol-line);
+  box-shadow: var(--qol-shadow);
+  color: var(--qol-ink);
+  font-size: 0.86rem;
+  pointer-events: none;
+}
+.PZ2QoL_kinCard.pinned { pointer-events: auto; border-color: rgba(114, 91, 74, 0.3); }
+.PZ2QoL_kinCard { max-height: 96vh; overflow: hidden; }
+.PZ2QoL_kinCard.hidden { display: none; }
+.PZ2QoL_kinCardBody { flex-direction: column; }
+.PZ2QoL_kinCard .PZ2QoL_cardTitles, .PZ2QoL_kinToast .PZ2QoL_cardTitles { flex: 1; flex-direction: column; }
+.PZ2QoL_kinCardHead { align-items: center; margin-bottom: 0.45rem; }
+.PZ2QoL_kinCardIcon {
+  flex-shrink: 0;
+  width: 1.7rem;
+  height: 1.7rem;
+  margin-right: 0.55rem;
+  border-radius: 0.85rem;
+  background-color: var(--qol-olive);
+  background-image: url(/img/icons/IconGenetics.svg);
+  background-size: 1.1rem 1.1rem;
+  background-repeat: no-repeat;
+  background-position: center;
+}
+.PZ2QoL_kinOk { align-items: center; padding: 0.35rem 0.1rem; color: var(--kin-ok); font-weight: bold; }
+.PZ2QoL_kinOk .PZ2QoL_icon { margin-right: 0.45rem; }
+.PZ2QoL_kinMore { padding: 0.25rem 0.1rem; font-size: 0.76rem; color: var(--qol-ink-soft); }
+.PZ2QoL_kinCardFoot { align-items: center; justify-content: flex-end; flex-wrap: wrap; margin-top: 0.3rem; }
+.PZ2QoL_kinHint { flex: 1; font-size: 0.72rem; color: var(--qol-ink-faint); }
+
+.PZ2QoL_kinPair {
+  flex-direction: column;
+  margin-top: 0.35rem;
+  padding: 0.4rem 0.5rem;
+  border-radius: 0.6rem;
+  background-color: var(--qol-card-2);
+  border-left: 0.25rem solid var(--kin-covered);
+}
+.PZ2QoL_kinPair.sev_risk { border-left-color: var(--kin-risk); }
+.PZ2QoL_kinPair.sev_kin { border-left-color: var(--kin-kin); }
+.PZ2QoL_kinPair.sev_future { border-left-color: var(--kin-future); }
+.PZ2QoL_kinPairHead { align-items: center; flex-wrap: wrap; }
+.PZ2QoL_kinFacts { font-size: 0.76rem; color: var(--qol-ink-soft); white-space: nowrap; }
+.PZ2QoL_kinWhy { margin-top: 0.25rem; font-size: 0.78rem; line-height: 1.15rem; color: var(--qol-ink); white-space: normal; }
+.PZ2QoL_kinSubhead {
+  margin: 0.35rem 0 0.15rem 0;
+  font-size: 0.66rem;
+  font-weight: bold;
+  letter-spacing: 0.06rem;
+  text-transform: uppercase;
+  color: var(--qol-ink-faint);
+}
+.PZ2QoL_kinOffspring { flex-direction: column; }
+.PZ2QoL_kinGene { align-items: center; height: 1.1rem; }
+.PZ2QoL_kinGene .PZ2QoL_icon { margin-right: 0.3rem; }
+.PZ2QoL_kinGeneLabel { width: 4.6rem; font-size: 0.74rem; color: var(--qol-ink-soft); }
+.PZ2QoL_kinGeneTrack {
+  position: relative;
+  flex: 1;
+  height: 0.45rem;
+  margin: 0 0.5rem;
+  border-radius: 0.25rem;
+  background-color: rgba(114, 91, 74, 0.12);
+}
+.PZ2QoL_kinGeneSpan { position: absolute; top: 0; height: 100%; border-radius: 0.25rem; background-color: rgba(114, 91, 74, 0.28); }
+.PZ2QoL_kinGeneMean {
+  position: absolute;
+  top: -0.15rem;
+  width: 0.4rem;
+  height: 0.75rem;
+  border-radius: 0.2rem;
+  background-color: var(--qol-ink);
+}
+.PZ2QoL_kinGeneMean.tier_great { background-color: var(--qol-great); }
+.PZ2QoL_kinGeneMean.tier_good { background-color: var(--qol-good); }
+.PZ2QoL_kinGeneMean.tier_fair { background-color: var(--qol-fair); }
+.PZ2QoL_kinGeneMean.tier_poor { background-color: var(--qol-poor); }
+.PZ2QoL_kinGeneValue { width: 4.8rem; justify-content: flex-end; font-size: 0.74rem; font-weight: bold; }
+
+.PZ2QoL_kinActions { flex-wrap: wrap; margin-top: 0.35rem; }
+.PZ2QoL_kinAction {
+  align-items: center;
+  height: 1.55rem;
+  margin: 0.15rem 0.35rem 0 0;
+  padding: 0 0.6rem 0 0.45rem;
+  border-radius: 0.8rem;
+  background-color: var(--qol-chip);
+  color: var(--qol-ink);
+  font-size: 0.76rem;
+  font-weight: bold;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background-color 0.15s ease-out, transform 0.12s ease-out;
+}
+.PZ2QoL_kinAction .PZ2QoL_icon { margin-right: 0.3rem; }
+.PZ2QoL_kinAction:hover { background-color: var(--qol-chip-hover); }
+.PZ2QoL_kinAction:active { transform: scale(0.96); }
+.PZ2QoL_kinAction.primary { background-color: var(--qol-olive); color: #FFFFFF; }
+.PZ2QoL_kinAction.primary:hover { background-color: #687B4E; }
+.PZ2QoL_kinAction.danger { background-color: var(--kin-risk); color: #FFFFFF; }
+.PZ2QoL_kinAction.disabled { opacity: 0.4; cursor: default; }
+
+.PZ2QoL_kinPair.compact { padding: 0.25rem 0.45rem; margin-top: 0.25rem; }
+.PZ2QoL_kinDash { margin: 0 -0.15rem; color: var(--qol-ink-faint); }
+.PZ2QoL_kinSlot.empty { display: none; }
+
+/* ------------------------------------------------- zoo management toolbar */
+
+.PZ2QoL_chip.kin.alert { background-color: var(--kin-risk-soft); color: var(--kin-risk); }
+.PZ2QoL_chip.kin.alert .PZ2QoL_chipCount { background-color: var(--kin-risk); color: #FFFFFF; }
+.PZ2QoL_chip.kin.on { background-color: var(--kin-risk); }
+.PZ2QoL_stat.kinRisk .PZ2QoL_statValue { color: var(--kin-risk); }
+.PZ2QoL_stat.kinOk .PZ2QoL_statValue { color: var(--kin-ok); }
+.PZ2QoL_kinHost.inline.zoo { margin-left: 0.35rem; }
+.PZ2QoL_kinHost.inline.habitats { margin-left: 0.45rem; }
+
+/* ---------------------------------------------------------- info panels */
+
+.PZ2QoL_kinLine.habitatPanel { margin-left: 0.6rem; }
+.PZ2QoL_kinLine.overview { align-self: flex-start; margin-top: 0.5rem; }
+
+/* ---------------------------------------------------------------- toasts */
+
+.PZ2QoL_kinToasts {
+  position: fixed;
+  z-index: 55;
+  top: 4.2rem;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  pointer-events: none;
+}
+.PZ2QoL_kinToast {
+  width: 32rem;
+  margin-bottom: 0.6rem;
+  border-radius: var(--qol-radius);
+  background-color: var(--qol-card);
+  border: 0.08rem solid var(--qol-line);
+  box-shadow: var(--qol-shadow);
+  color: var(--qol-ink);
+  overflow: hidden;
+  pointer-events: auto;
+  animation: PZ2QoL_kinToastIn 0.25s ease-out 1;
+  transition: opacity 0.25s ease-out, transform 0.25s ease-out;
+}
+.PZ2QoL_kinToast.leaving { opacity: 0; transform: translateY(-1rem); }
+@keyframes PZ2QoL_kinToastIn {
+  0% { opacity: 0; transform: translateY(-1rem); }
+  100% { opacity: 1; transform: translateY(0); }
+}
+.PZ2QoL_kinToastStripe { flex-shrink: 0; width: 0.4rem; background-color: var(--kin-covered); }
+.PZ2QoL_kinToast.sev_risk .PZ2QoL_kinToastStripe { background-color: var(--kin-risk); }
+.PZ2QoL_kinToast.sev_kin .PZ2QoL_kinToastStripe { background-color: var(--kin-kin); }
+.PZ2QoL_kinToast.sev_future .PZ2QoL_kinToastStripe { background-color: var(--kin-future); }
+.PZ2QoL_kinToastBody { flex: 1; flex-direction: column; padding: 0.55rem 0.7rem 0.6rem 0.65rem; }
+.PZ2QoL_kinToastHead { align-items: center; }
+.PZ2QoL_kinToastHead .PZ2QoL_kinCardIcon { width: 1.4rem; height: 1.4rem; background-size: 0.9rem 0.9rem; }
+.PZ2QoL_kinToast.sev_risk .PZ2QoL_kinCardIcon { background-color: var(--kin-risk); }
+.PZ2QoL_kinToast.sev_kin .PZ2QoL_kinCardIcon { background-color: var(--kin-kin); }
+.PZ2QoL_kinToastTitle { flex: 1; font-size: 0.95rem; font-weight: bold; }
+.PZ2QoL_kinToastClose {
+  align-items: center;
+  justify-content: center;
+  width: 1.4rem;
+  height: 1.4rem;
+  border-radius: 0.7rem;
+  font-size: 0.8rem;
+  color: var(--qol-ink-soft);
+  cursor: pointer;
+}
+.PZ2QoL_kinToastClose:hover { background-color: var(--qol-chip); }
+.PZ2QoL_kinToastText { margin-top: 0.3rem; font-size: 0.84rem; line-height: 1.2rem; white-space: normal; }
+.PZ2QoL_kinToasts.underPopup { display: none; }

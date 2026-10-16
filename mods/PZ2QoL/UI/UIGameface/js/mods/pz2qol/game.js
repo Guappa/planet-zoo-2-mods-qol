@@ -1,0 +1,132 @@
+// Thin layer over the game's UI modules: reading animal rows from the
+// DataStore and sending the game's own UI events.
+import * as DS from '/js/common/core/DataStore.js';
+import { sendEvent } from '/js/common/core/Engine.js';
+import { DataStoreCollection } from '/js/common/data/DataStoreCollection.js';
+
+export const MARKET_LIST = ['hubAnimalsData', 'animalMarketData', 'list'];
+export const STORAGE_LIST = ['hubAnimalsData', 'animalStorageData', 'list'];
+export const HISTORY_LIST = ['hubAnimalsData', 'animalHistoryData', 'list'];
+export const STORAGE_DATA = ['hubAnimalsData', 'animalStorageData'];
+export const STORAGE_ACTIONS = ['hubAnimalsData', 'animalStorageData', 'actions'];
+export const SPECIES_LIST = ['hubAnimalsData', 'species'];
+export const TRADE_LISTING = ['animalTradeListingData'];
+export const MARKET_EVENT = 'AnimalMarket';
+export const STORAGE_EVENT = 'AnimalStorage';
+
+export function contextKey(context) {
+    return Array.isArray(context) ? context.join('/') : String(context);
+}
+
+export const MARKET_LIST_KEY = contextKey(MARKET_LIST);
+export const ZOO_LIST = ['management', 'animals', 'animals', 'list'];
+export const ZOO_LIST_KEY = contextKey(ZOO_LIST);
+export const STORAGE_LIST_KEY = contextKey(STORAGE_LIST);
+
+export function get(context, prop) {
+    try {
+        return DS.getValue(context, prop);
+    }
+    catch (e) {
+        return undefined;
+    }
+}
+
+function gene(context, id) {
+    const v = get(context.concat(['genetics', id]), 'value');
+    return typeof v === 'number' ? v : undefined;
+}
+
+// Builds the plain animal object used by scores.js from a row context.
+export function readAnimal(context) {
+    return {
+        id: get(context, 'id'),
+        species: get(context, 'species'),
+        gender: get(context, 'gender'),
+        maturity: get(context, 'maturity'),
+        isShoal: !!get(context, 'isShoal'),
+        isExhibit: !!get(context, 'isExhibit'),
+        isPregnant: !!get(context, 'isPregnant'),
+        isAlpha: !!get(context, 'isAlpha'),
+        storageTag: get(context, 'storageTag'),
+        price: get(context, 'auctionPrice'),
+        isCC: !!get(context, 'auctionIsConservationCredits'),
+        auctionTimerSeconds: get(context, 'auctionTimerSeconds'),
+        isMoving: !!get(context, 'isMoving'),
+        name: get(context, 'name'),
+        key: childKey(context),
+        genes: {
+            size: gene(context, 'size'),
+            longevity: gene(context, 'longevity'),
+            fertility: gene(context, 'fertility'),
+            immunity: gene(context, 'immunity'),
+        },
+    };
+}
+
+// The list child key (e.g. "animal_12"): what the game's own info panel
+// sends with AddToMarket. Selection events use the row's 'id' property.
+export function childKey(context) {
+    return Array.isArray(context) && context.length ? context[context.length - 1] : undefined;
+}
+
+// Children of a DataStore context, via the game's own collection class.
+const collections = new Map();
+export function childrenOf(context) {
+    const key = contextKey(context);
+    let col = collections.get(key);
+    if (!col) {
+        col = new DataStoreCollection(context);
+        collections.set(key, col);
+    }
+    return col._source.slice();
+}
+
+// A row of the zoo management Animals list. Genes live in the row's
+// genetics tooltip (Size/Longevity/Fertility/Immunity, 0..1; exhibit
+// animals only have Longevity/Fertility). Location is a loc string, e.g.
+// "[STRING_LITERAL:Value=|Savannah Habitat|]" for habitats and exhibits.
+function zooGene(context, id) {
+    const v = get(context.concat(['geneticsTooltip', 'list', id]), 'value');
+    return typeof v === 'number' ? v : undefined;
+}
+
+export function locationName(raw) {
+    if (typeof raw !== 'string') return null;
+    const m = raw.match(/^\[STRING_LITERAL:Value=\|(.*)\|\]$/);
+    return m ? m[1] : raw;
+}
+
+export function readZooAnimal(context) {
+    const genes = {
+        size: zooGene(context, 'Size'),
+        longevity: zooGene(context, 'Longevity'),
+        fertility: zooGene(context, 'Fertility'),
+        immunity: zooGene(context, 'Immunity'),
+    };
+    return {
+        id: get(context, 'id'),
+        key: childKey(context),
+        name: get(context, 'name'),
+        species: get(context, 'species'),
+        gender: get(context, 'gender'),
+        maturity: get(context, 'maturity'),
+        isPregnant: !!get(context, 'isPregnant'),
+        isAlpha: !!get(context, 'isAlpha'),
+        contracepted: !!get(context, 'contracepted'),
+        welfare: get(context, 'welfareProgress'),
+        habitat: locationName(get(context, 'location')),
+        isShoal: false,
+        isExhibit: genes.size === undefined && genes.longevity !== undefined,
+        genes,
+    };
+}
+
+export function sendScreenEvent(screenEventId, suffix, value) {
+    if (value === undefined) {
+        sendEvent(`${screenEventId}_${suffix}`);
+    }
+    else {
+        sendEvent(`${screenEventId}_${suffix}`, value);
+    }
+}
