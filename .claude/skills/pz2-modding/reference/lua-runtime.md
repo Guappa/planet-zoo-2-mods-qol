@@ -104,3 +104,11 @@
   character. **offline**
 - Game Lua has `utf8` and the 5.3 bitwise operators. **guess** (standard 5.3; used with a `pcall`
   fallback).
+- **Park managers bypass the require hook.** `Environment._LoadManagerModule` (GameMain
+  `environment.environment.lua`) loads managers with a `require` copy it took before the mod booted,
+  and `_ConstructPhaseFunctionList` caches each manager's phase methods (`Advance` ...) when the
+  manager is created. A patch registered with `AddModulePatch` therefore never reached
+  `Managers.HeatMapManager` in game. **proven** (2026-10-15: Kin said "no park" in a park). Core
+  now patches `Environment._LoadManagerModule` and applies module patches as each manager loads,
+  before its instance exists (trace `manager_patched_<name>`, `kin_first_tick`).
+

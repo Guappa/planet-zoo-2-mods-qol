@@ -918,5 +918,29 @@ r = lastMoveResult()
 check(r and r[3] == false, "exhibit animals are not moved from here")
 api.world.GetWorldAPIs = fnSavedWorld
 
+-----------------------------------------------------------------------
+-- 12. Park managers load through the Environment's own require copy
+-----------------------------------------------------------------------
+-- The game's Environment module takes `local require = require` before the
+-- mod boots, so managers never pass the require hook; the patches must apply
+-- in _LoadManagerModule, before the manager instance (and its cached phase
+-- functions) exist. In game the Kin frame hook was never installed (2026-10-15).
+local tRawModules = { ["managers.testmanager"] = { Advance = function() return "original" end } }
+local Environment = { _LoadManagerModule = function(self, sName) return tRawModules[string.lower(sName)] end }
+package.loaded["environment.environment"] = nil
+package.preload["environment.environment"] = nil
+package.loaded["environment.environment"] = Environment
+require("Environment.Environment") -- first load through the hooked require applies the Core patch
+local bPatched = false
+Core:AddModulePatch("Managers.TestManager", function(t)
+	bPatched = true
+	local fn = t.Advance
+	t.Advance = function(...) return "patched:" .. fn(...) end
+end)
+check(not bPatched, "manager not patched before it is loaded")
+local oEnv = setmetatable({}, { __index = Environment })
+local tMgr = oEnv:_LoadManagerModule("Managers.TestManager")
+check(bPatched and tMgr.Advance() == "patched:original", "manager patched as the environment loads it")
+
 print(string.format("%d passed, %d failed", nPassed, nFailed))
 os.exit(nFailed == 0 and 0 or 1)

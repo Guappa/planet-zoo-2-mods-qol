@@ -33,3 +33,4 @@ One line per update: date, what changed, why.
 - 2026-10-15: Species board: shared panel kit (kinpanel.js), pointer drag rules (preventDefault, user-select, click suppression), kin_board harness scenario and two harness pitfalls (async waitForFunction, shared kit selectors) (ui-gameface, testing).
 - 2026-10-15: Pitfall: installs over the Y: network share can be incomplete; verify by hash.
 - 2026-10-15: Crash cause: Kin scanned during the intro sequence; per-world APIs crash natively outside a park. Kin now only uses the running park's heat map manager world.
+- 2026-10-15: Park managers load through the Environment's own require copy; patches now applied in Environment._LoadManagerModule. tools/install_pz2qol.py installs with sha1 verification.

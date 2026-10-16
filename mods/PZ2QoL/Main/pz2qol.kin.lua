@@ -751,6 +751,10 @@ end
 
 -- Called every frame in a park (HeatMapManager.Advance).
 Kin.Tick = function(self)
+	if self.nLastTick == nil then
+		local Core = global.package.loaded["pz2qol.core"]
+		if Core then Core:Checkpoint("kin_first_tick") end
+	end
 	self.nLastTick = now()
 	if self.tJob == nil then
 		return

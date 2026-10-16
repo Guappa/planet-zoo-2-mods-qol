@@ -140,6 +140,30 @@ Core._InstallRequireHook = function(self)
 	end
 end
 
+-- Park managers are loaded by Environment._LoadManagerModule with a copy of
+-- require the Environment module took before the mod booted, so the require
+-- hook never sees them. The environment also builds its per-frame call lists
+-- from each manager's methods when it creates the manager, so a patch must be
+-- in place by then: apply ours right as the module is loaded.
+Core._PatchEnvironment = function(self, Environment)
+	local fnLoad = Environment._LoadManagerModule
+	if type(fnLoad) ~= "function" then
+		trace("Environment has no _LoadManagerModule; manager patches only via require")
+		return
+	end
+	Environment._LoadManagerModule = function(oEnv, sName, ...)
+		local tModule = fnLoad(oEnv, sName, ...)
+		if type(sName) == "string" and type(tModule) == "table" then
+			local sKey = string.lower(sName)
+			if self.tPatches[sKey] then
+				self:_ApplyPatches(sKey, tModule)
+				self:Checkpoint("manager_patched_" .. sKey)
+			end
+		end
+		return tModule
+	end
+end
+
 Core.Boot = function(self)
 	if self.bBooted then
 		return
@@ -150,6 +174,7 @@ Core.Boot = function(self)
 	end)
 	self:_InstallRequireHook()
 	self:Checkpoint("require_hook")
+	self:AddModulePatch("Environment.Environment", function(t) self:_PatchEnvironment(t) end)
 	for _, sFeature in ipairs({ "PZ2QoL.Errors", "PZ2QoL.Hub", "PZ2QoL.MarketPeek", "PZ2QoL.Kin" }) do
 		local bOk, sErr = pcall(function()
 			global.require(sFeature):Init(self)
