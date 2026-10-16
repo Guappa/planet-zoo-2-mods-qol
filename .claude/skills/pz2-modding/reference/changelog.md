@@ -48,3 +48,5 @@ One line per update: date, what changed, why.
 - 2026-10-16: game-data-and-events: Unknown = 255, NotAllowed = 5 (proven from srv_code); code 5 alone doesn't crash. Unnamed codes seen on requests 49/44/47/32. debugging: 00:14 crash without a dump, probably vanilla.
 - 2026-10-16: Out of the trade centre: AnimalMovementMode as for habitats, Return = RequestTransportToAssignedHabitat; breeding programme pulls trade-centre breeders.
 - 2026-10-16: api.debug file calls: OS paths failed in game (store_unavailable); use virtual paths (/run/ = install folder); per-path trace marks.
+- 2026-10-16: Thin out (kincull.js): per-habitat target from the species room x fill, keep value = genes, fertility, relatives, role; breeding core and pregnant females protected.
+- 2026-10-16: Species board Thin out preview (kincull.js) and its harness scenario kin_cull.mjs (testing).

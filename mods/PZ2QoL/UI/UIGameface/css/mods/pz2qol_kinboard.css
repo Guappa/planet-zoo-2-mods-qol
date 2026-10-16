@@ -686,3 +686,66 @@
 .PZ2QoL_kbTradeUse { display: flex; flex-direction: row; align-items: center; height: 1.9rem; padding: 0 0.7rem; margin-right: 0.6rem; border-radius: 0.95rem; background-color: rgba(89, 105, 67, 0.1); color: var(--qol-olive); font-size: 0.78rem; cursor: pointer; }
 .PZ2QoL_kbTradeUse.on { background-color: rgba(79, 138, 134, 0.18); color: var(--qol-teal); }
 .PZ2QoL_kbTradeUse:hover { background-color: rgba(79, 138, 134, 0.28); }
+
+/* --------------------------------------------------------------- thin out */
+
+.PZ2QoL_kbActRow { flex-wrap: wrap; }
+.PZ2QoL_kbActRow > .PZ2QoL_kpBtn { margin-bottom: 0.3rem; }
+.PZ2QoL_kbSeg { flex-shrink: 0; align-items: center; height: 2rem; padding: 0.2rem; border-radius: 1rem; background-color: var(--qol-chip); }
+.PZ2QoL_kbSegItem { align-items: center; height: 1.6rem; padding: 0 0.8rem; border-radius: 0.8rem; font-size: 0.8rem; color: var(--qol-ink-soft); cursor: pointer; white-space: nowrap; }
+.PZ2QoL_kbSegItem:hover { color: var(--qol-ink); }
+.PZ2QoL_kbSegItem.on { background-color: var(--qol-olive); color: #FFFFFF; font-weight: bold; }
+.PZ2QoL_kbCullBar { flex-shrink: 0; align-items: center; margin-bottom: 0.4rem; }
+.PZ2QoL_kbCullHint { flex-shrink: 1; min-width: 0; margin-left: 0.8rem; font-size: 0.74rem; color: var(--qol-ink-soft); white-space: nowrap; overflow: hidden; }
+.PZ2QoL_kbStat.wide { width: 9.5rem; }
+.PZ2QoL_kbStatNote { margin-left: 0.5rem; font-size: 0.7rem; color: var(--qol-ink-soft); }
+.PZ2QoL_kbCullHab { width: 16.5rem; }
+.PZ2QoL_kbCullHead { flex-shrink: 0; margin: 0.35rem 0 0.1rem 0; font-size: 0.64rem; font-weight: bold; letter-spacing: 0.06rem; text-transform: uppercase; color: var(--kp-ok-ink); }
+.PZ2QoL_kbCullHead.leave { margin-top: 0.55rem; color: var(--kp-risk-ink); }
+.PZ2QoL_kbCullRow {
+  flex-shrink: 0;
+  flex-direction: column;
+  margin-top: 0.15rem;
+  padding: 0.22rem 0.4rem;
+  border-radius: 0.45rem;
+  background-color: #FFFFFF;
+  border: 0.08rem solid transparent;
+  cursor: pointer;
+  transition: background-color 0.12s ease-out, border-color 0.12s ease-out;
+}
+.PZ2QoL_kbCullRow:hover { border-color: var(--kin-risk); }
+.PZ2QoL_kbCullRow.leave { background-color: rgba(201, 67, 62, 0.08); border: 0.08rem dashed rgba(201, 67, 62, 0.45); }
+.PZ2QoL_kbCullRow.leave:hover { border-color: var(--kin-ok); background-color: var(--kin-ok-soft); }
+.PZ2QoL_kbCullRow.leave .PZ2QoL_kbGroupWho { text-decoration: line-through; opacity: 0.8; }
+.PZ2QoL_kbCullTop { align-items: center; height: 1.25rem; min-width: 0; overflow: hidden; }
+.PZ2QoL_kbCullRow .PZ2QoL_kbGroupWho { margin-right: 0.3rem; font-size: 0.78rem; }
+.PZ2QoL_kbCullRow.male .PZ2QoL_kbGroupWho { color: var(--qol-male); }
+.PZ2QoL_kbCullRow.female .PZ2QoL_kbGroupWho { color: var(--qol-female); }
+.PZ2QoL_kbCullWhy { font-size: 0.66rem; line-height: 0.9rem; color: var(--kp-risk-ink); white-space: normal; }
+.PZ2QoL_kbGene {
+  flex-shrink: 0;
+  justify-content: center;
+  align-items: center;
+  min-width: 1.6rem;
+  height: 1.05rem;
+  padding: 0 0.25rem;
+  border-radius: 0.525rem;
+  font-size: 0.66rem;
+  font-weight: bold;
+  color: var(--qol-good);
+  border: 0.08rem solid currentColor;
+}
+.PZ2QoL_kbCullX { position: relative; flex-shrink: 0; width: 1.1rem; height: 1.1rem; margin-left: 0.3rem; border-radius: 0.55rem; opacity: 0.35; }
+.PZ2QoL_kbCullX .PZ2QoL_kpCloseX { width: 0.6rem; height: 0.12rem; margin: -0.06rem 0 0 -0.3rem; background-color: var(--kp-risk-ink); }
+.PZ2QoL_kbCullRow:hover .PZ2QoL_kbCullX { opacity: 1; background-color: var(--kin-risk-soft); }
+.PZ2QoL_kbCullUndo { flex-shrink: 0; margin-left: 0.3rem; padding: 0 0.35rem; height: 1.05rem; align-items: center; border-radius: 0.525rem; font-size: 0.64rem; font-weight: bold; color: var(--kp-ok-ink); border: 0.08rem solid currentColor; }
+.PZ2QoL_kbTag.fert_old, .PZ2QoL_kbTag.fert_infertile { background-color: rgba(143, 133, 120, 0.25); color: var(--kp-covered-ink); }
+.PZ2QoL_kbTag.fert_ending { background-color: rgba(185, 154, 42, 0.2); color: var(--kp-future-ink); }
+.PZ2QoL_kbTag.fert_young { background-color: rgba(137, 151, 81, 0.22); color: var(--qol-olive); }
+.PZ2QoL_kbTag.mark_core { background-color: rgba(89, 105, 67, 0.16); color: var(--qol-olive); }
+.PZ2QoL_kbTag.mark_best { background-color: rgba(226, 151, 65, 0.22); color: #9A6414; }
+.PZ2QoL_kbTag.mark_preg { background-color: rgba(231, 124, 152, 0.2); color: #B4536C; }
+.PZ2QoL_kbTag.mark_mine { background-color: rgba(76, 122, 158, 0.16); color: var(--qol-good); }
+.PZ2QoL_kbTag.mark_moving { background-color: rgba(79, 138, 134, 0.18); color: var(--qol-teal); }
+.PZ2QoL_kbCullHead.leave.first { margin-top: 0.35rem; }
+.PZ2QoL_kbCullHead { white-space: nowrap; overflow: hidden; }

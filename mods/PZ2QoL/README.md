@@ -171,6 +171,14 @@ which male and female in the same habitat are related and would inbreed.
   at the **trade centre** (bought, or sent there) are part of it: the programme brings them into a
   group where they breed best ("1 from the trade centre"); **Use the trade centre (N waiting)**
   switches that off.
+- **Thin out** (Species board): for a species whose habitats are full, picks who to send to the
+  trade centre (to sell, trade or release). Each habitat keeps a target number of adults (its room
+  for the species x Lean 70% / Balanced 85% / Full 100%); over-full habitats give up their least
+  valuable animals first: too old or infertile, extra males in a harem, those in their last
+  fertile years, those living with relatives, then the weakest genes. The best fertile male and
+  females of every habitat, pregnant females and the species' best genes always stay. Click any
+  animal in the preview to keep it or send it; **Send N to the trade centre** puts the moves in the
+  plan, and Execute runs them one at a time.
 - **Habitat assignments:** in the Species board, **☆ Assign to <species>** on a habitat's column sets
   it aside for that species (kept per park, in `PZ2QoL\userdata.json`, so it survives closing the
   board and restarting the game). Suggest fixes then moves the species only into its

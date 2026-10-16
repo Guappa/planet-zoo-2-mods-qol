@@ -26,6 +26,7 @@ import {
     cachedDestinations, getPlanRun, moveAnimal, onPlanRun, planBlockedReason, requestDestinations, requestSpeciesInfo, runPlan, stopPlan,
 } from '/js/mods/pz2qol/kinmoves.js';
 import { PROGRAMME_DEFAULTS, conceptionChance, planProgramme, youngQuality } from '/js/mods/pz2qol/kinprogramme.js';
+import { FILL_STEPS, cullPlan, geneScore } from '/js/mods/pz2qol/kincull.js';
 import { hideKinCard, kinBadge, sexClass, sexSymbol } from '/js/mods/pz2qol/kinui.js';
 import { clear, h, icon, setClass, setText } from '/js/mods/pz2qol/ui.js';
 import { breadcrumb, reportError } from '/js/mods/pz2qol/errors.js';
@@ -90,6 +91,16 @@ const PROG_STEPS = [
     { label: 'Best genetics', cost: 0.02 },
 ];
 const PROG_DEFAULT_STEP = 2;
+
+// Thin out: the last known "over the room" count per species (for the rail)
+const overBySpecies = new Map();
+const CULL_MARKS = {
+    'breeding core': { cls: 'core', text: 'core', title: 'The breeding core of this habitat: kept' },
+    pregnant: { cls: 'preg', text: 'pregnant', title: 'Pregnant: never sent away' },
+    'best genes of the species': { cls: 'best', text: 'best', title: 'The best genes of the species: kept' },
+    'your choice': { cls: 'mine', text: 'your choice', title: 'You chose this' },
+    'on the move': { cls: 'moving', text: 'on the move', title: 'Already on the move' },
+};
 const SYSTEM_WORDS = {
     polygyny: 'Harem: one breeding male per habitat',
     polyandry: 'One breeding female per habitat',
@@ -257,6 +268,7 @@ function renderAll() {
         renderBoard(model, dest);
         fitColumns();
         fitProgramme();
+        fitCull();
         renderPlan(model, dest);
         renderFoot();
         if (S.hoverId) highlightRelatives(S.hoverId);
@@ -328,6 +340,7 @@ function renderRail(model) {
     S.boxes.rail = box;
     el.appendChild(box.wrap);
     if (!model) return;
+    if (S.cull) cullResult();          // its "N over" shows in the rail
     const list = speciesList(model);
     const showCovered = getKinSettings().showCovered;
     box.content.appendChild(h('div.PZ2QoL_kpSideHead', { text: `Species (${list.length})` }));
@@ -343,6 +356,8 @@ function renderRail(model) {
         if (s.away) meta.push(`${s.away} away`);
         const own = assignedCount(model, s.species);
         if (own) meta.push(`★ ${own} assigned`);
+        const over = overBySpecies.get(s.species);
+        if (over) meta.push(`${over} over`);
         box.content.appendChild(h(`div.PZ2QoL_kbSpecies.sev_${worst}${on ? '.on' : ''}`, {
             'data-species': s.species,
             title: speciesName(s.species),
@@ -412,6 +427,10 @@ function renderBoard(model, dest) {
     }
     if (S.prog && S.prog.species === S.species) {
         el.appendChild(programmeEl(model));
+        return;
+    }
+    if (S.cull && S.cull.species === S.species) {
+        el.appendChild(cullEl(model));
         return;
     }
     const box = makeScroll('kbCols', {
@@ -1280,6 +1299,10 @@ function actionsEl(model) {
         btn('Breeding programme', 'IconFertility', openProgramme, {
             cls: S.prog && S.prog.species === S.species ? 'on' : '',
             title: 'Plan the best breeding groups for this species: unrelated partners, the best expected young, the game\'s own group sizes and space',
+        }),
+        btn('Thin out', 'IconTradeCentre', openCull, {
+            cls: S.cull && S.cull.species === S.species ? 'on' : '',
+            title: 'Full habitats: pick the animals to send to the trade centre (too old, extra males, weaker genes) and keep the best breeders',
         }));
     el.appendChild(row);
     const exec = btn(`Execute plan (${S.plan.length} move${S.plan.length === 1 ? '' : 's'})`, null, execute, {
@@ -1330,6 +1353,7 @@ function openProgramme() {
         return;
     }
     if (S.prog && S.prog.species === S.species) return closeProgramme();
+    S.cull = null;
     const species = S.species;
     S.prog = { species, state: 'loading', step: PROG_DEFAULT_STEP, info: null, infoError: '', results: new Map(), modelRef: null, error: null };
     closeMenu();
@@ -1619,6 +1643,269 @@ function fitProgramme() {
     }
 }
 
+// --------------------------------------------------------------- thin out
+
+function openCull() {
+    const model = getKinModel();
+    if (!model || !S.species) return;
+    if (getPlanRun().running) {
+        notice('A plan is running. Wait for it to finish before planning a new one.', 'warn');
+        return;
+    }
+    if (S.cull && S.cull.species === S.species) return closeCull();
+    S.prog = null;
+    const species = S.species;
+    S.cull = { species, state: 'loading', info: null, infoError: '', fill: 'balanced', oldAlways: false, keepIds: new Set(), cullIds: new Set(), result: null, key: '' };
+    closeMenu();
+    S.selected.clear();
+    S.scroll.cull = 0;
+    S.scroll.cullX = 0;
+    breadcrumb('kin_board_thin_out');
+    renderAll();
+    const done = info => {
+        if (!S.cull || S.cull.species !== species) return;
+        S.cull.info = info && typeof info === 'object' && !info.error ? info : null;
+        S.cull.infoError = info && info.error ? String(info.error) : '';
+        S.cull.state = 'ready';
+        S.cull.key = '';
+        queueRender();
+    };
+    // like the breeding programme: the habitat checks first, then the game's facts
+    const ids = [];
+    for (const a of model.animals.values()) if (a.species === species && !a.exhibit) ids.push(a.id);
+    const ready = destKnown() ? Promise.resolve() : requestDestinations(ids).then(d => {
+        if (d) S.dest = d;
+    }, () => {});
+    ready.then(() => requestSpeciesInfo(species, programmeHabitats(getKinModel() || model, species))).then(done, e => {
+        reportError('mod', 'Species board: species facts failed', e, { silent: true });
+        done(null);
+    });
+}
+
+function closeCull() {
+    S.cull = null;
+    renderAll();
+}
+
+function cullFill(c) {
+    const st = FILL_STEPS.find(x => x.id === c.fill) || FILL_STEPS[1];
+    return st.fill;
+}
+
+// cullPlan for the current choices (cached until a choice or the model changes)
+function cullResult() {
+    const c = S.cull;
+    const model = getKinModel();
+    if (!c || !model || c.state !== 'ready') return null;
+    const key = [c.fill, c.oldAlways, Array.from(c.keepIds).sort().join(','), Array.from(c.cullIds).sort().join(',')].join('|');
+    if (c.modelRef === model && c.key === key) return c.result;
+    let r = null;
+    try {
+        r = cullPlan(model, c.species, c.info || {}, {
+            options: { fill: cullFill(c), oldAlways: c.oldAlways, keepIds: c.keepIds, cullIds: c.cullIds },
+        });
+        c.error = null;
+        if (r) {
+            let over = 0;
+            for (const hb of r.habitats) if (hb.room) over += Math.max(0, hb.adults - hb.capacity);
+            overBySpecies.set(c.species, over);
+        }
+    }
+    catch (e) {
+        c.error = e;
+        reportError('ui', 'Species board: Thin out failed', e);
+    }
+    c.modelRef = model;
+    c.key = key;
+    c.result = r;
+    return r;
+}
+
+// Kept -> leaving, leaving -> kept (the player's choice wins over the plan).
+function toggleCull(id, leaving) {
+    const c = S.cull;
+    const model = getKinModel();
+    const a = model && model.animals.get(String(id));
+    if (!c || !a) return;
+    if (leaving) {
+        if (c.cullIds.has(a.id)) c.cullIds.delete(a.id);
+        else c.keepIds.add(a.id);
+    }
+    else {
+        if (a.moving) {
+            notice(`${a.name} is already on the move.`, 'warn');
+            return;
+        }
+        if (c.keepIds.has(a.id)) c.keepIds.delete(a.id);
+        else c.cullIds.add(a.id);
+    }
+    renderAll();
+}
+
+function useCull() {
+    const model = getKinModel();
+    const r = cullResult();
+    if (!model || !r || !r.moves.length) return;
+    let plan = S.plan;
+    let n = 0;
+    for (const m of r.moves) {
+        const a = model.animals.get(String(m.id));
+        if (!a || !canMove(a)) continue;
+        plan = setMove(model, plan, a.id, TRADE);
+        S.reasons.set(a.id, `Thin out: ${m.reason}`);
+        n++;
+    }
+    S.plan = plan;
+    S.cull = null;
+    S.planTab = 'plan';
+    notice(`Thin out: ${n} animal${n === 1 ? '' : 's'} to the trade centre in the plan. Nothing moves until you run the plan or press Move now.`, 'ok');
+    breadcrumb('kin_board_thin_out_use');
+    renderAll();
+}
+
+function cullEl(model) {
+    const c = S.cull;
+    const name = speciesName(c.species);
+    const wrap = h(`div.PZ2QoL_kbProg.PZ2QoL_kbCull.state_${c.state}`);
+    const cancel = btn('Cancel', null, closeCull, { title: 'Back to the board (Esc)' });
+    if (c.state === 'loading') {
+        wrap.appendChild(h('div.PZ2QoL_kpEmpty', null,
+            h('div.PZ2QoL_kpEmptyIcon.wait'),
+            h('div.PZ2QoL_kpEmptyTitle', { text: 'Asking the game…' }),
+            h('div.PZ2QoL_kpEmptyText', { text: `${name}: how many each habitat has room for, the group size and the fertile ages.` }),
+            h('div.PZ2QoL_kpEmptyActions', null, cancel)));
+        return wrap;
+    }
+    const r = cullResult();
+    if (!r || !r.habitats.length) {
+        wrap.appendChild(h('div.PZ2QoL_kpEmpty', null,
+            h('div.PZ2QoL_kpEmptyTitle', { text: 'Nothing to thin out' }),
+            h('div.PZ2QoL_kpEmptyText', { text: c.error ? 'Thin out failed for this species. The board is unchanged.' : `${name} has no animals in habitats.` }),
+            h('div.PZ2QoL_kpEmptyActions', null, cancel)));
+        return wrap;
+    }
+    const n = r.moves.length;
+    const fill = h('div.PZ2QoL_kbSeg', null, FILL_STEPS.map(st => h(`div.PZ2QoL_kbSegItem${st.id === c.fill ? '.on' : ''}`, {
+        'data-fill': st.id,
+        title: `Keep up to ${Math.round(st.fill * 100)}% of each habitat's room${st.fill < 1 ? ' (the rest is room for young)' : ''}`,
+        onClick: guard('Fill', () => {
+            c.fill = st.id;
+            renderAll();
+        }),
+    }, h('span', { text: st.label }))));
+    const old = switchEl('Also send too-old animals from habitats that are not full', c.oldAlways, () => {
+        c.oldAlways = !c.oldAlways;
+        renderAll();
+    }, 'Animals past breeding age leave even where there is room');
+    const words = { polygyny: 'harem', polyandry: 'one breeding female per habitat', monogamy: 'pairs', mixed: 'mixed groups' };
+    wrap.appendChild(h('div.PZ2QoL_kbProgHead', null,
+        h('div.PZ2QoL_kbProgTitles', null,
+            h('div.PZ2QoL_kbProgTitle', { text: `Thin out · ${trunc(name, 24)}` }),
+            h('div.PZ2QoL_kbProgSub', { text: `${n} to the trade centre${r.atTrade ? ` · ${r.atTrade} already there` : ''} · ${words[r.system] || 'mixed groups'}` })),
+        h('div.PZ2QoL_kpFlex'),
+        fill,
+        btn(`Send ${n} to the trade centre`, null, useCull, { cls: `primary${n ? '' : '.disabled'}`, title: 'Put these moves in the plan; Execute (or Move now) on the board sends them, one at a time' }),
+        cancel));
+    wrap.appendChild(h('div.PZ2QoL_kbCullBar', null, old, h('div.PZ2QoL_kpFlex'),
+        h('div.PZ2QoL_kbCullHint', { text: 'From the trade centre you can sell them (Animal Storage, Market lister), trade or release them.' })));
+    if (r.estimated) {
+        wrap.appendChild(h('div.PZ2QoL_kbProgWarn', { text: `The game gave no room for these habitats: Thin out keeps ${Math.round(cullFill(c) * 100)}% of the current adults.` }));
+    }
+    else {
+        const guess = r.habitats.filter(hb => !hb.room).map(hb => placeOfHab(model, hb.hab));
+        if (guess.length) wrap.appendChild(h('div.PZ2QoL_kbProgWarn', { text: `No room from the game for ${guess.join(', ')}: there the current adults count as full.` }));
+    }
+    const b = r.before, a = r.after;
+    wrap.appendChild(h('div.PZ2QoL_kbStats', { 'data-moves': String(n) },
+        statTile('animals', 'Animals', b.animals, a.animals, 'down'),
+        statTile('adults', 'Adults', b.adults, a.adults, 'down'),
+        statTile('gene', 'Average genes', b.gene, a.gene, 'up'),
+        statTile('old', 'Too old to breed', b.old, a.old, 'down'),
+        h('div.PZ2QoL_kbStat.moves.wide', { 'data-key': 'moves' },
+            h('div.PZ2QoL_kbStatLabel', { text: 'To the trade centre' }),
+            h('div.PZ2QoL_kbStatValue', null, h('span.PZ2QoL_kbStatAfter', { text: String(n) }),
+                r.removedGene != null ? h('span.PZ2QoL_kbStatNote', { text: `genes avg ${r.removedGene}` }) : null))));
+    const box = makeScroll('kbProgGroups', { x: true, y: true, onScroll: (x, y) => { S.scroll.cullX = x; S.scroll.cull = y; } });
+    S.boxes.cull = box;
+    const row = h('div.PZ2QoL_kbGroupRow');
+    for (const hb of r.habitats) row.appendChild(cullHabEl(model, hb));
+    box.content.appendChild(row);
+    wrap.appendChild(box.wrap);
+    restoreScroll(box, S.scroll.cullX || 0, S.scroll.cull || 0);
+    return wrap;
+}
+
+function cullRow(model, entry, leaving) {
+    const a = model.animals.get(entry.id);
+    if (!a) return null;
+    const tag = fertilityTag(a);
+    const mark = !leaving && entry.why ? CULL_MARKS[entry.why] : null;
+    const gene = entry.gene != null ? Math.round(entry.gene * 100) : null;
+    const node = h(`div.PZ2QoL_kbCullRow.${sexClass(a.sex)}.${leaving ? 'leave' : 'keep'}`, {
+        'data-id': a.id,
+        'data-state': leaving ? 'cull' : 'keep',
+        'data-why': leaving ? entry.reason : (entry.why || ''),
+        title: leaving ? `${a.name} leaves: ${entry.reason}. Click to keep it.` : `${a.name} stays${entry.why ? ` (${entry.why})` : ''}. Click to send it to the trade centre.`,
+        onClick: guard('Thin out', () => toggleCull(a.id, leaving)),
+    },
+    h('div.PZ2QoL_kbCullTop', null,
+        h('span.PZ2QoL_kbGroupWho', { text: `${sexSymbol(a.sex)} ${trunc(a.name, 14)}` }),
+        a.juv ? h('span.PZ2QoL_kbTag.young', { text: 'young' }) : null,
+        tag && !a.juv ? h(`span.PZ2QoL_kbTag.fert_${tag.cls}`, { text: tag.text, title: tag.title }) : null,
+        mark ? h(`span.PZ2QoL_kbTag.mark_${mark.cls}`, { text: mark.text, title: mark.title }) : null,
+        h('div.PZ2QoL_kpFlex'),
+        gene != null ? h('span.PZ2QoL_kbGene', { text: String(gene), title: `Gene score ${gene}` }) : null,
+        leaving
+            ? h('span.PZ2QoL_kbCullUndo', { text: 'keep' })
+            : h('div.PZ2QoL_kbCullX', null, h('div.PZ2QoL_kpCloseX.a'), h('div.PZ2QoL_kpCloseX.b'))),
+    leaving ? h('div.PZ2QoL_kbCullWhy', { text: entry.reason }) : null);
+    return node;
+}
+
+function cullHabEl(model, hb) {
+    const over = hb.adults > hb.target;
+    const node = h(`div.PZ2QoL_kbGroup.PZ2QoL_kbCullHab${over ? '.over' : ''}`, { 'data-hab': hb.hab });
+    node.appendChild(h('div.PZ2QoL_kbGroupHead', null,
+        icon('IconHabitat', 'brown', 'sm'),
+        h('div.PZ2QoL_kbGroupName', { text: trunc(placeOfHab(model, hb.hab), 22), title: placeOfHab(model, hb.hab) })));
+    node.appendChild(h('div.PZ2QoL_kbGroupCap', {
+        text: `${hb.adults} adult${hb.adults === 1 ? '' : 's'} · room for ${hb.capacity}${hb.room ? '' : '?'} → keep ${hb.target}${hb.juveniles ? ` · ${hb.juveniles} young` : ''}`,
+        title: hb.room ? 'Room from the game (group size and space)' : 'The game gave no room: the current adults count as full',
+    }));
+    // who leaves first: that is what the player checks
+    if (hb.cull.length) {
+        node.appendChild(h('div.PZ2QoL_kbCullHead.leave.first', { text: `To the trade centre (${hb.cull.length})` }));
+        for (const k of hb.cull) {
+            const el = cullRow(model, k, true);
+            if (el) node.appendChild(el);
+        }
+    }
+    else node.appendChild(h('div.PZ2QoL_kbGroupEmpty', { text: over ? 'Nothing it can spare' : 'Fits: nobody leaves' }));
+    const keep = hb.keep.slice().sort((x, y) => (y.value || 0) - (x.value || 0));
+    node.appendChild(h('div.PZ2QoL_kbCullHead', { text: `Stay (${keep.length}) · click one to send it away` }));
+    for (const k of keep) {
+        const el = cullRow(model, k, false);
+        if (el) node.appendChild(el);
+    }
+    return node;
+}
+
+function fitCull() {
+    const box = S.boxes.cull;
+    if (!box || !S.el.board) return;
+    try {
+        const board = S.el.board.getBoundingClientRect();
+        const top = box.wrap.getBoundingClientRect().top;
+        const hgt = Math.max(remPx() * 6, Math.floor(board.bottom - top - Math.ceil(remPx() * 0.45)));
+        box.wrap.style.flex = '0 0 auto';
+        box.wrap.style.height = `${hgt}px`;
+        setTimeout(() => refreshBars({ cull: box }), 0);
+    }
+    catch (e) {
+        // cosmetic
+    }
+}
+
 // ---------------------------------------------------------------- footer
 
 function renderFoot() {
@@ -1819,6 +2106,7 @@ export function installSpeciesBoard() {
             if (S.drag) cancelDrag();
             else if (S.menu) closeMenu();
             else if (S.prog) closeProgramme();
+            else if (S.cull) closeCull();
             else closeSpeciesBoard();
         }
         catch (err) {

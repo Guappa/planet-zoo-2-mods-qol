@@ -88,3 +88,7 @@ Run all of these before installing a build.
   (`kin_programme.mjs`). `kin_programme.mjs` checks the breeding programme: preview numbers
   (related pairs → 0), the moves slider (3/4/5/7 moves), Use this plan, Execute, the no-answer
   warning.
+- `kin_cull.mjs` (harness): Thin out on 5 lemur habitats × 12 animals (polygyny, social max 8). Checks the
+  preview counts, that the too-old and extra males leave and the best male stays, that the fill level
+  changes the count, click-to-toggle keep/leave, the "too old from habitats with room" switch, and that
+  "Send N" plus Execute sends `trade:<id>` moves one at a time.
