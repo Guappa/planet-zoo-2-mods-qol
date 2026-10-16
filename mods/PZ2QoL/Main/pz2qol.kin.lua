@@ -1215,6 +1215,85 @@ Kin.SpeciesInfo = function(self, oUI, sReq, sSpecies, sHabs)
 end
 
 -----------------------------------------------------------------------
+-- The player's own data (habitat assignments...), kept in ONE file in the
+-- mod's folder: Win64\ovldata\PZ2QoL\userdata.json. Never in the save or
+-- the profile; deleting the mod folder removes it. The UI's localStorage is
+-- not written to disk by the game, so it is lost when the game closes.
+-- The text is the UI's JSON (ASCII only), stored as it is.
+-----------------------------------------------------------------------
+Kin.tStorePaths = { ".\\Win64\\ovldata\\PZ2QoL\\userdata.json", "Win64/ovldata/PZ2QoL/userdata.json" }
+Kin.nStoreMax = 400000
+
+local function readFile(sPath)
+	local bOk, bRead, sText = pcall(api.debug.ReadStringFromFile, sPath)
+	if bOk and bRead and type(sText) == "string" then
+		return sText
+	end
+	return nil
+end
+
+local function writeFile(sPath, sText)
+	local bOk = pcall(api.debug.WriteStringToFile, sText, sPath)
+	return bOk and readFile(sPath) == sText
+end
+
+-- The path that works here (found once): an existing file, else the first
+-- one that writes and reads back.
+Kin._StorePath = function(self)
+	if self.sStorePath ~= nil then
+		return self.sStorePath or nil
+	end
+	if type(api.debug) ~= "table" or type(api.debug.ReadStringFromFile) ~= "function" or type(api.debug.WriteStringToFile) ~= "function" then
+		self.sStorePath = false
+		mark("store_unavailable")
+		return nil
+	end
+	for _, sPath in ipairs(self.tStorePaths) do
+		if readFile(sPath) ~= nil then
+			self.sStorePath = sPath
+			mark("store_found")
+			return sPath
+		end
+	end
+	for _, sPath in ipairs(self.tStorePaths) do
+		if writeFile(sPath, "{}") then
+			self.sStorePath = sPath
+			mark("store_created")
+			return sPath
+		end
+	end
+	self.sStorePath = false
+	mark("store_unavailable")
+	return nil
+end
+
+-- answers PZ2QoL_StoreData(reqId, ok, part, parts, text): the file in chunks
+Kin.StoreLoad = function(self, oUI, sReq)
+	local sPath = self:_StorePath()
+	local sText = sPath and readFile(sPath) or nil
+	if sText == nil then
+		pcall(oUI.TriggerEventAtNextAdvance, oUI, "PZ2QoL_StoreData", sReq, false, 1, 1, "")
+		return
+	end
+	local nParts = math.max(1, math.ceil(#sText / self.nChunkSize))
+	for i = 1, nParts do
+		local sPart = string.sub(sText, (i - 1) * self.nChunkSize + 1, i * self.nChunkSize)
+		pcall(oUI.TriggerEventAtNextAdvance, oUI, "PZ2QoL_StoreData", sReq, true, i, nParts, sPart)
+	end
+end
+
+-- PZ2QoL_StoreSave(reqId, text): replaces the file; answers PZ2QoL_StoreSaved(reqId, ok)
+Kin.StoreSave = function(self, oUI, sReq, sText)
+	local bOk = false
+	if type(sText) == "string" and #sText <= self.nStoreMax and string.sub(sText, 1, 1) == "{" and not string.find(sText, "[^\32-\126\t\r\n]") then
+		local sPath = self:_StorePath()
+		bOk = sPath ~= nil and writeFile(sPath, sText)
+	end
+	mark(bOk and "store_saved" or "store_save_failed")
+	pcall(oUI.TriggerEventAtNextAdvance, oUI, "PZ2QoL_StoreSaved", sReq, bOk == true)
+end
+
+-----------------------------------------------------------------------
 -- Wiring
 -----------------------------------------------------------------------
 Kin.Attach = function(self, oUI)
@@ -1254,6 +1333,12 @@ Kin.Attach = function(self, oUI)
 		end), self)
 		oUI:AddEventListener("PZ2QoL_KinMove", 3, guard("move", function(sReq, sId, sTo)
 			self:Move(oUI, sReq, sId, sTo)
+		end), self)
+		oUI:AddEventListener("PZ2QoL_StoreLoad", 1, guard("store_load", function(sReq)
+			self:StoreLoad(oUI, sReq)
+		end), self)
+		oUI:AddEventListener("PZ2QoL_StoreSave", 2, guard("store_save", function(sReq, sText)
+			self:StoreSave(oUI, sReq, sText)
 		end), self)
 		oUI:AddEventListener("PZ2QoL_KinSpecies", 3, guard("species", function(sReq, sSpecies, sHabs)
 			self:SpeciesInfo(oUI, sReq, sSpecies, sHabs)

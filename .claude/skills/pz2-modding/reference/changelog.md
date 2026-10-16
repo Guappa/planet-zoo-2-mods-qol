@@ -39,3 +39,4 @@ One line per update: date, what changed, why.
 - 2026-10-15: Breeding programme: PZ2QoL_KinSpecies event (Lua species facts) and kinprogramme.js (local-search optimiser); snapshot adds animal age.
 - 2026-10-15: Breeding programme preview on the Species board; harness pitfall: fake Lua handlers leak between scenarios (testing).
 - 2026-10-15: Trade-centre moves must use animals:AttemptToSendToTradeCentre; AttemptRequestToTransportAnimalToTarget to a trade centre returns true but does nothing (seen in game).
+- 2026-10-16: Gameface localStorage is not kept across restarts; PZ2QoL keeps player data in userdata.json in its pack folder via api.debug.ReadStringFromFile/WriteStringToFile (retail behaviour still to prove); install tool keeps userdata.json.

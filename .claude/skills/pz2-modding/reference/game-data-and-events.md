@@ -170,6 +170,10 @@ Species board events:
 | Lua to JS | `PZ2QoL_KinMoveResult` | reqId, ok, detail | |
 | JS to Lua | `PZ2QoL_KinSpecies` | reqId, species, habitat ids (comma separated) | breeding-programme facts: social range, fertility ages, mating system, conception table, habitat space |
 | Lua to JS | `PZ2QoL_KinSpeciesResult` | reqId, JSON | |
+| JS to Lua | `PZ2QoL_StoreLoad` | reqId | read the player's data file (`userdata.json` in the pack folder) |
+| Lua to JS | `PZ2QoL_StoreData` | reqId, ok, part, parts, text | the file in ~12 KB chunks; ok=false: no file access |
+| JS to Lua | `PZ2QoL_StoreSave` | reqId, ASCII JSON object | replaces the file (max 400 KB) |
+| Lua to JS | `PZ2QoL_StoreSaved` | reqId, ok | verified by reading back |
 
 Snapshot extras: `animals[].lt` (location kind), `animals[].moving` (`bHasTransportJob`), `mode`
 (`franchise` / `offline` / `unknown`), `tradeCentre {id, name}`.

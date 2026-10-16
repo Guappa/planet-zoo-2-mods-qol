@@ -58,8 +58,14 @@
   `padding-top`. **proven** in harness.
 - The management screen is chosen with `Management_SetManagementIndex(sectionId)`.
   `ManagementSectionID.Animals = 7` (`js/project/data/GameTypes.js`). **offline**
-- Collapsible toolbars save their state in `localStorage` (`PZ2QoL.collapsed.<key>`), which
-  persists in Gameface. **guess**: not confirmed across restarts.
+- **`localStorage` is not kept across game restarts** (strong evidence): the game's own UI never
+  uses it, and no storage file exists anywhere in the profile or install after using it. Treat it
+  as session memory (fine for toolbar collapse state, `PZ2QoL.collapsed.<key>`). Anything the
+  player expects to keep goes through the Lua file store: `js/mods/pz2qol/userstore.js`
+  (`getUserData`/`updateUserData`, status `loading|file|memory`), Lua `Kin.StoreLoad/StoreSave`
+  in `pz2qol.kin.lua` (events `PZ2QoL_StoreLoad` -> `PZ2QoL_StoreData` chunks,
+  `PZ2QoL_StoreSave` -> `PZ2QoL_StoreSaved`). Changes made before the file is read are replayed
+  on top of it, so updates must be idempotent (set on/off, not toggle).
 
 ## Preact runtime: hooking game components (used by Kin)
 

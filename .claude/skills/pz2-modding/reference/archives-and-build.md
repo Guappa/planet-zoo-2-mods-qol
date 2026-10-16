@@ -83,5 +83,6 @@ python tools/build_pz2qol.py --cobra-tools <cobra-tools dir> --python <venv pyth
   over the network share once left `UI\PZ2QoLUI.ovl` and most `dbg` DLLs missing while reporting
   success. After any install there, compare every file by hash (sha1) against the build and
   recopy the ones that differ (2026-10-15). `tools/install_pz2qol.py <build>/PZ2QoL <game> --wait`
-  does exactly that (and saves the old `dbg/trace.log`).
+  does exactly that (and saves the old `dbg/trace.log`). Both install paths keep the player's
+  `userdata.json` in the pack folder; never delete it when updating.
 

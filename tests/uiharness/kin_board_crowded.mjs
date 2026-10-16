@@ -97,7 +97,21 @@ export async function hud(page, ctx) {
     if (!(facts.moves.length === 1 && facts.moves[0][0] === '6000' && /^trade:/.test(facts.moves[0][1]))) problems.push('trade centre move not sent as one move: ' + JSON.stringify(facts.moves));
     // habitat assignments: Small Plains for lions only; Suggest fixes then
     // moves lions only there
-    await page.evaluate(() => { try { localStorage.removeItem('PZ2QoL.kin.assign.v1'); } catch (e) { /* none */ } });
+    // a fake Lua file store (PZ2QoL_StoreLoad/Save): assignments go to the
+    // mod's data file, so they outlast the board and a game restart
+    await page.evaluate(() => {
+        window.__kbcFile = null;
+        engine.on('PZ2QoL_StoreLoad', req => window.__kbcActive && engine.trigger('PZ2QoL_StoreData', req, true, 1, 1, window.__kbcFile || '{}'));
+        engine.on('PZ2QoL_StoreSave', (req, text) => {
+            if (!window.__kbcActive) return;
+            window.__kbcFile = text;
+            engine.trigger('PZ2QoL_StoreSaved', req, true);
+        });
+        engine.trigger('PZ2QoL_Hello'); // the store reads the file again
+    });
+    await page.waitForTimeout(400);
+    facts.storage = await page.evaluate(async () => (await import('/js/mods/pz2qol/kinassign.js')).assignmentStorage());
+    if (facts.storage !== 'file') problems.push('assignments not kept in the data file: ' + facts.storage);
     await page.locator('.PZ2QoL_kbCol', { hasText: 'Small Plains' }).locator('.PZ2QoL_kbAssign').click();
     await page.waitForTimeout(500);
     facts.assignChip = await page.locator('.PZ2QoL_kbCol', { hasText: 'Small Plains' }).locator('.PZ2QoL_kbAssign').innerText();
@@ -113,10 +127,20 @@ export async function hud(page, ctx) {
     });
     if (!facts.suggested.length) problems.push('no suggestions with an assigned habitat');
     else if (!facts.suggested.every(t => /^Small Plains/.test(t))) problems.push('a suggestion left the assigned habitats: ' + JSON.stringify(facts.suggested));
-    facts.saved = await page.evaluate(() => { try { return localStorage.getItem('PZ2QoL.kin.assign.v1'); } catch (e) { return null; } });
-    if (!/Small Plains/.test(facts.saved || '')) problems.push('assignment not saved: ' + facts.saved);
+    facts.saved = await page.evaluate(() => window.__kbcFile);
+    if (!/Small Plains/.test(facts.saved || '')) problems.push('assignment not saved to the data file: ' + facts.saved);
     await ctx.shot(page, 'kbc_4_assigned');
     await page.locator('.PZ2QoL_kb .PZ2QoL_kpBtn', { hasText: 'Clear plan' }).click();
+    // closing and opening the board again keeps it (plan cleared first: its
+    // cards name Small Plains too)
+    await page.evaluate(async url => {
+        const m = await import(url);
+        m.closeSpeciesBoard();
+        m.openSpeciesBoard({ species: 'Lion' });
+    }, BOARD);
+    await page.waitForTimeout(600);
+    facts.reopenChip = await page.locator('.PZ2QoL_kbCol', { hasText: 'Small Plains' }).locator('.PZ2QoL_kbAssign').innerText();
+    if (!/★/.test(facts.reopenChip)) problems.push('assignment lost when the board was opened again: ' + facts.reopenChip);
     await page.locator('.PZ2QoL_kbCol', { hasText: 'Small Plains' }).locator('.PZ2QoL_kbAssign').click();
     await page.evaluate(async url => (await import(url)).closeSpeciesBoard(), BOARD);
     await page.evaluate(() => { window.__kbcActive = false; });

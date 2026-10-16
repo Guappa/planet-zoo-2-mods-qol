@@ -5,6 +5,7 @@ usage: python install_pz2qol.py <built PZ2QoL folder> <game folder> [--wait] [--
 - Refuses while the game runs (PlanetZoo2.exe cannot be opened for writing);
   with --wait it checks every 15 s for up to 12 h and installs once it closes.
 - Saves the old dbg/trace.log (if any) into --backup-dir first.
+- Keeps the player's data file (userdata.json: habitat assignments...).
 - Copies every file, removes files the new build no longer has, and then
   compares every file by sha1. A plain copy over the second PC's network
   share once came up short while reporting success, so nothing is trusted
@@ -19,6 +20,7 @@ import sys
 import time
 
 PACK = "PZ2QoL"
+KEEP = {"trace.log", "userdata.json"}  # written by the game/mod, never by the build
 
 
 def sha1(path):
@@ -45,9 +47,9 @@ def files_under(root):
 
 def install(src, target):
     os.makedirs(target, exist_ok=True)
-    wanted = set(files_under(src))
+    wanted = {rel for rel in files_under(src) if os.path.basename(rel) not in KEEP}
     for rel in list(files_under(target)):
-        if rel not in wanted and os.path.basename(rel) != "trace.log":
+        if rel not in wanted and os.path.basename(rel) not in KEEP:
             os.remove(os.path.join(target, rel))
     for attempt in range(3):
         bad = []

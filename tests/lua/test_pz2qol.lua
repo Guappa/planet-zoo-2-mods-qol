@@ -987,6 +987,57 @@ if tSp then
 	check(tSp.habitats["102"].calculating == true and tSp.habitats["102"].available == nil, "space still being calculated")
 end
 
+-- the player's data file (habitat assignments): one file in the mod folder
+local tFiles = {}
+local tWrites = {}
+api.debug.ReadStringFromFile = function(sPath)
+	if tFiles[sPath] == nil then return false, nil end
+	return true, tFiles[sPath]
+end
+api.debug.WriteStringToFile = function(sText, sPath)
+	tWrites[#tWrites + 1] = sPath
+	if string.find(sPath, "/", 1, true) then return false end -- only the first path form works here
+	tFiles[sPath] = sText
+	return true
+end
+local Kin = package.loaded["pz2qol.kin"]
+Kin.sStorePath = nil
+tCalls = {}
+fireUI(oHUD, "PZ2QoL_StoreLoad", "L1")
+local tData = calls("Trigger")
+check(#tData == 1 and tData[1].tArgs[1] == "PZ2QoL_StoreData" and tData[1].tArgs[2] == "L1" and tData[1].tArgs[3] == true and tData[1].tArgs[6] == "{}", "no file yet: created, answered with {}")
+local sPath = next(tFiles)
+check(sPath ~= nil and string.find(sPath, "PZ2QoL", 1, true) and string.find(sPath, "userdata.json", 1, true), "the file is in the mod folder (" .. tostring(sPath) .. ")")
+tCalls = {}
+local sBig = '{"kinAssign":{"Lemur Valley":{"101":{"name":"Lemur Woods","species":["RingTailedLemur"]}}},"pad":"' .. string.rep("x", 30000) .. '"}'
+fireUI(oHUD, "PZ2QoL_StoreSave", "S1", sBig)
+local tSaved = calls("Trigger")[1]
+check(tSaved and tSaved.tArgs[1] == "PZ2QoL_StoreSaved" and tSaved.tArgs[3] == true and tFiles[sPath] == sBig, "saved and verified")
+-- a restart: the path is found again from the existing file
+Kin.sStorePath = nil
+tWrites = {}
+tCalls = {}
+fireUI(oHUD, "PZ2QoL_StoreLoad", "L2")
+tData = calls("Trigger")
+local sJoined = ""
+for _, c in ipairs(tData) do sJoined = sJoined .. c.tArgs[6] end
+check(#tData == 3 and tData[1].tArgs[5] == 3 and sJoined == sBig and #tWrites == 0, "read back in chunks after a restart, nothing written")
+tCalls = {}
+fireUI(oHUD, "PZ2QoL_StoreSave", "S2", '{"a":"caf\195\169"}')
+check(calls("Trigger")[1].tArgs[3] == false and tFiles[sPath] == sBig, "non-ASCII text refused, the file kept")
+tCalls = {}
+fireUI(oHUD, "PZ2QoL_StoreSave", "S3", "not json")
+check(calls("Trigger")[1].tArgs[3] == false and tFiles[sPath] == sBig, "anything but a JSON object refused")
+-- no file functions in this game build: a clear no
+local fnRead = api.debug.ReadStringFromFile
+api.debug.ReadStringFromFile = nil
+Kin.sStorePath = nil
+tCalls = {}
+fireUI(oHUD, "PZ2QoL_StoreLoad", "L3")
+check(calls("Trigger")[1].tArgs[3] == false, "no file access: answered false (the UI keeps the data for the session)")
+api.debug.ReadStringFromFile = fnRead
+Kin.sStorePath = nil
+
 api.world.GetWorldAPIs = fnSavedWorld
 
 -----------------------------------------------------------------------

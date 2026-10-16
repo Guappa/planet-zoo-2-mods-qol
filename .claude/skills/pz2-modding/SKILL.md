@@ -32,7 +32,8 @@ an afterthought:
    offline activation. Each new game build needs one online launch with Steam online.
 2. **Mods are drop-in folders.** `Win64\ovldata\<Pack>\`, with `Manifest.xml` and OVLs. No game
    files are changed, and nothing is written to saves or the profile. Uninstalling means deleting
-   the folder.
+   the folder. Data a mod must keep (e.g. PZ2QoL's habitat assignments) goes in ONE file inside its
+   own pack folder (`userdata.json`), never elsewhere; updates must keep it.
 3. **Online (Franchise) safety.** Never change what is sent to Frontier's servers. Any automation
    that acts online:
    - is off by default, Franchise only, and only ever started by a user click (never a timer or

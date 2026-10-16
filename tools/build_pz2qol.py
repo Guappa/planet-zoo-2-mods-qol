@@ -179,9 +179,18 @@ def main():
 
     if args.install:
         target = os.path.join(args.install, "Win64", "ovldata", PACK)
+        # keep the player's data file (habitat assignments...)
+        keep = None
+        data = os.path.join(target, "userdata.json")
+        if os.path.exists(data):
+            with open(data, "rb") as f:
+                keep = f.read()
         if os.path.exists(target):
             shutil.rmtree(target)
         shutil.copytree(dest, target)
+        if keep is not None:
+            with open(data, "wb") as f:
+                f.write(keep)
         print("installed to", target, "(delete that folder to uninstall)")
 
 

@@ -29,7 +29,7 @@ import { PROGRAMME_DEFAULTS, conceptionChance, planProgramme, youngQuality } fro
 import { hideKinCard, kinBadge, sexClass, sexSymbol } from '/js/mods/pz2qol/kinui.js';
 import { clear, h, icon, setClass, setText } from '/js/mods/pz2qol/ui.js';
 import { breadcrumb, reportError } from '/js/mods/pz2qol/errors.js';
-import { getAssignments, onAssignments, toggleAssignment } from '/js/mods/pz2qol/kinassign.js';
+import { getAssignments, onAssignments, toggleAssignment, assignmentStorage } from '/js/mods/pz2qol/kinassign.js';
 import {
     btn as kitBtn, closeButton, closeOtherPanels, countPills, makeGuard, makeScroll, panelApi, placePanel, refreshBars, registerPanel,
     remPx, restoreScroll, scrollBoxTo, speciesName, switchEl as kitSwitch, trunc, wheelScroll,
@@ -292,6 +292,7 @@ function assignEl(model, c) {
     const others = c.assigned.filter(x => x !== S.species).map(speciesName);
     const toggle = () => {
         toggleAssignment(model, c.id, S.species, c.name);
+        if (assignmentStorage() === 'memory') notice('PZ2QoL could not use its data file (Win64\\ovldata\\PZ2QoL\\userdata.json), so habitat assignments are kept only until the game closes.', 'warn');
         renderAll();
     };
     const kids = [];
