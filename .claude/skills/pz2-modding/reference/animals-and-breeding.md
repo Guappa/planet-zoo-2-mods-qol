@@ -139,3 +139,41 @@ All **offline** (decompiled `editors.animal.animalmovementeditmode.lua`,
   at a time, each confirmed by the next scan (`bHasTransportJob`) before the next, and in a
   Franchise (or unknown-mode) zoo only with the player's opt-in (`allowPlansOnline`, off by default).
 - Park name: `park:GetParkName()` (world API `park`). PZ2QoL keys the player's habitat assignments by it.
+
+## Breeding-programme facts (2026-10-15, all **offline**: decompiled Lua, UI, exe strings)
+
+- **The medal (none/bronze/silver/gold) is the appeal state, not a genetics score.** The info panel's
+  `geneticsRank` = `animals:GetAppealStateForInfoPopUpUI(e)` (variants: `GetAppealStateForTradingUI`,
+  `GetAppealStateFromGUID`, `exhibits:GetAnimalUIDAppealStateForInfoPopUp`). Thresholds are native;
+  it can't be predicted for offspring from Lua.
+- Gene grades: `GetGeneticGrades(e)` -> `{nSize, nLongevity, nFertility, nImmunity}` 0..1;
+  fertility and immunity are out of 6 loci, size and longevity out of 12 (Compare Mates divides
+  by these). `geneticDiversity` is a Release-to-Wild group metric only.
+- Conception chance: `animals:CalculateProbabilityOfBreedingEvent(welfareMother, welfareFather,
+  fertMother*6, fertFather*6, GetAnimalSpeciesFertility(sp), GetMatingResearchBonus(sp))` -> 0..1,
+  a pure function (best case welfare 1).
+- Social: `GetSocialRequirements(sp)` -> `{nMin, nMax}` adults; `GetSocialityData(e)` -> members
+  `{nID, nGender, nAlpha, nType}` + `nMaturationType` (`MaturationType_RejectMales|RejectFemales|
+  RejectAll|RejectNone`); outsiders: `GetIntegrationProgress(e)`, `GetRejectionReason(e)`
+  (`RejectionReason_Overpopulation|Maturation|GenderRatio`). `GetMateData(e).bIsBeta` (betas
+  don't mate), `.bIsMonogamous`; `GetMatingMonogamyIcon(a, b, 0)` -> "ring" (mates), "IconLock"
+  (bonded elsewhere). Exe-only, signatures unknown: `GetMonogamyRule`, `GetAlphaRule`,
+  `DoesSpeciesFormPacks`; enums `Monogamy|Polygyny|Polyandre|Polygyandry`,
+  `AlphaMale|AlphaFemale|AlphaPair|AlphaNone`. Zoopedia datastore (JS, after it is populated):
+  `['Zoopedia','Animals','Animal_<id>','Social'|'Habitat']` with group counts, matingSystem and
+  `maxMale` / `maxFemale`.
+- Space: required `animals:GetSpaceRequirementsInHabitatForSpecies(h, sp)` -> `{nLandArea,
+  nWaterArea, nClimbArea, nDeepSwimArea, nFlyArea}` (for the current population); available
+  `habitat:GetHabitatSpeciesOverallNavAreaData(h, sp)` -> `bCalculating, {...}` (wait while
+  calculating). No per-animal figure. `habitat:GetHabitatSpeciesSuitability(h, sp)` has `Space`,
+  `SocialGroup`...; `habitat:IsHabitatTooCrowded(h)`.
+- **Moving has no stress stat.** Costs of a move are outsider integration (or rejection) when
+  joining a group, and mourning when a bonded mate is left (`GetCurrentMournTimeForUI(e)`).
+  Pregnancy does not block a move.
+- Breeding timing: `GetSpeciesBreedingSeasons(sp)` (array by season), `GetSpeciesFertilityBounds(sp)`
+  -> `nMaturityAge, nInfertilityAge` years (>900 = never), `GetMatingWarnings(e, 0)` ->
+  `{tLabelsArray, bMatingBlocked, bInfertile}` (Interbirth is a per-animal flag only).
+  `IsInfertile` is probably also true under contraception: sterile = infertile and not contracepted.
+- Mixing: `animals:DoAllSpeciesCohabit({[sp]=n})`; skip exhibit species (`exhibits:IsExhibitSpecies`)
+  and boids (`animals:IsSpeciesABoid`).
+

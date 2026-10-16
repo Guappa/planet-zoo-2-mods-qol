@@ -35,3 +35,4 @@ One line per update: date, what changed, why.
 - 2026-10-15: Crash cause: Kin scanned during the intro sequence; per-world APIs crash natively outside a park. Kin now only uses the running park's heat map manager world.
 - 2026-10-15: Park managers load through the Environment's own require copy; patches now applied in Environment._LoadManagerModule. tools/install_pz2qol.py installs with sha1 verification.
 - 2026-10-15: Species board: habitat assignments (per park, localStorage, park name from park:GetParkName) and breeding-aware Suggest fixes.
+- 2026-10-15: Breeding-programme facts: medal = appeal state, gene scales, conception probability, social/outsider/maturation APIs, space APIs, move costs, breeding timing (animals-and-breeding).
