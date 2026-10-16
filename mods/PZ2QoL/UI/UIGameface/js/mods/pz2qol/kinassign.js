@@ -1,9 +1,9 @@
 // Habitat assignments for the Species board: which habitats the player has
 // set aside for which species ("these five habitats are for lemurs").
-// Kept per park (by the park's name from the Lua side) in the player's data
-// file (userstore.js: Win64\ovldata\PZ2QoL\userdata.json), so they outlast
-// closing the board and restarting the game. Nothing is written to the
-// save or the profile. Assignments are keyed by habitat id; the stored name
+// Kept per park (by the park's name from the Lua side) through userstore.js,
+// so they outlast closing the board. In retail they last only until the game
+// closes: the game's file calls are stubs, so the store stays in 'memory'
+// (2026-10-16). Nothing is written to the save or the profile. Assignments are keyed by habitat id; the stored name
 // is only for reading the file (habitat names differ between the game's
 // calls and change when the player renames a habitat).
 import { normalizeAssignments } from '/js/mods/pz2qol/kinboardcore.js';

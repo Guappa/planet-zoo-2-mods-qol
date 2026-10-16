@@ -124,7 +124,7 @@ function install() {
     });
     engine.on('PZ2QoL_StoreSaved', (reqId, ok) => {
         if (ok !== true) {
-            reportError('mod', 'PZ2QoL could not save its data file; changes are kept until the game closes', 'Win64\\ovldata\\PZ2QoL\\userdata.json', { silent: true });
+            reportError('mod', 'PZ2QoL could not keep its data; changes last until the game closes', 'PZ2QoL_StoreSave', { silent: true });
             setStatus('memory');
         }
     });

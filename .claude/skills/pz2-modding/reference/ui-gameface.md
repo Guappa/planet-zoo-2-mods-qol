@@ -66,6 +66,8 @@
   in `pz2qol.kin.lua` (events `PZ2QoL_StoreLoad` -> `PZ2QoL_StoreData` chunks,
   `PZ2QoL_StoreSave` -> `PZ2QoL_StoreSaved`). Changes made before the file is read are replayed
   on top of it, so updates must be idempotent (set on/off, not toggle).
+  **In retail the file store always ends in `memory`** (the api.debug file calls are stubs, see
+  lua-runtime.md), so PZ2QoL's habitat assignments last only until the game closes.
 
 ## Preact runtime: hooking game components (used by Kin)
 

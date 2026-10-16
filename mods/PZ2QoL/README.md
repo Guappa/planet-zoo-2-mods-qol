@@ -182,8 +182,8 @@ which male and female in the same habitat are related and would inbreed.
   animal in the preview to keep it or send it; **Send N to the trade centre** puts the moves in the
   plan, and Execute runs them one at a time.
 - **Habitat assignments:** in the Species board, **☆ Assign to <species>** on a habitat's column sets
-  it aside for that species (kept per park, in `PZ2QoL\userdata.json`, so it survives closing the
-  board and restarting the game). Suggest fixes then moves the species only into its
+  it aside for that species (per park; it lasts until you close the game, because for now the game
+  gives mods no place to keep data). Suggest fixes then moves the species only into its
   assigned habitats and never puts another species there; the column also flags other species
   living in it. **Execute plan** then moves the animals through the
   game's own Move (a keeper boxes and carries each one), **one at a time**, waiting for the game to
@@ -209,15 +209,13 @@ The mod is a folder in the game's data directory:
     Manifest.xml
     Main.ovl          Lua
     UI\PZ2QoLUI.ovl   UI overlay (HTML/JS/CSS)
-    userdata.json     your data (habitat assignments); created by the mod
 ```
 
 - **Build:** `python tools/build_pz2qol.py --cobra-tools <cobra-tools checkout> --python <python with cobra-tools deps>`
 - **Build and install:** add `--install "<Planet Zoo 2 folder>"`.
-- **Update:** copy the new `Win64` folder over the old one (Replace). `userdata.json` is kept.
-- **Uninstall:** delete `Win64\ovldata\PZ2QoL` (this also removes your habitat assignments). No
-  game files are modified, and nothing is written to saves or the player profile; the mod's only
-  file of its own is `userdata.json` in its folder.
+- **Update:** copy the new `Win64` folder over the old one (Replace).
+- **Uninstall:** delete `Win64\ovldata\PZ2QoL`. No game files are modified, and nothing is
+  written to saves or the player profile.
 
 The game will show its standard one-time "modifications detected" notice.
 

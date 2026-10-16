@@ -50,3 +50,4 @@ One line per update: date, what changed, why.
 - 2026-10-16: api.debug file calls: OS paths failed in game (store_unavailable); use virtual paths (/run/ = install folder); per-path trace marks.
 - 2026-10-16: Thin out (kincull.js): per-habitat target from the species room x fill, keep value = genes, fertility, relatives, role; breeding core and pregnant females protected.
 - 2026-10-16: Species board Thin out preview (kincull.js) and its harness scenario kin_cull.mjs (testing).
+- 2026-10-16: api.debug Read/WriteStringToFile are retail stubs (every path false, /run/ and /tmp/ too); the park save (worldserialisation client) is the only retail persistence, documented but unused; the file store always ends in memory.

@@ -46,6 +46,19 @@
   and `/tmp/PZ2QoL_userdata.json`, verifies by reading back, and marks `store_p<N>_found|created|err|false|diff`
   per try and `store_found` / `store_created` / `store_unavailable` in the debug trace. Only ASCII JSON objects
   are written (the UI escapes non-ASCII as `\uXXXX`).
+  **Proven 2026-10-16 (Y, two loads): `WriteStringToFile` returns `false` for every form, `/run/`
+  and `/tmp/` included (`store_p1..p4_false`), and no file appears in the install, the profile or
+  Temp. Treat both calls as retail stubs: a mod cannot keep files.** Every game caller is a debug
+  manager (camera debug, scenario editor, blueprint debug save). Writable VFS mounts named in the
+  exe strings, untried and probably stubbed the same way: `/usr/save/<id>/` (Saved Games/Frontier
+  Developments/Planet Zoo 2/<steamid>), `/usr/data/Config_Local/` (AppData/Local/...), `/usr/docs/`.
+- **The only persistence the retail game gives Lua is the park save** (**offline**, no mod uses it
+  yet): `api.world.GetWorldAPIs().worldserialisation:RegisterWorldSerialisationClient(sName,
+  nVersion, fnSave(tSave), fnLoad(tLoad, nVersion) -> true, fnCanLoadOldVersion(n))` in a park
+  manager's `Init`, then `UnregisterWorldSerialisationClient(sName)` in `Shutdown`
+  (`managers.guestcounthistorymanager.lua`). fnSave fills the table when the game saves. Untested:
+  what loading such a save does once the mod is removed (the exe has no message for unknown
+  clients), and what it does to Franchise zoos. PZ2QoL does not use it (the developer decides).
 - **`package.loadlib` works from game Lua.** **proven**: the trace DLLs load.
   - With `"*"` it only loads the DLL, so `DllMain` runs.
   - With a function name it returns that export as a C function. That export must not use the Lua

@@ -304,7 +304,11 @@ function assignEl(model, c) {
     const others = c.assigned.filter(x => x !== S.species).map(speciesName);
     const toggle = () => {
         toggleAssignment(model, c.id, S.species, c.name);
-        if (assignmentStorage() === 'memory') notice('PZ2QoL could not use its data file (Win64\\ovldata\\PZ2QoL\\userdata.json), so habitat assignments are kept only until the game closes.', 'warn');
+        // once per session: the game gives mods no place to keep data (its file calls are stubs)
+        if (assignmentStorage() === 'memory' && !S.memoryNoted) {
+            S.memoryNoted = true;
+            notice('Habitat assignments last until you close the game. Planet Zoo 2 gives mods no place to keep them yet.', 'info');
+        }
         renderAll();
     };
     const kids = [];
