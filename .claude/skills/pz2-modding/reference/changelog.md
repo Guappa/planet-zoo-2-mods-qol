@@ -31,3 +31,4 @@ One line per update: date, what changed, why.
 - 2026-10-15: DatabaseError names resolve via the storage mode's tWorldAPIs.franchise (not api.world.GetWorldAPIs() in the message receiver). Request 42 refused with Unknown and NotAllowed, no crash.
 - 2026-10-15: Species board: the game's move sequence and valid-destination checks, location types, busy-animal checks, game mode in a park (animals-and-breeding); board events (game-data-and-events).
 - 2026-10-15: Species board: shared panel kit (kinpanel.js), pointer drag rules (preventDefault, user-select, click suppression), kin_board harness scenario and two harness pitfalls (async waitForFunction, shared kit selectors) (ui-gameface, testing).
+- 2026-10-15: Pitfall: installs over the Y: network share can be incomplete; verify by hash.

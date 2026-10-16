@@ -79,3 +79,8 @@ python tools/build_pz2qol.py --cobra-tools <cobra-tools dir> --python <venv pyth
   (`find . -name "%SystemDrive%" -prune -exec rm -rf {} +`); `.gitignore` already lists them.
 - Some repo files have CRLF line endings, so exact-text edits from scripts can miss. Normalise or
   rewrite the file.
+- **Copying to the second PC's `Y:` drive can silently come up short.** A plain `rm -rf` + `cp -r`
+  over the network share once left `UI\PZ2QoLUI.ovl` and most `dbg` DLLs missing while reporting
+  success. After any install there, compare every file by hash (sha1) against the build and
+  recopy the ones that differ (2026-10-15).
+
