@@ -158,3 +158,20 @@ test('no needless moves: an equal layout with fewer moves wins', () => {
     assert.equal(plan.moves.length, 1, JSON.stringify(plan.moves));
     assert.equal(plan.moves[0].id, 'd');
 });
+
+test('pulls a breeder out of the trade centre into a habitat that needs one', () => {
+    // habitat 1: two unrelated females, no male; an unrelated male waits at the trade centre
+    const animals = [an('f1', F, '1'), an('f2', F, '1'), an('m', M, '', [], { lt: 'trade' })];
+    const model = buildKinModel(snap(animals));
+    const plan = planProgramme(model, 'Lion', { mating: 'polygyny', social: { max: 5 } }, DEST(['1', '2']));
+    assert.deepEqual(plan.moves.map(m => [m.id, String(m.to)]), [['m', '1']]);
+    assert.equal(plan.fromTrade, 1);
+    assert.equal(plan.after.breedingPairs, 2);
+});
+
+test('trade centre animals stay put when asked not to use them', () => {
+    const animals = [an('f1', F, '1'), an('m', M, '', [], { lt: 'trade' })];
+    const model = buildKinModel(snap(animals));
+    const plan = planProgramme(model, 'Lion', { mating: 'polygyny' }, DEST(['1']), { options: { useTradeCentre: false } });
+    assert.equal(plan.moves.length, 0);
+});

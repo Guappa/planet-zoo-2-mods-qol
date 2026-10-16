@@ -1371,12 +1371,13 @@ function programmeResult() {
         p.modelRef = model;
         p.results = new Map();
     }
-    if (p.results.has(p.step)) return p.results.get(p.step);
+    const key = `${p.step}|${p.useTrade !== false}`;
+    if (p.results.has(key)) return p.results.get(key);
     let r = null;
     try {
         r = planProgramme(model, p.species, p.info || {}, destFor(model), {
             assignments: getAssignments(model),
-            options: { moveCost: PROG_STEPS[p.step].cost },
+            options: { moveCost: PROG_STEPS[p.step].cost, useTradeCentre: p.useTrade !== false },
         });
         p.error = null;
     }
@@ -1384,7 +1385,7 @@ function programmeResult() {
         p.error = e;
         reportError('ui', 'Species board: the breeding programme failed', e);
     }
-    p.results.set(p.step, r);
+    p.results.set(key, r);
     return r;
 }
 
@@ -1395,6 +1396,12 @@ function placeOfHab(model, hab) {
 // Who it would breed with in its new group, for the plan's reason line.
 function programmeReason(model, a, to, groups, info) {
     if (to === TRADE) return 'no place in a breeding group (to trade or release)';
+    const fromTrade = a.lt === 'trade' && !a.hab;
+    const why = programmeReasonIn(model, a, to, groups, info);
+    return fromTrade ? `from the trade centre: ${why}` : why;
+}
+
+function programmeReasonIn(model, a, to, groups, info) {
     const g = groups.find(x => x.hab === to);
     let best = null;
     for (const b of g ? g.animals : []) {
@@ -1487,6 +1494,19 @@ function programmeEl(model) {
     }
     const system = r.system === 'mixed' && !(p.info && p.info.mating) ? 'Unknown: mixed groups' : (SYSTEM_WORDS[r.system] || SYSTEM_WORDS.mixed);
     const toTrade = r.moves.filter(m => m.to === TRADE).length;
+    const fromTrade = r.fromTrade || 0;
+    const tradeBits = [fromTrade ? `${fromTrade} from the trade centre` : '', toTrade ? `${toTrade} to the trade centre` : ''].filter(Boolean).join(', ');
+    // breeders waiting at the trade centre: use them or not
+    const tradeToggle = r.tradeWaiting > 0 ? h(`div.PZ2QoL_kbTradeUse${p.useTrade !== false ? '.on' : ''}`, {
+        'data-waiting': String(r.tradeWaiting),
+        title: p.useTrade !== false
+            ? `${r.tradeWaiting} breeder${r.tradeWaiting === 1 ? '' : 's'} of this species wait at the trade centre; the programme may bring them into a group. Click to leave them there.`
+            : `Click to let the programme bring the ${r.tradeWaiting} breeder${r.tradeWaiting === 1 ? '' : 's'} waiting at the trade centre into a group.`,
+        onClick: guard('Programme trade centre', () => {
+            p.useTrade = p.useTrade === false;
+            renderAll();
+        }),
+    }, h('span', { text: `${p.useTrade !== false ? '☑' : '☐'} Use the trade centre (${r.tradeWaiting} waiting)` })) : null;
     // head: title, the slider, the buttons
     const steps = h('div.PZ2QoL_kbSteps', null,
         h('span.PZ2QoL_kbStepEnd', { text: 'Fewer moves' }),
@@ -1502,8 +1522,9 @@ function programmeEl(model) {
     wrap.appendChild(h('div.PZ2QoL_kbProgHead', null,
         h('div.PZ2QoL_kbProgTitles', null,
             h('div.PZ2QoL_kbProgTitle', { text: `Breeding programme · ${trunc(name, 24)}` }),
-            h('div.PZ2QoL_kbProgSub', { text: `${system} · ${r.moves.length} move${r.moves.length === 1 ? '' : 's'}${toTrade ? ` (${toTrade} to the trade centre)` : ''}` })),
+            h('div.PZ2QoL_kbProgSub', { text: `${system} · ${r.moves.length} move${r.moves.length === 1 ? '' : 's'}${tradeBits ? ` (${tradeBits})` : ''}` })),
         h('div.PZ2QoL_kpFlex'),
+        tradeToggle,
         steps,
         btn(`Use this plan (${r.moves.length})`, null, useProgramme, { cls: `primary${r.moves.length ? '' : '.disabled'}`, title: 'Put these moves in the plan (it replaces the current plan)' }),
         cancel));

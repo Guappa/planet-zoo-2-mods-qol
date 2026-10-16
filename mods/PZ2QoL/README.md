@@ -167,7 +167,10 @@ which male and female in the same habitat are related and would inbreed.
   relatives together, and sends animals without a place in a group to the trade centre. The
   preview shows breeding pairs, related pairs, expected young and chance of young before → after,
   and each habitat's target group; a slider trades **fewer moves** against **best genetics**.
-  **Use this plan** loads it into the normal plan (Execute, one move at a time).
+  **Use this plan** loads it into the normal plan (Execute, one move at a time). Breeders waiting
+  at the **trade centre** (bought, or sent there) are part of it: the programme brings them into a
+  group where they breed best ("1 from the trade centre"); **Use the trade centre (N waiting)**
+  switches that off.
 - **Habitat assignments:** in the Species board, **☆ Assign to <species>** on a habitat's column sets
   it aside for that species (kept per park, in `PZ2QoL\userdata.json`, so it survives closing the
   board and restarting the game). Suggest fixes then moves the species only into its

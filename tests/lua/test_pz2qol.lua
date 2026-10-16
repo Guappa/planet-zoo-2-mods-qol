@@ -958,6 +958,34 @@ fireUI(oHUD, "PZ2QoL_KinMove", "m9", "x78", "101")
 r = lastMoveResult()
 check(r and r[3] == false, "exhibit animals are not moved from here")
 
+-- out of the trade centre: animal 5 waits there
+animalsAPI.GetCurrentLocationType = function(self, e) return tParkAnimals[e] and tParkAnimals[e].nLocationType or 1 end
+local fnAssigned = animalsAPI.GetAssignedHabitatEntityID
+animalsAPI.RequestTransportToAssignedHabitat = function(self, e) table.insert(tMoveCalls, "Return:" .. e); tJobs[e] = true end
+tParkAPIs.habitat.GetAllCompleteHabitats = function(self) return { 101, 106 } end
+tJobs[5] = false
+tCalls = {}
+tMoveCalls = {}
+fireUI(oHUD, "PZ2QoL_KinMove", "t1", "5", "106")
+r = lastMoveResult()
+check(r and r[3] == true and moveCalls("Transport:5>106/7") == 1, "from the trade centre into a habitat: the usual Move")
+tJobs[5] = false
+animalsAPI.GetAssignedHabitatEntityID = function(self, e) return e == 5 and 106 or fnAssigned(self, e) end
+tCalls = {}
+tMoveCalls = {}
+fireUI(oHUD, "PZ2QoL_KinMove", "t2", "5", "106")
+r = lastMoveResult()
+check(r and r[3] == true and moveCalls("Return:5") == 1 and moveCalls("Transport:5>106/7") == 0, "back to its own habitat: the game's Return to habitat")
+tJobs[5] = false
+tJobs[3] = false
+tCalls = {}
+tMoveCalls = {}
+fireUI(oHUD, "PZ2QoL_KinMove", "t3", "3", "101")
+r = lastMoveResult()
+check(r and r[3] == false and string.find(r[4], "already lives there", 1, true), "a habitat animal is still refused a move to its own habitat")
+animalsAPI.GetAssignedHabitatEntityID = fnAssigned
+
+
 -- breeding programme: the species facts, asked on demand
 animalsAPI.Monogamy = 11
 animalsAPI.Polygyny = 12

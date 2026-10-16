@@ -17,6 +17,10 @@
 // maximum and the habitat's space (estimated per adult from the game's own
 // requirement for the current population).
 //
+// Breeders waiting at the trade centre (bought, or sent there) count as
+// breeders with no group: the search may bring them into a habitat
+// (option useTradeCentre, on by default).
+//
 // Search: start from the current layout, then improve by moving one breeder
 // (to another allowed habitat, or out to the trade centre) or swapping two
 // breeders of the same sex, until nothing improves. Every move costs a
@@ -36,6 +40,7 @@ export const PROGRAMME_DEFAULTS = Object.freeze({
     lineBonus: 0.01,         // per distinct family line in a habitat (future flexibility)
     maxEvaluations: 60000,
     defaultCapacity: 8,
+    useTradeCentre: true,    // breeders waiting at the trade centre may join a group
 });
 
 const MATING = new Set(['monogamy', 'polygyny', 'polyandry', 'mixed']);
@@ -269,7 +274,9 @@ export function planProgramme(model, species, info = {}, destinations = null, { 
     const all = Array.from(model.animals.values()).filter(a => a.species === species && !a.exhibit && a.alive !== false);
     const byId = new Map(all.map(a => [a.id, a]));
     const canMoveA = a => !a.moving && (a.lt === 'habitat' || a.lt === 'trade' || (!a.lt && !!a.hab));
-    const breeders = all.filter(a => isBreeder(a, info) && canMoveA(a));
+    const inTrade = a => a.lt === 'trade' && !a.hab;
+    const breeders = all.filter(a => isBreeder(a, info) && canMoveA(a) && (opts.useTradeCentre || !inTrade(a)));
+    const tradeWaiting = all.filter(a => inTrade(a) && isBreeder(a, info) && canMoveA(a)).length;
     const home = new Map(all.map(a => [a.id, a.hab || (a.lt === 'trade' ? TRADE : 'away')]));
     // where the species may live
     const assign = normalizeAssignments(assignments);
@@ -389,11 +396,17 @@ export function planProgramme(model, species, info = {}, destinations = null, { 
     const moves = [];
     for (const a of breeders) {
         const to = layout.get(a.id);
-        if (to !== home.get(a.id)) moves.push({ id: a.id, to, reason: to === TRADE ? 'no place in a breeding group' : 'breeding programme' });
+        if (to === home.get(a.id)) continue;
+        const fromTrade = home.get(a.id) === TRADE;
+        moves.push({ id: a.id, to, fromTrade, reason: to === TRADE ? 'no place in a breeding group' : fromTrade ? 'from the trade centre into a breeding group' : 'breeding programme' });
     }
     return {
         system,
         moves,
+        // breeders taken out of the trade centre / waiting there (and usable)
+        fromTrade: moves.filter(m => m.fromTrade).length,
+        tradeWaiting,
+        usedTradeCentre: !!opts.useTradeCentre,
         score, startScore,
         evaluations: evals,
         before: programmeStats(ctx, startLayout),

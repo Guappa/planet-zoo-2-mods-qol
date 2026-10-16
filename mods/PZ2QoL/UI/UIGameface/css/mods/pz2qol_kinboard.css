@@ -681,3 +681,8 @@
 .PZ2QoL_kbGroupEmpty { flex-shrink: 0; padding: 0.3rem 0; font-size: 0.76rem; color: var(--qol-ink-faint); }
 .PZ2QoL_kbGroupLeaveHead { flex-shrink: 0; margin-top: 0.45rem; font-size: 0.64rem; font-weight: bold; letter-spacing: 0.06rem; text-transform: uppercase; color: var(--qol-ink-faint); }
 .PZ2QoL_kb .PZ2QoL_kbProg .PZ2QoL_kpEmpty { flex-direction: column; }
+
+/* breeding programme: use the animals waiting at the trade centre */
+.PZ2QoL_kbTradeUse { display: flex; flex-direction: row; align-items: center; height: 1.9rem; padding: 0 0.7rem; margin-right: 0.6rem; border-radius: 0.95rem; background-color: rgba(89, 105, 67, 0.1); color: var(--qol-olive); font-size: 0.78rem; cursor: pointer; }
+.PZ2QoL_kbTradeUse.on { background-color: rgba(79, 138, 134, 0.18); color: var(--qol-teal); }
+.PZ2QoL_kbTradeUse:hover { background-color: rgba(79, 138, 134, 0.28); }

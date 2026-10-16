@@ -133,6 +133,13 @@ All **offline** (decompiled `editors.animal.animalmovementeditmode.lua`,
   picks the centre and books the keeper. **Pitfall (proven):** `AttemptRequestToTransportAnimalToTarget(e,
   tc, nType)` (as in `RelocateAnimalsPopup._AttemptSendToTradeCentre`) returns true for a habitat animal
   but nothing happens: no transport job, the animal stays. Used in `pz2qol.kin.lua` `Kin.Move`.
+- **Out of the trade centre** (`FacilityInfoPopUp` trade centre tab, **offline**): Move opens the
+  same `AnimalMovementMode` as for habitat animals (so `AttemptRequestToTransportAnimalToTarget`
+  works from there); **Return to habitat** is `animals:RequestTransportToAssignedHabitat(e)` (the
+  animal keeps its assigned habitat while it waits). Location: `animals:GetCurrentLocationType(e)`
+  vs `animals.CurrentLocationType_TradeCentre`. `Kin.Move` uses Return when the target is the
+  animal's own habitat, else the usual Move. The breeding programme counts trade-centre breeders
+  (`lt == 'trade'`) as breeders without a group (`useTradeCentre`, default on).
 - **Busy animals:** `animals:GetAnimalTransportData(e).bHasTransportJob`, `IsBoxAnimating`,
   `IsBoxingClaimed` (the info panel disables Move on these); `api.planetHub.IsPlayerAnimalMovementEnabled()`.
 - `animals:GetUIAnimalListDataForIDs` location types: `animals.CurrentLocationType_Habitat`,

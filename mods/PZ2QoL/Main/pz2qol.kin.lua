@@ -1118,8 +1118,24 @@ Kin.Move = function(self, oUI, sReq, sId, sTo)
 		return answer(true, "")
 	end
 	if not bTrade then
+		-- waiting at the trade centre: back to its own habitat is the trade
+		-- centre panel's "Return to habitat"; to another habitat, the usual Move
+		local bAtTrade = false
+		pcall(function()
+			bAtTrade = animals:GetCurrentLocationType(e) == animals.CurrentLocationType_TradeCentre
+		end)
 		if call(animals, "GetAssignedHabitatEntityID", e) == nDest then
-			return answer(false, "It already lives there.")
+			if not bAtTrade then
+				return answer(false, "It already lives there.")
+			end
+			if call(tAPIs.staff, "CanStaffDeliverAnimalToFacility", e, nDest) == false then
+				return answer(false, "No keeper can reach that habitat (check the paths and the gates).")
+			end
+			local bOk = pcall(animals.RequestTransportToAssignedHabitat, animals, e)
+			if not bOk then
+				return answer(false, "The game refused to return it to its habitat.")
+			end
+			return answer(true, "")
 		end
 		local guid = call(animals, "EntityIDToAnimalGUID", e)
 		local bOk, sReason = self:_HabitatOk(tAPIs, nDest, { guid })

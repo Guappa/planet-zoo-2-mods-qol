@@ -112,6 +112,15 @@ Storage-mode Lua handlers: `startscreen.globe.animalstoragehubmode.lua` (`OnItem
   (2026-10-15 20:13), names resolve. Request 42 has since been refused with `Unknown` and with
   `NotAllowed`, and neither crashed. Which numbers these are is still unknown; the debug trace now
   spells out the raw code after the name (`srv_code`).
+- **Code ↔ name, proven from `srv_code` (second PC, 2026-10-15 23:12–23:26):** `Unknown` = **255**
+  (6 of 6, request 42), `NotAllowed` = **5** (3 of 3, request 28). So the "code 5" before the two
+  19:42/19:50 crashes was `NotAllowed`. `NotAllowed` on request 42 has since come back 20+ times
+  with pauses between requests, and none of them crashed. The crash therefore needs more than
+  code 5. Both crashes followed a 255 by seconds, and one came after a request sent 0.5 s after
+  that 255. Rapid requests after a refusal are the likely trigger.
+- Other unnamed pairs seen in the same session, while no mod request was running (vanilla
+  background or player actions): 255 on request 49 (16×), 255 on 44 (6×), 5 on 47 (7×), 4 on 32
+  and 28. None crashed at the time.
 - Rule for automation: after any unnamed code on a listing, stop the run. Pause after every
   request, even a refused one, and wait until `franchise:IsDatabaseOperationInProgress()` is
   false before sending the next.

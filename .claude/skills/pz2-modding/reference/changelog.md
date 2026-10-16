@@ -44,3 +44,6 @@ One line per update: date, what changed, why.
 - 2026-10-16: Fertility over a life: IsInfertile also covers not-yet-mature adults; elderly = GetAgeQuarterForUI 3; GetSpeciesLongevity; game's fertile-time-left formula; PZ2QoL fertilityOf / speciesFacts.
 - 2026-10-16: archives-and-build: no personal user name in machine paths.
 - 2026-10-16: api.debug Read/WriteStringToFile, GetAgeQuarterForUI, GetSpeciesLongevity, AttemptToSendToTradeCentre are all named in the retail exe strings.
+
+- 2026-10-16: game-data-and-events: Unknown = 255, NotAllowed = 5 (proven from srv_code); code 5 alone doesn't crash. Unnamed codes seen on requests 49/44/47/32. debugging: 00:14 crash without a dump, probably vanilla.
+- 2026-10-16: Out of the trade centre: AnimalMovementMode as for habitats, Return = RequestTransportToAssignedHabitat; breeding programme pulls trade-centre breeders.
