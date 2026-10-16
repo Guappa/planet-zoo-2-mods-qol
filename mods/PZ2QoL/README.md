@@ -1,4 +1,4 @@
-# PZ2QoL: Market & Storage Tools for Planet Zoo 2
+# PZ2QoL: The Curator's Toolkit for Planet Zoo 2
 
 Quality-of-life additions for the hub's **Animal Market** (trading) and **Animal Storage** screens, in
 Franchise, Sandbox and Career. The mod also **shows errors** that the game normally drops, so a menu

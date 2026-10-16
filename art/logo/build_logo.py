@@ -582,7 +582,7 @@ for v in title.data.vertices:
     v.co = wrap(v.co.x, v.co.y + RIB_YC + 0.02, v.co.z)
 link(title); smooth(title, 35); set_mat(title, MAT_TEXT)
 
-subtitle = text_mesh("Subtitle", "MARKET & STORAGE TOOLS", "BarlowCondensed-ExtraBold.ttf",
+subtitle = text_mesh("Subtitle", "THE CURATOR’S TOOLKIT", "BarlowCondensed-ExtraBold.ttf",
                      2.7, 0.06, 0.008, spacing=1.02)
 for v in subtitle.data.vertices:
     v.co = (v.co.x, v.co.y - 1.3, v.co.z + 0.18)
