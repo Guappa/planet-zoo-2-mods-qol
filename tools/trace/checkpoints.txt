@@ -180,3 +180,4 @@ js_kin_plan_start
 js_kin_plan_end
 kin_move_ok
 kin_move_failed
+kin_park_world

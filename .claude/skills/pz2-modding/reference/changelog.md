@@ -32,3 +32,4 @@ One line per update: date, what changed, why.
 - 2026-10-15: Species board: the game's move sequence and valid-destination checks, location types, busy-animal checks, game mode in a park (animals-and-breeding); board events (game-data-and-events).
 - 2026-10-15: Species board: shared panel kit (kinpanel.js), pointer drag rules (preventDefault, user-select, click suppression), kin_board harness scenario and two harness pitfalls (async waitForFunction, shared kit selectors) (ui-gameface, testing).
 - 2026-10-15: Pitfall: installs over the Y: network share can be incomplete; verify by hash.
+- 2026-10-15: Crash cause: Kin scanned during the intro sequence; per-world APIs crash natively outside a park. Kin now only uses the running park's heat map manager world.

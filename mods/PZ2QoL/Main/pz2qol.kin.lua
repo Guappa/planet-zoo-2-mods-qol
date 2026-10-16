@@ -257,14 +257,26 @@ local function geneStrings(t)
 	return tOut
 end
 
-local function worldAPIs()
-	local bOk, t = pcall(function() return api.world.GetWorldAPIs() end)
-	return bOk and type(t) == "table" and t or nil
+-- The park's world APIs, but ONLY while a park is really running: its heat
+-- map manager exists (it is a park-only manager) and ticked within the last
+-- second. Per-world APIs called in another world (the intro sequence, the
+-- start screen) can crash natively, which pcall cannot catch (seen in game:
+-- exhibits:GetAllAnimalIDs during the intro, 2026-10-15).
+Kin._ParkWorld = function(self)
+	local oHM = self.oHeatMapManager
+	if oHM == nil or self.nLastTick == nil or now() - self.nLastTick > self.nTickFresh then
+		return nil
+	end
+	local t = oHM.tWorldAPIs
+	if type(t) ~= "table" then
+		return nil
+	end
+	mark("kin_park_world")
+	return t
 end
 
--- The park's APIs, or nil outside a park.
 Kin._ParkAPIs = function(self)
-	local t = worldAPIs()
+	local t = self:_ParkWorld()
 	if t == nil or type(t.animals) ~= "table" and type(t.animals) ~= "userdata" then
 		return nil
 	end
@@ -732,19 +744,9 @@ Kin.Scan = function(self, oUI, sReason)
 		end
 		self.tJob = nil
 	end
+	-- runs a few dozen animals per frame from the park's frame hook; outside
+	-- a running park _StartPark answers "nopark"
 	self:_StartPark(oUI, sReason)
-	if self.tJob == nil then
-		return
-	end
-	if self.nLastTick == nil or now() - self.nLastTick > self.nTickFresh then
-		local nGuard = 0
-		while self.tJob ~= nil and nGuard < 10000 do
-			nGuard = nGuard + 1
-			if self:_Step(1000) then
-				self:_FinishPark()
-			end
-		end
-	end
 end
 
 -- Called every frame in a park (HeatMapManager.Advance).
@@ -838,7 +840,7 @@ local function entityOf(sId)
 end
 
 Kin.Contracept = function(self, oUI, sId, bOn)
-	local tAPIs = worldAPIs()
+	local tAPIs = self:_ParkWorld()
 	if tAPIs == nil then
 		return self:_SendState(oUI, "failed", "No park is loaded.")
 	end
@@ -858,7 +860,7 @@ Kin.Contracept = function(self, oUI, sId, bOn)
 end
 
 Kin.Locate = function(self, oUI, sId)
-	local tAPIs = worldAPIs()
+	local tAPIs = self:_ParkWorld()
 	local e = entityOf(sId)
 	if tAPIs == nil or e == nil then
 		return self:_SendState(oUI, "failed", "This animal cannot be located.")
@@ -958,7 +960,7 @@ Kin._HabitatOk = function(self, tAPIs, h, tGuids)
 end
 
 Kin.Destinations = function(self, oUI, sReq, sIds)
-	local tAPIs = worldAPIs()
+	local tAPIs = self:_ParkWorld()
 	local function answer(t)
 		pcall(oUI.TriggerEventAtNextAdvance, oUI, "PZ2QoL_KinDestinationsResult", sReq, Kin.Encode(t))
 	end
@@ -1011,7 +1013,7 @@ Kin.Move = function(self, oUI, sReq, sId, sTo)
 		mark(bOk and "kin_move_ok" or "kin_move_failed")
 		pcall(oUI.TriggerEventAtNextAdvance, oUI, "PZ2QoL_KinMoveResult", sReq, bOk == true, sDetail or "")
 	end
-	local tAPIs = worldAPIs()
+	local tAPIs = self:_ParkWorld()
 	if tAPIs == nil or tAPIs.animals == nil then
 		return answer(false, "No park is loaded.")
 	end

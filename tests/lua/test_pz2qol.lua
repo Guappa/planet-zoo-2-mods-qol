@@ -632,9 +632,45 @@ local function snapshotFrom(tChunks)
 	return jsonDecode(table.concat(parts)), table.concat(parts)
 end
 
--- no frame hook yet: the scan runs straight through
+-- No park running (the intro sequence, the start screen): nothing is touched.
+-- In game, a scan there called exhibits:GetAllAnimalIDs in the wrong world
+-- and crashed natively (2026-10-15).
 tCalls = {}
-fireUI(oHUD, "PZ2QoL_KinScan", "test")
+fireUI(oHUD, "PZ2QoL_KinScan", "intro")
+check(kinStates() == "nopark" and #calls("ListData") == 0, "no park running: no scan, no API calls (" .. kinStates() .. ")")
+fireUI(oHUD, "PZ2QoL_KinContracept", "3", true)
+check(#calls("Contracept") == 0, "no park running: no actions either")
+
+-- frame hook (heat map manager's Advance): incremental, original still runs
+local HeatMapManager = {
+	Init = function(self) record("HMInit") end,
+	Advance = function(self) record("HMAdvance") end,
+	Shutdown = function(self) record("HMShutdown") end,
+	ClaimViewModeRequest = function(self, n, s) record("HMClaim", n, s) end,
+	SetCategory = function(self, s) record("HMCategory", s) end,
+	ReleaseViewModeRequest = function(self) record("HMRelease") end,
+	Hide = function(self) record("HMHide") end,
+}
+package.loaded["managers.heatmapmanager"] = HeatMapManager
+require("Managers.HeatMapManager")
+local oHM = setmetatable({ whiteWorldUIAPI = { VM_InbreedingRisk = 9 } }, { __index = HeatMapManager })
+oHM.tWorldAPIs = tParkAPIs -- the manager's own world (HeatMapManager.Init sets it)
+oHM:Init()
+tCalls = {}
+oHM:Advance()
+check(#calls("HMAdvance") == 1, "heat map manager's own Advance still runs")
+
+-- a scan in the running park: a few dozen animals per frame
+local function scan(oView, sReason)
+	fireUI(oView, "PZ2QoL_KinScan", sReason)
+	local n = 0
+	while Kin.tJob ~= nil and n < 200 do
+		n = n + 1
+		oHM:Advance()
+	end
+end
+tCalls = {}
+scan(oHUD, "test")
 local tChunks = kinChunks(oHUD)
 check(#tChunks >= 1, "snapshot sent (" .. #tChunks .. " chunks, states " .. kinStates() .. ")")
 local tSnap, sJson = snapshotFrom(tChunks)
@@ -664,7 +700,7 @@ end
 -- unchanged: no resend
 tCalls = {}
 local nBefore = nParentCalls
-fireUI(oHUD, "PZ2QoL_KinScan", "again")
+scan(oHUD, "again")
 check(#kinChunks(oHUD) == 0 and kinStates() == "same", "unchanged snapshot not resent: " .. kinStates())
 check(nParentCalls - nBefore <= 3, "lineage cached between scans (" .. (nParentCalls - nBefore) .. " new GetParents calls)")
 
@@ -672,32 +708,16 @@ check(nParentCalls - nBefore <= 3, "lineage cached between scans (" .. (nParentC
 tCalls = {}
 Kin.nChunkSize = 150
 tParkAnimals[2].bIsUsingContraceptive = true
-fireUI(oHUD, "PZ2QoL_KinScan", "chunks")
+scan(oHUD, "chunks")
 local tSmall = kinChunks(oHUD)
 check(#tSmall > 3 and tSmall[1][4] == #tSmall, "split into " .. #tSmall .. " chunks")
 local tSnap2 = snapshotFrom(tSmall)
 check(tSnap2 and #tSnap2.animals == 7, "chunks reassemble")
 Kin.nChunkSize = 12000
 
--- frame hook (heat map manager's Advance): incremental, original still runs
-local HeatMapManager = {
-	Init = function(self) record("HMInit") end,
-	Advance = function(self) record("HMAdvance") end,
-	Shutdown = function(self) record("HMShutdown") end,
-	ClaimViewModeRequest = function(self, n, s) record("HMClaim", n, s) end,
-	SetCategory = function(self, s) record("HMCategory", s) end,
-	ReleaseViewModeRequest = function(self) record("HMRelease") end,
-	Hide = function(self) record("HMHide") end,
-}
-package.loaded["managers.heatmapmanager"] = HeatMapManager
-require("Managers.HeatMapManager")
-local oHM = setmetatable({ whiteWorldUIAPI = { VM_InbreedingRisk = 9 } }, { __index = HeatMapManager })
-oHM:Init()
-tCalls = {}
-oHM:Advance()
-check(#calls("HMAdvance") == 1, "heat map manager's own Advance still runs")
 Kin.nPerFrame = 2
 tParkAnimals[2].bIsUsingContraceptive = false
+tCalls = {}
 fireUI(oHUD, "PZ2QoL_KinScan", "ticked")
 check(#kinChunks(oHUD) == 0 and Kin.tJob ~= nil, "scan waits for frames")
 fireUI(oHUD, "PZ2QoL_KinScan", "double")
@@ -754,14 +774,12 @@ tCalls = {}
 fireUI(oPage, "PZ2QoL_KinStorage", "s1")
 check(kinStates() == "nostorage", "outside storage: " .. kinStates())
 
--- outside a park
-api.world.GetWorldAPIs = function() return {} end
-tCalls = {}
-fireUI(oHUD, "PZ2QoL_KinScan", "hub")
-check(kinStates() == "nopark", "no park: " .. kinStates())
--- a new park forgets cached lineage
+-- leaving the park: the cache is cleared and nothing is scanned any more
 oHM:Shutdown()
 check(next(Kin.tStatic) == nil and Kin.oHeatMapManager == nil, "park shutdown clears the cache")
+tCalls = {}
+fireUI(oHUD, "PZ2QoL_KinScan", "hub")
+check(kinStates() == "nopark" and #calls("ListData") == 0, "after the park: " .. kinStates())
 api.world.GetWorldAPIs = fnSavedWorld
 
 -----------------------------------------------------------------------
@@ -808,11 +826,14 @@ tParkAPIs.facilities = { GetTradeCentres = function(self) return { [555] = true 
 tParkAPIs.franchise = { PlanetHubType_FranchiseOnline = 3, GetPlanetHubType = function(self) return 1 end }
 api.ui2.GetEntityName = function(e) return ({ [101] = "Savannah Habitat", [102] = "Reef", [103] = "Pond", [104] = "Plains", [555] = "Trade Centre" })[e] end
 api.world.GetWorldAPIs = function() return tParkAPIs end
-Kin.nLastTick = nil -- run scans straight through again
+-- a park again
+oHM = setmetatable({ whiteWorldUIAPI = { VM_InbreedingRisk = 9 }, tWorldAPIs = tParkAPIs }, { __index = HeatMapManager })
+oHM:Init()
+oHM:Advance()
 
 tCalls = {}
 fireUI(oHUD, "PZ2QoL_KinForget")
-fireUI(oHUD, "PZ2QoL_KinScan", "board")
+scan(oHUD, "board")
 local tBoard = snapshotFrom(kinChunks(oHUD))
 check(tBoard ~= nil, "board snapshot sent (" .. kinStates() .. ")")
 if tBoard then

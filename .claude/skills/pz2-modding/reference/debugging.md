@@ -75,3 +75,15 @@ There is no `io` library and no visible log, so the mod logs by **loading tiny D
 - A freeze at boot came from destroying the probe view inside a UI ready callback. Do view work on
   the startup coroutine.
 - If the browser harness passes but the game shows unstyled UI, check for missing `display:flex`.
+
+## Crash: per-world API called outside a park (2026-10-15, 1.3.0 test build)
+
+- Access violation (0xc0000005, Main thread, 6 s in, world `introsequence`) in
+  `exhibits:GetAllAnimalIDs` called from Kin's scan on the start screen. `api.world.GetWorldAPIs()`
+  hands back APIs there, `habitat:GetHabitats()` even answers, but other per-world calls crash
+  **natively**, which `pcall` cannot catch. **proven** (crash dump `c8e76e3a…`, trace ended at
+  `kin_attached`).
+- Rule: only call park APIs while a park is really running. PZ2QoL Kin uses the world APIs of the
+  park-only `HeatMapManager` instance (its `tWorldAPIs`) and only if its `Advance` ticked within
+  the last second; otherwise it answers `nopark` and touches nothing.
+
