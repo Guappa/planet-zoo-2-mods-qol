@@ -121,7 +121,10 @@ test('plan problems: unsuitable habitat, no trade centre', () => {
     assert.equal(p.length, 2);
     assert.match(p[0].text, /Too cold/);
     assert.match(p[1].text, /cannot be moved/);
-    assert.equal(planProblems(m, [{ id: 'k2', to: TRADE }], Object.assign({}, DEST, { tradeCentre: null })).length, 1);
+    // the trade centre is resolved when the move is made, so it is never a plan problem
+    assert.equal(planProblems(m, [{ id: 'k2', to: TRADE }], Object.assign({}, DEST, { tradeCentre: null })).length, 0);
+    const cols = boardColumns(m, 'Lion', [], Object.assign({}, DEST, { tradeCentre: null }));
+    assert.ok(cols.some(c => c.id === TRADE && c.name === 'Trade Centre'));   // name from the kin snapshot
 });
 
 test('suggestions: the fewest moves that clear the risks', () => {

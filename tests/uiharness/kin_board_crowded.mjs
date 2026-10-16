@@ -75,6 +75,23 @@ export async function hud(page, ctx) {
     await page.waitForTimeout(600);
     facts.afterUpdate = await measure();
     if (!(facts.afterUpdate.scrollTop > 0)) problems.push('the scroll position was lost on a kin update');
+    // Move now: "Send to Trade Centre" is offered and sends one trade move
+    await page.evaluate(() => {
+        window.__kbcMoves = [];
+        engine.on('PZ2QoL_KinMove', (reqId, id, to) => {
+            window.__kbcMoves.push([id, to]);
+            engine.trigger('PZ2QoL_KinMoveResult', reqId, true, '');
+        });
+    });
+    await page.locator('.PZ2QoL_kbCol', { hasText: 'Small Plains' }).locator('.PZ2QoL_kbCardMenu').first().click();
+    await page.waitForTimeout(300);
+    facts.menu = await page.evaluate(() => [...document.querySelectorAll('.PZ2QoL_kbMenu .PZ2QoL_kbMenuItem')].map(e => e.textContent.trim()));
+    if (!facts.menu.some(t => /^Send to Trade Centre/.test(t))) problems.push('Move now has no trade centre option: ' + JSON.stringify(facts.menu));
+    await ctx.shot(page, 'kbc_3_menu');
+    await page.locator('.PZ2QoL_kbMenu .PZ2QoL_kbMenuItem', { hasText: 'Send to Trade Centre' }).click();
+    await page.waitForTimeout(600);
+    facts.moves = await page.evaluate(() => window.__kbcMoves.slice());
+    if (!(facts.moves.length === 1 && facts.moves[0][0] === '6000' && /^trade:/.test(facts.moves[0][1]))) problems.push('trade centre move not sent as one move: ' + JSON.stringify(facts.moves));
     await page.evaluate(async url => (await import(url)).closeSpeciesBoard(), BOARD);
     facts.problems = problems;
     if (problems.length) throw new Error('board_crowded: ' + problems.join('; '));

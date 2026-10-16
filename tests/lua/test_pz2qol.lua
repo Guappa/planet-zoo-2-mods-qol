@@ -912,6 +912,20 @@ tMoveCalls = {}
 fireUI(oHUD, "PZ2QoL_KinMove", "m8", "2", "trade:555")
 r = lastMoveResult()
 check(r and r[3] == true and moveCalls("Transport:2>555/7") == 1 and moveCalls("Claim") == 0, "to the trade centre (no box claim, like the game)")
+tJobs[2] = false
+tCalls = {}
+tMoveCalls = {}
+fireUI(oHUD, "PZ2QoL_KinMove", "m8b", "2", "trade:auto")
+r = lastMoveResult()
+check(r and r[3] == true and moveCalls("Transport:2>555/7") == 1, "trade:auto finds the trade centre at move time")
+tJobs[2] = false
+local fnTC = tParkAPIs.facilities.GetTradeCentres
+tParkAPIs.facilities.GetTradeCentres = function(self) return {} end
+tCalls = {}
+fireUI(oHUD, "PZ2QoL_KinMove", "m8c", "2", "trade:auto")
+r = lastMoveResult()
+check(r and r[3] == false and string.find(r[4], "no trade centre", 1, true), "no trade centre: a clear refusal")
+tParkAPIs.facilities.GetTradeCentres = fnTC
 tCalls = {}
 fireUI(oHUD, "PZ2QoL_KinMove", "m9", "x78", "101")
 r = lastMoveResult()

@@ -150,6 +150,8 @@ which male and female in the same habitat are related and would inbreed.
   confirm each move and stopping at the first refusal or on **Stop**. Destinations are checked
   with the game's own rules (habitat type, reachable by keepers). In a Franchise zoo, running a
   whole plan is **off by default** (a setting turns it on); moving one animal is always one click.
+  Each animal's **⋯** menu also has **Send to Trade Centre** (one move), and the trade centre is a
+  column you can drag animals onto.
 - **Alerts:** when a pair becomes an inbreeding risk (a youngster grows up next to its sibling, an
   animal moves in with its father, contraception is lifted) a note appears at the top of the
   screen within about 20 seconds, with **Show** and **Contraception** buttons. The game's own

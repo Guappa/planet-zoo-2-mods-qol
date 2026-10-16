@@ -54,7 +54,7 @@ export function speciesList(model) {
 // ----------------------------------------------------------- simulation
 
 function destName(model, to, destinations) {
-    if (to === TRADE) return (destinations && destinations.tradeCentre && destinations.tradeCentre.name) || 'Trade centre';
+    if (to === TRADE) return (destinations && destinations.tradeCentre && destinations.tradeCentre.name) || (model && model.tradeCentre && model.tradeCentre.name) || 'Trade centre';
     const h = model.habitats.get(String(to));
     if (h && h.name) return h.name;
     const d = destinations && (destinations.habitats || []).find(x => String(x.id) === String(to));
@@ -178,7 +178,9 @@ export function boardColumns(model, species, plan, destinations, { includeEmpty 
             col(habId, destName(model, habId, destinations), 'habitat');
         }
     }
-    if (destinations && destinations.tradeCentre) col(TRADE, destName(model, TRADE, destinations), 'trade');
+    // the trade centre is always offered: the Lua side finds it when the
+    // move is made (the game's own "send to trade centre" does the same)
+    col(TRADE, destName(model, TRADE, destinations), 'trade');
     // the other species sharing each habitat, and its risks for this species
     for (const c of columns.values()) {
         c.counts = countsOf(c.animals);
@@ -235,7 +237,6 @@ export function planProblems(model, plan, destinations) {
             const d = habitatOk(destinations, a.species, m.to);
             if (d && !d.ok) out.push({ id: m.id, text: `${a.name}: ${d.reason || 'not a suitable habitat'}` });
         }
-        else if (!destinations || !destinations.tradeCentre) out.push({ id: m.id, text: 'There is no trade centre.' });
     }
     return out;
 }

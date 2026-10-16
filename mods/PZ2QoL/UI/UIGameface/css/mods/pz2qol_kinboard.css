@@ -553,3 +553,4 @@
 .PZ2QoL_kbSwatch.planned { border: 0.1rem dashed var(--qol-olive); background-color: #FAFCF2; }
 .PZ2QoL_kbSwatch.ghost { border: 0.1rem dashed rgba(114, 91, 74, 0.35); opacity: 0.6; }
 .PZ2QoL_kb .PZ2QoL_kpLegendItem.hint { color: var(--qol-ink-faint); }
+.PZ2QoL_kb .PZ2QoL_kbMenu .PZ2QoL_kbMenuItem.trade { font-weight: bold; color: var(--qol-olive); }

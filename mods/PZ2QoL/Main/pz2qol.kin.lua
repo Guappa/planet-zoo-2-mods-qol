@@ -1029,6 +1029,14 @@ Kin.Move = function(self, oUI, sReq, sId, sTo)
 	sTo = tostring(sTo or "")
 	local bTrade = string.sub(sTo, 1, 6) == "trade:"
 	local nDest = tonumber(bTrade and string.sub(sTo, 7) or sTo)
+	if bTrade and nDest == nil then
+		-- "trade:auto": the first trade centre, as the game's own send does
+		local tTC = self:_TradeCentre(tAPIs)
+		nDest = tTC and tonumber(tTC.id)
+		if nDest == nil then
+			return answer(false, "There is no trade centre in this zoo.")
+		end
+	end
 	if nDest == nil then
 		return answer(false, "Unknown destination.")
 	end

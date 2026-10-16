@@ -1018,8 +1018,15 @@ function openMenu(id, anchor) {
         kids.push(h('div.PZ2QoL_kbMenuItem', { onClick: guard('Remove move', () => { closeMenu(); removeMove(a.id); }) }, h('span', { text: 'Remove from the plan' })));
     }
     else {
-        const targets = S.columns.filter(c => c.id !== homeOf(a) && dropCheck(model, c, [a.id]).ok);
-        kids.push(h('div.PZ2QoL_kbMenuHead', { text: targets.length ? 'Move now to (one move)' : 'No other place to move it to' }));
+        const targets = S.columns.filter(c => c.kind !== 'trade' && c.id !== homeOf(a) && dropCheck(model, c, [a.id]).ok);
+        // the trade centre first: the usual place to send surplus animals
+        if (homeOf(a) !== TRADE) {
+            kids.push(h(`div.PZ2QoL_kbMenuItem.trade${running ? '.disabled' : ''}`, {
+                title: 'One move: a keeper takes it to the trade centre, where you can sell, trade or release it',
+                onClick: guard('Move now', () => moveNow(a.id, TRADE)),
+            }, h('span', { text: `Send to ${trunc(placeName(model, TRADE), 22)}` })));
+        }
+        kids.push(h('div.PZ2QoL_kbMenuHead', { text: targets.length ? 'Move now to a habitat (one move)' : 'No other suitable habitat' }));
         for (const c of targets.slice(0, 8)) {
             kids.push(h(`div.PZ2QoL_kbMenuItem${running ? '.disabled' : ''}`, { onClick: guard('Move now', () => moveNow(a.id, c.id)) },
                 h('span', { text: trunc(c.name, 26) }), c.dest || c.kind !== 'habitat' ? null : h('span.PZ2QoL_kbMenuFaint', { text: 'not checked' })));

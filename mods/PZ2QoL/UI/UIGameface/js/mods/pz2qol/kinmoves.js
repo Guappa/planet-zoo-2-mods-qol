@@ -124,9 +124,9 @@ export async function moveAnimal(id, to) {
     if (!a) return { ok: false, detail: 'This animal is no longer in the zoo.' };
     let target = String(to);
     if (to === TRADE) {
+        // a known trade centre, or let the Lua side find one now
         const tc = (lastDest && lastDest.tradeCentre) || model.tradeCentre;
-        if (!tc) return { ok: false, detail: 'There is no trade centre.' };
-        target = 'trade:' + tc.id;
+        target = 'trade:' + (tc ? tc.id : 'auto');
     }
     breadcrumb('kin_move');
     const r = await ask('PZ2QoL_KinMove', { ok: false, detail: 'The game did not answer.' }, String(id), target);
