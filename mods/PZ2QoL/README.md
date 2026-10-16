@@ -147,6 +147,15 @@ which male and female in the same habitat are related and would inbreed.
   **Suggest fixes** proposes the fewest moves that clear a species' risks while keeping animals
   able to breed: it counts fertile, unrelated male–female pairs (no contraception, not infertile),
   never takes a habitat's last breeding pair, and avoids groups of only males or only females.
+- **Breeding programme** (Species board, next to Suggest fixes): plans the best layout of a
+  species' breeders for **genetics**: expected young (the game's gene formula) × the chance of
+  conception (the game's own probability). It follows the species' mating system (harem: one
+  breeding male per habitat; pairs; mixed groups), the habitats' room (the species' social maximum
+  and the space the game requires), your habitat assignments and existing bonds, never puts
+  relatives together, and sends animals without a place in a group to the trade centre. The
+  preview shows breeding pairs, related pairs, expected young and chance of young before → after,
+  and each habitat's target group; a slider trades **fewer moves** against **best genetics**.
+  **Use this plan** loads it into the normal plan (Execute, one move at a time).
 - **Habitat assignments:** in the Species board, **☆ Assign to <species>** on a habitat's column sets
   it aside for that species (kept per park). Suggest fixes then moves the species only into its
   assigned habitats and never puts another species there; the column also flags other species

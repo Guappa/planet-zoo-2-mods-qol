@@ -32,7 +32,9 @@ export async function hud(page, ctx) {
     await page.evaluate(() => engine.trigger('World_ShowHUD'));
     await page.waitForTimeout(400);
     await page.evaluate(() => {
-        engine.on('PZ2QoL_KinDestinations', (reqId) => engine.trigger('PZ2QoL_KinDestinationsResult', reqId, JSON.stringify({
+        // this scenario's fakes answer only while it runs (window.__kbcActive)
+        window.__kbcActive = true;
+        engine.on('PZ2QoL_KinDestinations', (reqId) => window.__kbcActive && engine.trigger('PZ2QoL_KinDestinationsResult', reqId, JSON.stringify({
             bySpecies: { Lion: { '7000': { ok: true }, '7001': { ok: true } } },
             habitats: [{ id: '7000', name: 'Big Savannah' }, { id: '7001', name: 'Small Plains' }],
             tradeCentre: { id: '9900', name: 'Trade Centre' },
@@ -79,6 +81,7 @@ export async function hud(page, ctx) {
     await page.evaluate(() => {
         window.__kbcMoves = [];
         engine.on('PZ2QoL_KinMove', (reqId, id, to) => {
+            if (!window.__kbcActive) return;
             window.__kbcMoves.push([id, to]);
             engine.trigger('PZ2QoL_KinMoveResult', reqId, true, '');
         });
@@ -116,6 +119,7 @@ export async function hud(page, ctx) {
     await page.locator('.PZ2QoL_kb .PZ2QoL_kpBtn', { hasText: 'Clear plan' }).click();
     await page.locator('.PZ2QoL_kbCol', { hasText: 'Small Plains' }).locator('.PZ2QoL_kbAssign').click();
     await page.evaluate(async url => (await import(url)).closeSpeciesBoard(), BOARD);
+    await page.evaluate(() => { window.__kbcActive = false; });
     facts.problems = problems;
     if (problems.length) throw new Error('board_crowded: ' + problems.join('; '));
     return facts;

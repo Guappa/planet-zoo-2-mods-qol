@@ -932,6 +932,41 @@ tCalls = {}
 fireUI(oHUD, "PZ2QoL_KinMove", "m9", "x78", "101")
 r = lastMoveResult()
 check(r and r[3] == false, "exhibit animals are not moved from here")
+
+-- breeding programme: the species facts, asked on demand
+animalsAPI.Monogamy = 11
+animalsAPI.Polygyny = 12
+animalsAPI.GetMonogamyRule = function(self, sp) return 12 end
+animalsAPI.GetSocialRequirements = function(self, sp) return { nMin = 2, nMax = 9 } end
+animalsAPI.GetSpeciesFertilityBounds = function(self, sp) return 3, 18 end
+animalsAPI.GetAnimalSpeciesFertility = function(self, sp) return 0.7 end
+animalsAPI.GetMatingResearchBonus = function(self, sp) return 0.1 end
+local tProbCalls = {}
+animalsAPI.CalculateProbabilityOfBreedingEvent = function(self, wM, wF, fM, fF, sf, bonus)
+	tProbCalls[#tProbCalls + 1] = { wM, wF, fM, fF, sf, bonus }
+	return (fM + fF) / 12 * sf
+end
+animalsAPI.GetSpaceRequirementsInHabitatForSpecies = function(self, h, sp) return { nLandArea = 300, nWaterArea = 0 } end
+tParkAPIs.habitat.GetHabitatSpeciesOverallNavAreaData = function(self, h, sp)
+	if h == 102 then return true, nil end
+	return false, { nLandArea = 900, nWaterArea = 50 }
+end
+tParkAPIs.habitat.GetNumberOfAdultsOfGivenSpecies = function(self, h, sp) return 3 end
+tCalls = {}
+fireUI(oHUD, "PZ2QoL_KinSpecies", "s1", "Lion", "101,102")
+local tSpCall = calls("Trigger")[1]
+check(tSpCall and tSpCall.tArgs[1] == "PZ2QoL_KinSpeciesResult" and tSpCall.tArgs[2] == "s1", "species facts answered with the request id")
+local tSp = tSpCall and jsonDecode(tSpCall.tArgs[3])
+if tSp then
+	check(tSp.social and tSp.social.max == 9 and tSp.fertilityAges.maturity == 3 and tSp.fertilityAges.infertility == 18, "social range and fertility ages")
+	check(tSp.mating == "polygyny", "mating system from the game's rule (" .. tostring(tSp.mating) .. ")")
+	check(#tSp.conception == 7 and #tSp.conception[1] == 7, "conception table 7 x 7")
+	check(math.abs(tSp.conception[7][1] - 0.35) < 1e-6, "conception table by (male, female) fertility grade")
+	check(#tProbCalls == 49 and tProbCalls[1][1] == 1 and tProbCalls[1][6] == 0.1, "the game's own probability, at full welfare")
+	check(tSp.habitats["101"].available.land == 900 and tSp.habitats["101"].required.land == 300 and tSp.habitats["101"].adults == 3, "habitat space and adults")
+	check(tSp.habitats["102"].calculating == true and tSp.habitats["102"].available == nil, "space still being calculated")
+end
+
 api.world.GetWorldAPIs = fnSavedWorld
 
 -----------------------------------------------------------------------

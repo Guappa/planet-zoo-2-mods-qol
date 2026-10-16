@@ -58,7 +58,7 @@ const impact = page => page.evaluate(() => {
 
 const planIds = page => page.evaluate(() => [...document.querySelectorAll('.PZ2QoL_kbMove')].map(n => n.getAttribute('data-move')));
 
-const layoutFacts = page => page.evaluate(() => {
+export const layoutFacts = page => page.evaluate(() => {
     const vw = innerWidth, vh = innerHeight;
     const out = { outside: [], overlaps: [], textOverflow: [], spill: [] };
     const roots = [...document.querySelectorAll('.PZ2QoL_kb, .PZ2QoL_kbDrag')].filter(r => r.getBoundingClientRect().width > 0);
@@ -120,7 +120,7 @@ const layoutFacts = page => page.evaluate(() => {
     return out;
 });
 
-function layoutProblems(tag, l, problems) {
+export function layoutProblems(tag, l, problems) {
     if (l.outside.length) problems.push(`${tag}: ${l.outside.length} element(s) outside the view, e.g. ${l.outside.slice(0, 3).join('; ')}`);
     if (l.overlaps.length) problems.push(`${tag}: overlapping ${l.overlaps.slice(0, 3).join('; ')}`);
     if (l.textOverflow.length) problems.push(`${tag}: text overflows ${l.textOverflow.slice(0, 3).join('; ')}`);
@@ -321,7 +321,7 @@ export async function hud(page, ctx) {
         if (facts.afterMoveHere !== 2 || facts.afterRemove !== 1) problems.push(`select + move here / remove: ${facts.afterMoveHere} / ${facts.afterRemove}`);
 
         // 5. Suggest fixes clears the lions' risks
-        await click(page.locator('.PZ2QoL_kbActions .PZ2QoL_kpBtn', { hasText: 'Clear plan' }));
+        await click(page.locator('.PZ2QoL_kbPlan .PZ2QoL_kbClearPlan'));
         await page.waitForTimeout(200);
         await click(page.locator('.PZ2QoL_kbActions .PZ2QoL_kpBtn', { hasText: 'Suggest fixes' }));
         await page.waitForTimeout(400);

@@ -522,7 +522,7 @@
 .PZ2QoL_kbNotice.warn { background-color: rgba(217, 134, 42, 0.16); color: var(--kp-kin-ink); }
 .PZ2QoL_kbNotice.bad { background-color: var(--kin-risk-soft); color: var(--kp-risk-ink); font-weight: bold; }
 
-.PZ2QoL_kbActions { flex-shrink: 0; width: 20rem; flex-direction: column; margin-left: 0.8rem; }
+.PZ2QoL_kbActions { flex-shrink: 0; width: 23.5rem; flex-direction: column; margin-left: 0.8rem; }
 .PZ2QoL_kbActRow { flex-shrink: 0; }
 .PZ2QoL_kpScroll.kbActBox { flex: 1; min-height: 0; margin-top: 0.15rem; }
 .PZ2QoL_kpScroll.kbActBox > .PZ2QoL_kpViewport > .PZ2QoL_kpContent { padding: 0 0.7rem 0.1rem 0; }
@@ -577,3 +577,104 @@
 .PZ2QoL_kbIntruders { min-width: 0; margin-left: 0.35rem; overflow: hidden; font-size: 0.68rem; font-weight: bold; color: #9A5B12; white-space: nowrap; }
 .PZ2QoL_kbProblem.warn { color: #9A5B12; }
 
+
+/* ------------------------------------------------------ breeding programme */
+
+.PZ2QoL_kb .PZ2QoL_kpBtn.on { background-color: var(--qol-olive); color: #FFFFFF; }
+.PZ2QoL_kb .PZ2QoL_kpBtn.PZ2QoL_kbClearPlan {
+  height: 1.35rem;
+  margin: 0;
+  padding: 0 0.6rem;
+  border-radius: 0.675rem;
+  font-size: 0.7rem;
+  color: var(--qol-ink-soft);
+}
+.PZ2QoL_kbClearPlan:hover { background-color: var(--qol-chip); }
+.PZ2QoL_kbClearPlan.disabled { opacity: 0.4; cursor: default; }
+
+.PZ2QoL_kbProg { flex: 1; min-height: 0; flex-direction: column; }
+.PZ2QoL_kbProgHead { flex-shrink: 0; align-items: center; margin-bottom: 0.45rem; }
+.PZ2QoL_kbProgHead .PZ2QoL_kpBtn { margin-left: 0.45rem; }
+.PZ2QoL_kbProgTitles { flex-direction: column; min-width: 0; }
+.PZ2QoL_kbProgTitle { font-size: 1.05rem; font-weight: bold; white-space: nowrap; }
+.PZ2QoL_kbProgSub { font-size: 0.76rem; color: var(--qol-ink-soft); white-space: nowrap; }
+.PZ2QoL_kbSteps { flex-shrink: 0; align-items: center; height: 2rem; padding: 0 0.5rem; border-radius: 1rem; background-color: var(--qol-chip); }
+.PZ2QoL_kbStepEnd { font-size: 0.72rem; font-weight: bold; color: var(--qol-ink-soft); white-space: nowrap; margin: 0 0.3rem; }
+.PZ2QoL_kbStep { justify-content: center; align-items: center; width: 1.6rem; height: 1.6rem; border-radius: 0.8rem; cursor: pointer; }
+.PZ2QoL_kbStep:hover { background-color: var(--qol-chip-hover); }
+.PZ2QoL_kbStepDot { width: 0.6rem; height: 0.6rem; border-radius: 0.3rem; background-color: rgba(114, 91, 74, 0.35); }
+.PZ2QoL_kbStep.on .PZ2QoL_kbStepDot { width: 1rem; height: 1rem; border-radius: 0.5rem; background-color: var(--qol-olive); box-shadow: 0 0.08rem 0.3rem rgba(60, 71, 46, 0.4); }
+.PZ2QoL_kbProgWarn {
+  flex-shrink: 0;
+  margin-bottom: 0.3rem;
+  padding: 0.25rem 0.6rem;
+  border-radius: 0.45rem;
+  font-size: 0.74rem;
+  line-height: 1.02rem;
+  white-space: normal;
+  background-color: rgba(217, 134, 42, 0.16);
+  color: var(--kp-kin-ink);
+}
+.PZ2QoL_kbStats { flex-shrink: 0; margin-bottom: 0.5rem; }
+.PZ2QoL_kbStat {
+  flex: 1;
+  min-width: 0;
+  flex-direction: column;
+  margin-right: 0.45rem;
+  padding: 0.35rem 0.55rem;
+  border-radius: 0.6rem;
+  background-color: var(--qol-card-2);
+  border-left: 0.25rem solid rgba(114, 91, 74, 0.25);
+}
+.PZ2QoL_kbStat.moves { flex: 0 0 auto; width: 5.5rem; margin-right: 0; border-left-color: var(--qol-olive); }
+.PZ2QoL_kbStat.good { border-left-color: var(--kin-ok); }
+.PZ2QoL_kbStat.bad { border-left-color: var(--kin-risk); }
+.PZ2QoL_kbStatLabel { font-size: 0.68rem; font-weight: bold; letter-spacing: 0.04rem; text-transform: uppercase; color: var(--qol-ink-faint); white-space: nowrap; overflow: hidden; }
+.PZ2QoL_kbStatValue { align-items: center; margin-top: 0.1rem; white-space: nowrap; }
+.PZ2QoL_kbStatBefore { font-size: 0.95rem; color: var(--qol-ink-soft); }
+.PZ2QoL_kbStatValue .PZ2QoL_kbArrow.small { margin: 0 0.4rem 0 0.25rem; color: var(--qol-ink-faint); }
+.PZ2QoL_kbStatAfter { font-size: 1.35rem; font-weight: bold; }
+.PZ2QoL_kbStat.good .PZ2QoL_kbStatAfter { color: var(--kin-ok); }
+.PZ2QoL_kbStat.bad .PZ2QoL_kbStatAfter { color: var(--kin-risk); }
+
+.PZ2QoL_kpScroll.kbProgGroups { flex: 1; min-height: 0; }
+.PZ2QoL_kpScroll.kbProgGroups > .PZ2QoL_kpViewport > .PZ2QoL_kpContent { padding: 0 0.75rem 0.75rem 0; }
+.PZ2QoL_kbGroupRow { flex-shrink: 0; align-items: flex-start; }
+.PZ2QoL_kbGroup {
+  flex-shrink: 0;
+  flex-direction: column;
+  width: 15.5rem;
+  margin-right: 0.6rem;
+  padding: 0.5rem 0.6rem 0.55rem 0.6rem;
+  border-radius: 0.7rem;
+  background-color: var(--qol-card-2);
+  border-top: 0.25rem solid var(--qol-olive);
+}
+.PZ2QoL_kbGroup.trade { background-color: #EFE8DA; border-top-color: var(--qol-ink-faint); }
+.PZ2QoL_kbGroup.over { border-top-color: var(--kin-risk); }
+.PZ2QoL_kbGroup.none { opacity: 0.75; border-top-color: rgba(114, 91, 74, 0.25); }
+.PZ2QoL_kbGroupHead { flex-shrink: 0; align-items: center; }
+.PZ2QoL_kbGroupName { min-width: 0; margin-left: 0.4rem; overflow: hidden; white-space: nowrap; font-size: 0.9rem; font-weight: bold; }
+.PZ2QoL_kbGroupCap { flex-shrink: 0; margin: 0.1rem 0 0.35rem 0; font-size: 0.72rem; color: var(--qol-ink-soft); white-space: nowrap; }
+.PZ2QoL_kbGroup.over .PZ2QoL_kbGroupCap { color: var(--kp-risk-ink); font-weight: bold; }
+.PZ2QoL_kbGroupAnimal {
+  flex-shrink: 0;
+  align-items: center;
+  height: 1.55rem;
+  margin-top: 0.15rem;
+  padding: 0 0.45rem;
+  border-radius: 0.45rem;
+  background-color: #FFFFFF;
+  font-size: 0.78rem;
+}
+.PZ2QoL_kbGroupAnimal.in { background-color: #F3F8E8; border: 0.08rem dashed var(--qol-olive); }
+.PZ2QoL_kbGroupAnimal.out { background-color: transparent; opacity: 0.65; }
+.PZ2QoL_kbGroupWho { flex-shrink: 0; font-weight: bold; white-space: nowrap; }
+.PZ2QoL_kbGroupAnimal.male .PZ2QoL_kbGroupWho { color: var(--qol-male); }
+.PZ2QoL_kbGroupAnimal.female .PZ2QoL_kbGroupWho { color: var(--qol-female); }
+.PZ2QoL_kbGroupFrom { min-width: 0; align-items: center; margin-left: 0.4rem; overflow: hidden; white-space: nowrap; font-size: 0.66rem; font-weight: bold; color: var(--qol-olive); }
+.PZ2QoL_kbGroupGap { flex-shrink: 0; height: 0.3rem; }
+.PZ2QoL_kbGroupStay { flex-shrink: 0; margin-top: 0.3rem; font-size: 0.7rem; color: var(--qol-ink-soft); }
+.PZ2QoL_kbGroupEmpty { flex-shrink: 0; padding: 0.3rem 0; font-size: 0.76rem; color: var(--qol-ink-faint); }
+.PZ2QoL_kbGroupLeaveHead { flex-shrink: 0; margin-top: 0.45rem; font-size: 0.64rem; font-weight: bold; letter-spacing: 0.06rem; text-transform: uppercase; color: var(--qol-ink-faint); }
+.PZ2QoL_kb .PZ2QoL_kbProg .PZ2QoL_kpEmpty { flex-direction: column; }

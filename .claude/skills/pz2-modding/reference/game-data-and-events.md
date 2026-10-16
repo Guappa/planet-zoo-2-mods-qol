@@ -168,6 +168,8 @@ Species board events:
 | Lua to JS | `PZ2QoL_KinDestinationsResult` | reqId, JSON `{bySpecies:{sp:{habId:{ok,reason}}}, habitats, tradeCentre}` | |
 | JS to Lua | `PZ2QoL_KinMove` | reqId, animal id, habitat id or `trade:<id>` | ONE move, the game's own sequence |
 | Lua to JS | `PZ2QoL_KinMoveResult` | reqId, ok, detail | |
+| JS to Lua | `PZ2QoL_KinSpecies` | reqId, species, habitat ids (comma separated) | breeding-programme facts: social range, fertility ages, mating system, conception table, habitat space |
+| Lua to JS | `PZ2QoL_KinSpeciesResult` | reqId, JSON | |
 
 Snapshot extras: `animals[].lt` (location kind), `animals[].moving` (`bHasTransportJob`), `mode`
 (`franchise` / `offline` / `unknown`), `tradeCentre {id, name}`.

@@ -30,6 +30,7 @@ the game UI), **[inferred]**, or **[open]** (needs an in-game check). The detail
 | M. Storage kin + Send to Zoo warning | done (badge, filter chip, warning) | `kinstorage.js`, `bars.js`, `listfilter.js` |
 | N. Pre-move warning | done differently: the Species board shows a plan's effect before any move; D alerts after the game's own moves | `kinboard.js` |
 | P. Species board (developer's idea): habitats of a species side by side, stage moves into a plan, see its effect, suggest fixes, execute one move at a time | done | `kinboard.js`, `kinboardcore.js`, `kinmoves.js`, `pz2qol.kin.lua` |
+| Q. Breeding programme: genetics-first layout per species (mating system, capacity, assignments, bonds), preview and slider | done | `kinprogramme.js`, `kinboard.js`, `pz2qol.kin.lua` (`PZ2QoL_KinSpecies`) |
 | O. Maturity forecast | not done (no maturity-age data found) | – |
 
 The in-game check from section 5, step 0, is still the first thing to do (GUID types, absent

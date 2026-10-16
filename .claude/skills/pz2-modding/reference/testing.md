@@ -78,3 +78,9 @@ Run all of these before installing a build.
 - `probe_imports.mjs` imports every file in `js/mods/pz2qol/` and fails on any error.
 - In the detached harness the info panel is laid out partly off-screen; check info-panel
   injections through the DOM, not only screenshots.
+- Pitfall: fake Lua handlers (`engine.on('PZ2QoL_KinDestinations', …)`) registered by one scenario stay on
+  the shared HUD page, and `kinmoves.js` takes the first answer. Gate fakes with an `active` flag
+  and switch it off at the end, or reset `engine.events[name] = []` before installing your own
+  (`kin_programme.mjs`). `kin_programme.mjs` checks the breeding programme: preview numbers
+  (related pairs → 0), the moves slider (3/4/5/7 moves), Use this plan, Execute, the no-answer
+  warning.

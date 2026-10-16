@@ -39,6 +39,19 @@ function install() {
         }
         done(out);
     });
+    engine.on('PZ2QoL_KinSpeciesResult', (reqId, json) => {
+        const done = waiting.get(String(reqId));
+        if (!done) return;
+        waiting.delete(String(reqId));
+        let out = null;
+        try {
+            out = JSON.parse(json);
+        }
+        catch (e) {
+            reportError('mod', 'Kin: species facts could not be read', e, { silent: true });
+        }
+        done(out);
+    });
     engine.on('PZ2QoL_KinMoveResult', (reqId, ok, detail) => {
         const done = waiting.get(String(reqId));
         if (!done) return;
@@ -113,6 +126,23 @@ export async function requestDestinations(ids, { force = false } = {}) {
 
 export function cachedDestinations() {
     return lastDest;
+}
+
+// ------------------------------------------------------- species facts
+
+const speciesCache = new Map(); // species -> { time, habs, value }
+
+// What the breeding programme needs about one species (social range,
+// fertility ages, mating system, the game's conception table) and the
+// space in the given habitats. Cached for a minute. Resolves the facts or
+// null (no answer).
+export async function requestSpeciesInfo(species, habIds = [], { force = false } = {}) {
+    const habs = Array.from(new Set(habIds.map(String))).filter(h => /^\d+$/.test(h)).sort().join(',');
+    const c = speciesCache.get(species);
+    if (!force && c && c.habs === habs && Date.now() - c.time < 60000) return c.value;
+    const value = await ask('PZ2QoL_KinSpecies', null, String(species), habs);
+    if (value && !value.error) speciesCache.set(species, { time: Date.now(), habs, value });
+    return value;
 }
 
 // ------------------------------------------------------------------ moves

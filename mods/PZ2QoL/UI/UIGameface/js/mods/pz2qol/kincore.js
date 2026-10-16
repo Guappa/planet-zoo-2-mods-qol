@@ -75,6 +75,7 @@ export function normalizeSnapshot(raw) {
         // where it is: 'habitat' | 'trade' | 'transit' | 'quarantine' | 'vet' | 'escaped' | 'other'
         lt: a.lt != null ? String(a.lt) : (a.hab != null && a.hab !== '' ? 'habitat' : ''),
         moving: !!a.moving,
+        age: typeof a.age === 'number' ? a.age : undefined,
         par: asArray(a.par).filter(known).map(String),
         mates: asArray(a.mates).map(String),
         genes: a.genes && typeof a.genes === 'object' ? a.genes : null,

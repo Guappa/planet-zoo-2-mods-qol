@@ -533,6 +533,7 @@ Kin._AddParkAnimal = function(self, tJob, animals, e, t)
 		infertile = t.bIsInfertile == true,
 		preg = t.bPregnant == true,
 		alpha = t.bAlpha == true,
+		age = type(t.nAge) == "number" and t.nAge or nil,
 		lt = h ~= nil and "habitat" or locationKind(animals, t),
 		moving = hasTransportJob(animals, e),
 		hab = h ~= nil and idString(h) or "",
@@ -1091,6 +1092,111 @@ Kin.Move = function(self, oUI, sReq, sId, sTo)
 end
 
 -----------------------------------------------------------------------
+-- Breeding programme: what one species needs (asked when planning)
+-----------------------------------------------------------------------
+local tAreaKeys = { nLandArea = "land", nWaterArea = "water", nClimbArea = "climb", nDeepSwimArea = "deepSwim", nFlyArea = "fly" }
+
+local function areas(t)
+	if type(t) ~= "table" then
+		return nil
+	end
+	local out = {}
+	local bAny = false
+	for k, v in pairs(t) do
+		local sKey = tAreaKeys[k]
+		if sKey ~= nil and type(v) == "number" then
+			out[sKey] = v
+			bAny = true
+		end
+	end
+	return bAny and out or nil
+end
+
+-- 'monogamy' | 'polygyny' | 'polyandry' | 'mixed' | nil
+Kin._MatingSystem = function(self, animals, sSpecies)
+	local tNames = { Monogamy = "monogamy", Polygyny = "polygyny", Polyandre = "polyandry", Polygyandry = "mixed" }
+	local rule = call(animals, "GetMonogamyRule", sSpecies)
+	if rule ~= nil then
+		for sEnum, sName in pairs(tNames) do
+			local bOk, v = pcall(function() return animals[sEnum] end)
+			if bOk and v ~= nil and v == rule then
+				return sName
+			end
+		end
+	end
+	-- fallback: the game marks mates of monogamous species
+	local tSplit = call(animals, "GetAllAdultsOfSpeciesSplitByGender", sSpecies)
+	if type(tSplit) == "table" then
+		for _, tList in pairs(tSplit) do
+			if type(tList) == "table" then
+				for _, e in ipairs(tList) do
+					local tMate = call(animals, "GetMateData", e)
+					if type(tMate) == "table" and tMate.bIsMonogamous ~= nil then
+						return tMate.bIsMonogamous and "monogamy" or nil
+					end
+				end
+			end
+		end
+	end
+	return nil
+end
+
+-- sHabs: habitat ids (comma separated) to measure for this species.
+Kin.SpeciesInfo = function(self, oUI, sReq, sSpecies, sHabs)
+	local tAPIs = self:_ParkWorld()
+	local function answer(t)
+		pcall(oUI.TriggerEventAtNextAdvance, oUI, "PZ2QoL_KinSpeciesResult", sReq, Kin.Encode(t))
+	end
+	if tAPIs == nil or tAPIs.animals == nil then
+		return answer({ error = "No park is loaded." })
+	end
+	local animals, habitat = tAPIs.animals, tAPIs.habitat
+	sSpecies = tostring(sSpecies or "")
+	local tOut = { species = sSpecies, habitats = {} }
+	local tSocial = call(animals, "GetSocialRequirements", sSpecies)
+	if type(tSocial) == "table" then
+		tOut.social = { min = tSocial.nMin, max = tSocial.nMax }
+	end
+	local nMat, nInfert = call(animals, "GetSpeciesFertilityBounds", sSpecies)
+	if type(nMat) == "number" then
+		tOut.fertilityAges = { maturity = nMat, infertility = nInfert }
+	end
+	tOut.mating = self:_MatingSystem(animals, sSpecies)
+	-- the game's conception chance by fertility grades (0..6 x 0..6), at full welfare
+	local nSpeciesFert = call(animals, "GetAnimalSpeciesFertility", sSpecies)
+	local nBonus = call(animals, "GetMatingResearchBonus", sSpecies) or 0
+	if type(nSpeciesFert) == "number" and type(animals.CalculateProbabilityOfBreedingEvent) == "function" then
+		local tTable = array()
+		for fm = 0, 6 do
+			local tRow = array()
+			for ff = 0, 6 do
+				-- (welfare mother, welfare father, fertility mother x6, fertility father x6, species, bonus)
+				local p = call(animals, "CalculateProbabilityOfBreedingEvent", 1, 1, ff, fm, nSpeciesFert, nBonus)
+				tRow[#tRow + 1] = type(p) == "number" and p or 0
+			end
+			tTable[#tTable + 1] = tRow
+		end
+		tOut.conception = tTable
+	end
+	for sHab in string.gmatch(tostring(sHabs or ""), "[^,]+") do
+		local h = tonumber(sHab)
+		if h ~= nil then
+			local tH = {}
+			local bCalc, tArea = call(habitat, "GetHabitatSpeciesOverallNavAreaData", h, sSpecies)
+			if bCalc == false then
+				tH.available = areas(tArea)
+			elseif bCalc == true then
+				tH.calculating = true
+			end
+			tH.required = areas(call(animals, "GetSpaceRequirementsInHabitatForSpecies", h, sSpecies))
+			tH.adults = call(habitat, "GetNumberOfAdultsOfGivenSpecies", h, sSpecies)
+			tOut.habitats[idString(h)] = tH
+		end
+	end
+	answer(tOut)
+end
+
+-----------------------------------------------------------------------
 -- Wiring
 -----------------------------------------------------------------------
 Kin.Attach = function(self, oUI)
@@ -1130,6 +1236,9 @@ Kin.Attach = function(self, oUI)
 		end), self)
 		oUI:AddEventListener("PZ2QoL_KinMove", 3, guard("move", function(sReq, sId, sTo)
 			self:Move(oUI, sReq, sId, sTo)
+		end), self)
+		oUI:AddEventListener("PZ2QoL_KinSpecies", 3, guard("species", function(sReq, sSpecies, sHabs)
+			self:SpeciesInfo(oUI, sReq, sSpecies, sHabs)
 		end), self)
 		oUI:AddEventListener("PZ2QoL_KinForget", 0, guard("forget", function()
 			self.tLastSent[oUI] = nil

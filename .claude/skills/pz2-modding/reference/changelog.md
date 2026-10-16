@@ -36,3 +36,5 @@ One line per update: date, what changed, why.
 - 2026-10-15: Park managers load through the Environment's own require copy; patches now applied in Environment._LoadManagerModule. tools/install_pz2qol.py installs with sha1 verification.
 - 2026-10-15: Species board: habitat assignments (per park, localStorage, park name from park:GetParkName) and breeding-aware Suggest fixes.
 - 2026-10-15: Breeding-programme facts: medal = appeal state, gene scales, conception probability, social/outsider/maturation APIs, space APIs, move costs, breeding timing (animals-and-breeding).
+- 2026-10-15: Breeding programme: PZ2QoL_KinSpecies event (Lua species facts) and kinprogramme.js (local-search optimiser); snapshot adds animal age.
+- 2026-10-15: Breeding programme preview on the Species board; harness pitfall: fake Lua handlers leak between scenarios (testing).
