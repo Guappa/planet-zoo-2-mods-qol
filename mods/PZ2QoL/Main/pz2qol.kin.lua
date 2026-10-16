@@ -689,6 +689,7 @@ Kin._FinishPark = function(self)
 		seq = tJob.nSeq,
 		scope = "park",
 		mode = self:_GameMode(tJob.tAPIs),
+		park = self:_ParkName(tJob.tAPIs),
 		tradeCentre = self:_TradeCentre(tJob.tAPIs),
 		habitats = tHabitats,
 		animals = tJob.tAnimals,
@@ -711,6 +712,12 @@ Kin._GameMode = function(self, tAPIs)
 		end
 	end)
 	return sMode
+end
+
+-- The park's name: the page keeps the player's habitat assignments per park.
+Kin._ParkName = function(self, tAPIs)
+	local bOk, s = pcall(function() return tAPIs.park:GetParkName() end)
+	return (bOk and type(s) == "string") and s or ""
 end
 
 local function entityName(e)

@@ -28,6 +28,7 @@ import {
 import { hideKinCard, kinBadge, sexClass, sexSymbol } from '/js/mods/pz2qol/kinui.js';
 import { clear, h, icon, setClass, setText } from '/js/mods/pz2qol/ui.js';
 import { breadcrumb, reportError } from '/js/mods/pz2qol/errors.js';
+import { getAssignments, onAssignments, toggleAssignment } from '/js/mods/pz2qol/kinassign.js';
 import {
     btn as kitBtn, closeButton, closeOtherPanels, countPills, makeGuard, makeScroll, panelApi, placePanel, refreshBars, registerPanel,
     remPx, restoreScroll, scrollBoxTo, speciesName, switchEl as kitSwitch, trunc, wheelScroll,
@@ -260,6 +261,47 @@ function renderHead(model) {
 
 // ------------------------------------------------------------------ rail
 
+function assignedCount(model, species) {
+    let n = 0;
+    for (const set of getAssignments(model).values()) if (set.has(species)) n++;
+    return n;
+}
+
+// The column's assignment: whose habitat it is, one click to change it.
+function assignEl(model, c) {
+    if (c.kind !== 'habitat') return null;
+    const sp = speciesName(S.species);
+    const others = c.assigned.filter(x => x !== S.species).map(speciesName);
+    const toggle = () => {
+        toggleAssignment(model, c.id, S.species, c.name);
+        renderAll();
+    };
+    const kids = [];
+    if (c.mine) {
+        kids.push(h('div.PZ2QoL_kbAssign.mine', {
+            title: `Assigned to ${sp}${others.length ? ' (and ' + others.join(', ') + ')' : ''}: Suggest fixes moves ${sp} only into its assigned habitats and puts no other species here. Click to remove.`,
+            onClick: guard('Assign', toggle),
+        }, h('span', { text: `★ ${trunc(sp, 16)} habitat` })));
+    }
+    else if (c.reservedOther) {
+        kids.push(h('div.PZ2QoL_kbAssign.other', {
+            title: `Assigned to ${others.join(', ')}. Click to allow ${sp} here too.`,
+            onClick: guard('Assign', toggle),
+        }, h('span', { text: `Assigned to ${trunc(others.join(', '), 18)}` })));
+    }
+    else {
+        kids.push(h('div.PZ2QoL_kbAssign', {
+            title: `Set this habitat aside for ${sp}: Suggest fixes will then use only ${sp}'s assigned habitats, and never put other species here`,
+            onClick: guard('Assign', toggle),
+        }, h('span', { text: `☆ Assign to ${trunc(sp, 16)}` })));
+    }
+    if (c.mine && c.intruders && c.intruders.length) {
+        const list = c.intruders.map(o => `${o.count} ${speciesName(o.species)}`).join(', ');
+        kids.push(h('div.PZ2QoL_kbIntruders', { text: `+ ${list}`, title: `Also living here: ${list}` }));
+    }
+    return h('div.PZ2QoL_kbAssignRow', null, kids);
+}
+
 function renderRail(model) {
     const el = S.el.rail;
     clear(el);
@@ -280,6 +322,8 @@ function renderRail(model) {
         if (s.juveniles) meta.push(`${s.juveniles} young`);
         meta.push(`${s.habitats.length} habitat${s.habitats.length === 1 ? '' : 's'}`);
         if (s.away) meta.push(`${s.away} away`);
+        const own = assignedCount(model, s.species);
+        if (own) meta.push(`★ ${own} assigned`);
         box.content.appendChild(h(`div.PZ2QoL_kbSpecies.sev_${worst}${on ? '.on' : ''}`, {
             'data-species': s.species,
             title: speciesName(s.species),
@@ -311,8 +355,9 @@ function renderBoard(model, dest) {
             h('div.PZ2QoL_kpEmptyText', { text: 'Once your zoo has animals in habitats, pick a species on the left to see them here.' })));
         return;
     }
-    const base = boardColumns(model, S.species, [], dest);
-    const cols = boardColumns(model, S.species, S.plan, dest);
+    const assignments = getAssignments(model);
+    const base = boardColumns(model, S.species, [], dest, { assignments });
+    const cols = boardColumns(model, S.species, S.plan, dest, { assignments });
     // a stable order: the order before the plan (a drop must not reshuffle the board)
     const order = new Map(base.map((c, i) => [c.id, i]));
     cols.sort((x, y) => (order.has(x.id) ? order.get(x.id) : 999) - (order.has(y.id) ? order.get(y.id) : 999));
@@ -461,6 +506,7 @@ function columnEl(model, c) {
         h('div.PZ2QoL_kbColPills', null, riskPills.length ? riskPills
             : h('div.PZ2QoL_kbColAlone', { text: c.kind !== 'habitat' || empty ? '' : 'No related pairs' })),
         status,
+        assignEl(model, c),
         rel,
         drop);
     head.addEventListener('wheel', e => {
@@ -897,11 +943,15 @@ function suggest() {
         loadDestinations(true);
         return;
     }
-    const moves = suggestPlan(model, S.species, destFor(model), { allowTrade: false, includeKin: true });
+    const assignments = getAssignments(model);
+    const own = assignedCount(model, S.species);
+    const moves = suggestPlan(model, S.species, destFor(model), { allowTrade: false, includeKin: true, assignments });
     if (!moves.length) {
         const list = speciesList(model).find(s => s.species === S.species);
         notice(list && (list.counts.risk || list.counts.kin)
-            ? `No move fixes ${speciesName(S.species)}'s related pairs without creating new ones. Try another habitat, contraception, or the trade centre.`
+            ? (own
+                ? `No move into ${speciesName(S.species)}'s ${own} assigned habitat${own > 1 ? 's' : ''} fixes its related pairs without creating new ones. Assign another habitat, use contraception, or the trade centre.`
+                : `No move fixes ${speciesName(S.species)}'s related pairs without creating new ones. Try another habitat, contraception, or the trade centre.`)
             : `${speciesName(S.species)} has no related pairs to fix.`, list && (list.counts.risk || list.counts.kin) ? 'warn' : 'ok');
         return;
     }
@@ -912,7 +962,7 @@ function suggest() {
     }
     S.plan = plan;
     S.planTab = 'plan';
-    notice(`Kin suggests ${moves.length} move${moves.length > 1 ? 's' : ''}. Check them below; nothing moves until you run the plan.`, 'ok');
+    notice(`Kin suggests ${moves.length} move${moves.length > 1 ? 's' : ''}${own ? `, only into ${speciesName(S.species)}'s ${own} assigned habitat${own > 1 ? 's' : ''}` : ''}. Check them below; nothing moves until you run the plan.`, 'ok');
     breadcrumb('kin_board_suggest');
     renderAll();
 }
@@ -1165,8 +1215,8 @@ function impactEl(model, dest) {
             c.appendChild(h(`div.PZ2QoL_kbCreated.sev_${p.severity}`, null, h('span', { text: `New ${p.severity === 'risk' ? 'inbreeding risk' : 'close kin'}: ${pairText(p)} in ${placeName(model, p.hab)}` })));
         }
     }
-    for (const pr of planProblems(model, S.plan, dest)) {
-        c.appendChild(h('div.PZ2QoL_kbProblem', null, h('span', { text: pr.text })));
+    for (const pr of planProblems(model, S.plan, dest, { assignments: getAssignments(model) })) {
+        c.appendChild(h(`div.PZ2QoL_kbProblem${pr.warn ? '.warn' : ''}`, null, h('span', { text: pr.text })));
     }
     restoreScroll(box, 0, S.scroll.impact);
     wrap.appendChild(box.wrap);
@@ -1342,6 +1392,7 @@ function subscribe() {
     unsubscribe();
     S.unsub.push(onKin(() => queueRender()));
     S.unsub.push(onKinSettings(() => queueRender()));
+    S.unsub.push(onAssignments(() => queueRender()));
     S.unsub.push(onPlanRun(() => queueRender()));
     S.timer = setInterval(tick, TICK_MS);
 }

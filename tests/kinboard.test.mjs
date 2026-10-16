@@ -3,7 +3,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { buildKinModel, Sex } from '../mods/PZ2QoL/UI/UIGameface/js/mods/pz2qol/kincore.js';
 import {
-    TRADE, boardColumns, canMove, moveText, planImpact, planProblems, prunePlan, setMove, simulatePlan, speciesList, suggestPlan,
+    TRADE, boardColumns, breedingPairs, canMove, normalizeAssignments, assignedHabitatsOf, habitatAllowedFor, moveText, planImpact, planProblems, prunePlan, setMove, simulatePlan, speciesList, suggestPlan,
 } from '../mods/PZ2QoL/UI/UIGameface/js/mods/pz2qol/kinboardcore.js';
 
 const M = Sex.Male, F = Sex.Female;
@@ -148,5 +148,94 @@ test('suggestions prefer a habitat with an unrelated partner', () => {
     const m = buildKinModel(snap);
     const plan = suggestPlan(m, 'Lion', DEST);
     assert.equal(plan[0].to, '4');
-    assert.match(plan[0].reason, /unrelated male/);
+    assert.match(plan[0].reason, /first breeding pair \(an unrelated fertile male\)/);
+});
+
+test('assignments: suggestions only into the species own habitats, never into others', () => {
+    const m = buildKinModel(zoo());
+    // Grassland (4) is assigned to lions: the only place a lion is suggested into
+    let plan = suggestPlan(m, 'Lion', DEST, { assignments: { '4': ['Lion'] } });
+    assert.equal(plan.length, 1);
+    assert.equal(plan[0].to, '4');
+    // Plains (3) and Grassland (4) belong to zebras: nowhere left for the lion
+    plan = suggestPlan(m, 'Lion', DEST, { assignments: { '3': ['Zebra'], '4': ['Zebra'] } });
+    assert.deepEqual(plan, []);
+    // Plains (3) for zebras only: the lion goes to the free Grassland
+    plan = suggestPlan(m, 'Lion', DEST, { assignments: { '3': ['Zebra'] } });
+    assert.equal(plan[0].to, '4');
+    assert.deepEqual(assignedHabitatsOf({ '4': ['Lion'], '3': ['Zebra', 'Lion'] }, 'Lion').sort(), ['3', '4']);
+    assert.equal(habitatAllowedFor({ '3': ['Zebra'] }, '3', 'Lion'), false);
+    assert.equal(habitatAllowedFor({ '3': ['Zebra'] }, '1', 'Lion'), true);
+    assert.equal(normalizeAssignments(new Map([['1', new Set(['Lion'])]])).get('1').has('Lion'), true);
+});
+
+test('assignments on the board: own, reserved, intruders, plan warnings', () => {
+    const m = buildKinModel(zoo());
+    const assignments = { '1': ['Lion'], '3': ['Zebra'], '9': ['Lion'] };
+    const cols = boardColumns(m, 'Lion', [], DEST, { assignments });
+    const byId = new Map(cols.map(c => [c.id, c]));
+    assert.equal(byId.get('1').mine, true);
+    assert.equal(byId.get('3').reservedOther, true);
+    assert.deepEqual(byId.get('3').intruders, [{ species: 'Lion', count: 2 }]);   // lions in a zebra habitat
+    assert.ok(byId.has('9'));                                                     // assigned: shown even when empty
+    assert.equal(cols[0].mine, true);                                             // own habitats first
+    const probs = planProblems(m, [{ id: 'k2', to: '3' }], DEST, { assignments });
+    assert.ok(probs.some(p => p.warn && /assigned to Zebra/.test(p.text)));
+});
+
+// Four full siblings in one habitat, one unrelated female and one unrelated
+// male in two others, and an empty habitat. The old suggestions parked all
+// the males in one habitat and the females in another; now every move must
+// make or keep breeding pairs.
+function siblings() {
+    const g = { F: 'CCCCCCDDDDDD', I: 'CCCCCCDDDDDD' };
+    return {
+        v: 1, seq: 1, scope: 'park', mode: 'offline',
+        habitats: [{ id: '1', name: 'Home' }, { id: '3', name: 'East' }, { id: '4', name: 'West' }],
+        animals: [
+            an('m1', M, ['p', 'q'], { genes: g }), an('m2', M, ['p', 'q'], { genes: g }),
+            an('f1', F, ['p', 'q'], { genes: g }), an('f2', F, ['p', 'q'], { genes: g }),
+            an('u', F, ['', ''], { hab: '3', loc: 'East' }),
+            an('v', M, ['', ''], { hab: '4', loc: 'West' }),
+        ],
+        anc: {},
+    };
+}
+const DEST4 = { bySpecies: { Lion: { '1': { ok: true }, '3': { ok: true }, '4': { ok: true }, '5': { ok: true } } }, habitats: [{ id: '5', name: 'Empty' }] };
+
+test('suggestions keep habitats mixed and breeding', () => {
+    const m = buildKinModel(siblings());
+    const plan = suggestPlan(m, 'Lion', DEST4);
+    const after = simulatePlan(m, plan, DEST4);
+    assert.equal(after.pairs.filter(p => p.severity === 'risk').length, 0);
+    for (const hab of ['1', '3', '4', '5']) {
+        const b = breedingPairs(after, hab, 'Lion');
+        // no habitat with two or more adults of one sex and none of the other
+        assert.ok(!(b.males + b.females >= 2 && (b.males === 0 || b.females === 0)), `habitat ${hab}: ${b.males} males, ${b.females} females`);
+    }
+    // the moved animals found partners
+    assert.ok(breedingPairs(after, '3', 'Lion').pairs >= 1);
+    assert.ok(breedingPairs(after, '4', 'Lion').pairs >= 1);
+    assert.ok(plan.every(mv => /breeding pair/.test(mv.reason)), JSON.stringify(plan));
+});
+
+test('suggestions never break the only breeding pair', () => {
+    // x and y breed (unrelated); z is x's sister: move z, not x
+    const m = buildKinModel({
+        v: 1, seq: 1, scope: 'park', mode: 'offline', habitats: [{ id: '1', name: 'Home' }],
+        animals: [an('x', M, ['p', 'q']), an('y', F, ['', '']), an('z', F, ['p', 'q'])],
+        anc: {},
+    });
+    const plan = suggestPlan(m, 'Lion', DEST4);
+    assert.equal(plan.length, 1);
+    assert.equal(plan[0].id, 'z');
+    assert.equal(breedingPairs(simulatePlan(m, plan, DEST4), '1', 'Lion').pairs, 1);
+});
+
+test('breeding pairs count only fertile, unrelated adults', () => {
+    const m = buildKinModel(zoo());
+    // Savannah: a (father) with k2 (daughter), k1 with k2 (siblings), h1 on contraception
+    assert.equal(breedingPairs(m, '1', 'Lion').pairs, 0);
+    // Plains: u (female) and m (male), unrelated
+    assert.equal(breedingPairs(m, '3', 'Lion').pairs, 1);
 });

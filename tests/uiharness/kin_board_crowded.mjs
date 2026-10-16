@@ -92,6 +92,29 @@ export async function hud(page, ctx) {
     await page.waitForTimeout(600);
     facts.moves = await page.evaluate(() => window.__kbcMoves.slice());
     if (!(facts.moves.length === 1 && facts.moves[0][0] === '6000' && /^trade:/.test(facts.moves[0][1]))) problems.push('trade centre move not sent as one move: ' + JSON.stringify(facts.moves));
+    // habitat assignments: Small Plains for lions only; Suggest fixes then
+    // moves lions only there
+    await page.evaluate(() => { try { localStorage.removeItem('PZ2QoL.kin.assign.v1'); } catch (e) { /* none */ } });
+    await page.locator('.PZ2QoL_kbCol', { hasText: 'Small Plains' }).locator('.PZ2QoL_kbAssign').click();
+    await page.waitForTimeout(500);
+    facts.assignChip = await page.locator('.PZ2QoL_kbCol', { hasText: 'Small Plains' }).locator('.PZ2QoL_kbAssign').innerText();
+    if (!/★/.test(facts.assignChip)) problems.push('assign chip did not turn on: ' + facts.assignChip);
+    facts.railMeta = await page.locator('.PZ2QoL_kbSpecies.on').innerText();
+    if (!/1 assigned/.test(facts.railMeta)) problems.push('species rail does not count the assignment: ' + facts.railMeta);
+    await page.locator('.PZ2QoL_kb .PZ2QoL_kpBtn', { hasText: 'Suggest fixes' }).click();
+    await page.waitForTimeout(800);
+    facts.suggested = await page.evaluate(() => {
+        const box = document.querySelector('.PZ2QoL_kpScroll.kbPlanBox');
+        const text = box ? box.innerText : '';
+        return (text.match(/→\s*[^\n]+/g) || []).map(s => s.replace(/^→\s*/, '').trim());
+    });
+    if (!facts.suggested.length) problems.push('no suggestions with an assigned habitat');
+    else if (!facts.suggested.every(t => /^Small Plains/.test(t))) problems.push('a suggestion left the assigned habitats: ' + JSON.stringify(facts.suggested));
+    facts.saved = await page.evaluate(() => { try { return localStorage.getItem('PZ2QoL.kin.assign.v1'); } catch (e) { return null; } });
+    if (!/Small Plains/.test(facts.saved || '')) problems.push('assignment not saved: ' + facts.saved);
+    await ctx.shot(page, 'kbc_4_assigned');
+    await page.locator('.PZ2QoL_kb .PZ2QoL_kpBtn', { hasText: 'Clear plan' }).click();
+    await page.locator('.PZ2QoL_kbCol', { hasText: 'Small Plains' }).locator('.PZ2QoL_kbAssign').click();
     await page.evaluate(async url => (await import(url)).closeSpeciesBoard(), BOARD);
     facts.problems = problems;
     if (problems.length) throw new Error('board_crowded: ' + problems.join('; '));

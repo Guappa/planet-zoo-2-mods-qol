@@ -824,6 +824,7 @@ tParkAPIs.habitat.IsAquariumGateBelowWaterLevel = function(self, h) return false
 tParkAPIs.staff = { CanStaffDeliverAnimalToFacility = function(self, e, h) return h ~= 105 end }
 tParkAPIs.facilities = { GetTradeCentres = function(self) return { [555] = true } end }
 tParkAPIs.franchise = { PlanetHubType_FranchiseOnline = 3, GetPlanetHubType = function(self) return 1 end }
+tParkAPIs.park = { GetParkName = function(self) return "Lemur Valley" end }
 api.ui2.GetEntityName = function(e) return ({ [101] = "Savannah Habitat", [102] = "Reef", [103] = "Pond", [104] = "Plains", [555] = "Trade Centre" })[e] end
 api.world.GetWorldAPIs = function() return tParkAPIs end
 -- a park again
@@ -842,6 +843,7 @@ if tBoard then
 	check(byId["2"].lt == "habitat" and byId["5"].lt == "trade", "location kinds: habitat, trade centre")
 	check(byId["2"].moving == false, "not on the move")
 	check(tBoard.mode == "offline", "game mode: offline (got " .. tostring(tBoard.mode) .. ")")
+	check(tBoard.park == "Lemur Valley", "park name for the habitat assignments")
 	check(tBoard.tradeCentre and tBoard.tradeCentre.id == "555" and tBoard.tradeCentre.name == "Trade Centre", "trade centre in the snapshot")
 end
 

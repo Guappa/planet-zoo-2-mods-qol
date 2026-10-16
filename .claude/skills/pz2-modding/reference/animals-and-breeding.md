@@ -138,3 +138,4 @@ All **offline** (decompiled `editors.animal.animalmovementeditmode.lua`,
 - PZ2QoL Kin runs **one** move per `PZ2QoL_KinMove` exactly this way; a staged plan is sent one move
   at a time, each confirmed by the next scan (`bHasTransportJob`) before the next, and in a
   Franchise (or unknown-mode) zoo only with the player's opt-in (`allowPlansOnline`, off by default).
+- Park name: `park:GetParkName()` (world API `park`). PZ2QoL keys the player's habitat assignments by it.

@@ -144,8 +144,13 @@ which male and female in the same habitat are related and would inbreed.
   yet, the trade centre, and animals elsewhere. Hover an animal to light up its relatives across
   the board. Drag animals (or select them and click a column) to **stage moves into a plan**: the
   plan shows its effect before anything happens ("fixes 3 inbreeding risks, creates 0"), and
-  **Suggest fixes** proposes the fewest moves that clear a species' risks, preferring habitats
-  where the animal finds an unrelated partner. **Execute plan** then moves the animals through the
+  **Suggest fixes** proposes the fewest moves that clear a species' risks while keeping animals
+  able to breed: it counts fertile, unrelated male–female pairs (no contraception, not infertile),
+  never takes a habitat's last breeding pair, and avoids groups of only males or only females.
+- **Habitat assignments:** in the Species board, **☆ Assign to <species>** on a habitat's column sets
+  it aside for that species (kept per park). Suggest fixes then moves the species only into its
+  assigned habitats and never puts another species there; the column also flags other species
+  living in it. **Execute plan** then moves the animals through the
   game's own Move (a keeper boxes and carries each one), **one at a time**, waiting for the game to
   confirm each move and stopping at the first refusal or on **Stop**. Destinations are checked
   with the game's own rules (habitat type, reachable by keepers). In a Franchise zoo, running a

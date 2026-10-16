@@ -150,7 +150,7 @@
   position: relative;
   flex-shrink: 0;
   flex-direction: column;
-  height: 7.3rem;
+  height: 9.2rem;
   padding: 0.5rem 0.6rem 0.45rem 0.6rem;
   border-bottom: 0.08rem solid var(--qol-line);
 }
@@ -554,3 +554,26 @@
 .PZ2QoL_kbSwatch.ghost { border: 0.1rem dashed rgba(114, 91, 74, 0.35); opacity: 0.6; }
 .PZ2QoL_kb .PZ2QoL_kpLegendItem.hint { color: var(--qol-ink-faint); }
 .PZ2QoL_kb .PZ2QoL_kbMenu .PZ2QoL_kbMenuItem.trade { font-weight: bold; color: var(--qol-olive); }
+
+/* habitat assignments */
+.PZ2QoL_kbAssignRow { flex-shrink: 0; flex-direction: row; align-items: center; height: 1.5rem; margin-top: 0.25rem; overflow: hidden; }
+.PZ2QoL_kbAssign {
+  flex-shrink: 0;
+  align-items: center;
+  height: 1.4rem;
+  padding: 0 0.55rem;
+  border-radius: 0.7rem;
+  font-size: 0.72rem;
+  font-weight: bold;
+  white-space: nowrap;
+  cursor: pointer;
+  color: var(--qol-ink-soft);
+  background-color: var(--qol-chip);
+  border: 0.08rem dashed rgba(114, 91, 74, 0.3);
+}
+.PZ2QoL_kbAssign:hover { background-color: var(--qol-chip-hover); color: var(--qol-ink); }
+.PZ2QoL_kbAssign.mine { color: #FFFFFF; background-color: var(--qol-olive); border: 0.08rem solid var(--qol-olive); }
+.PZ2QoL_kbAssign.other { color: #9A5B12; background-color: rgba(217, 134, 42, 0.16); border: 0.08rem solid rgba(217, 134, 42, 0.4); }
+.PZ2QoL_kbIntruders { min-width: 0; margin-left: 0.35rem; overflow: hidden; font-size: 0.68rem; font-weight: bold; color: #9A5B12; white-space: nowrap; }
+.PZ2QoL_kbProblem.warn { color: #9A5B12; }
+

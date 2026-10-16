@@ -99,6 +99,7 @@ export function normalizeSnapshot(raw) {
         animals,
         anc,
         names: snap.names && typeof snap.names === 'object' ? snap.names : {},
+        park: snap.park != null ? String(snap.park) : '',
         // 'franchise' | 'offline' (Sandbox, Career, Challenge) | 'unknown'
         mode: snap.mode === 'franchise' || snap.mode === 'offline' ? snap.mode : 'unknown',
         tradeCentre: snap.tradeCentre && snap.tradeCentre.id != null ? { id: String(snap.tradeCentre.id), name: String(snap.tradeCentre.name || 'Trade centre') } : null,
@@ -504,6 +505,7 @@ export function buildKinModel(raw, opts = {}) {
         seq: snap.seq,
         scope: snap.scope,
         snapshot: snap,
+        park: snap.park,
         mode: snap.mode,
         tradeCentre: snap.tradeCentre,
         ped,
