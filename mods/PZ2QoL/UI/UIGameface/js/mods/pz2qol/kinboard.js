@@ -237,6 +237,7 @@ function renderAll() {
         renderHead(model);
         renderRail(model);
         renderBoard(model, dest);
+        fitColumns();
         renderPlan(model, dest);
         renderFoot();
         if (S.hoverId) highlightRelatives(S.hoverId);
@@ -356,6 +357,31 @@ function renderBoard(model, dest) {
     box.content.appendChild(row);
     el.appendChild(box.wrap);
     restoreScroll(box, S.scroll.board, 0);
+}
+
+// Columns as tall as the board strip, cards scrolling inside. Sized in
+// pixels after layout rather than left to flex shrinking: with many animals
+// in one habitat the column grew to fit every card, its own scroll area had
+// nothing to scroll, and the strip cut the rest off (seen in game).
+function fitColumns() {
+    const board = S.boxes.board;
+    if (!board) return;
+    const vpH = Math.floor(board.vp.getBoundingClientRect().height);
+    if (!(vpH > 0)) return;
+    const pad = Math.ceil(remPx() * 0.75);
+    const colH = Math.max(remPx() * 8, vpH - pad);
+    board.content.style.height = `${vpH}px`;
+    for (const { el } of S.colEls.values()) {
+        if (!el || !el.parentNode) continue;
+        el.style.height = `${colH}px`;
+        const head = el.querySelector('.PZ2QoL_kbColHead');
+        const body = el.querySelector('.PZ2QoL_kpScroll.kbColBody');
+        if (!head || !body) continue;
+        const inner = el.getBoundingClientRect().height - (el.offsetHeight - el.clientHeight);
+        const bodyH = Math.max(remPx() * 3, Math.floor((inner || colH) - head.getBoundingClientRect().height));
+        body.style.flex = '0 0 auto';
+        body.style.height = `${bodyH}px`;
+    }
 }
 
 function waitingState() {
@@ -1295,7 +1321,10 @@ function tick() {
             S.notice = null;
             renderNotice();
         }
-        if (!S.drag) refreshBars(S.boxes);
+        if (!S.drag) {
+            fitColumns();
+            refreshBars(S.boxes);
+        }
     }
     catch (e) {
         reportError('ui', 'Species board refresh failed', e, { silent: true });
@@ -1401,7 +1430,10 @@ export function installSpeciesBoard() {
     window.addEventListener('resize', () => {
         if (!S.open) return;
         placePanel(S.root);
-        setTimeout(() => refreshBars(S.boxes), 0);
+        setTimeout(() => {
+            fitColumns();
+            refreshBars(S.boxes);
+        }, 0);
     });
     return true;
 }
