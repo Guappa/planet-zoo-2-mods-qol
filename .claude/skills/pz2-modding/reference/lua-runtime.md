@@ -37,8 +37,9 @@
 - **There is no `io` library.** **offline**
 - **File access: `api.debug.ReadStringFromFile(path)` -> `bOk, sText` and
   `api.debug.WriteStringToFile(sText, path[, bAppend])` -> `bOk`.** **offline** (the game's own
-  dev tools use them: scenario editor, camera paths, blueprint debug save); not yet proven to work
-  in the retail build or which folder relative paths start from. PZ2QoL's store tries
+  dev tools use them: scenario editor, camera paths, blueprint debug save). Both names are in the
+  retail exe's strings (1.0.4), so they are registered there; not yet proven that they do
+  anything in retail (a release stub is possible) or which folder relative paths start from. PZ2QoL's store tries
   `.\Win64\ovldata\PZ2QoL\userdata.json` then the `/` form, verifies by reading back, and marks
   `store_found` / `store_created` / `store_unavailable` in the debug trace. Only ASCII JSON objects
   are written (the UI escapes non-ASCII as `\uXXXX`).

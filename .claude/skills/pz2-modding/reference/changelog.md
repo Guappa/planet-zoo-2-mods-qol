@@ -43,3 +43,4 @@ One line per update: date, what changed, why.
 - 2026-10-16: Genetics medal: market/storage/history rows carry `ratings` (none/bronze/silver/gold, the Rating column, natively the appeal state); PZ2QoL records it in the price book (not in the key) and prices same-medal comparables first, then adjacent medals scaled by observed ratios (game-data-and-events, testing).
 - 2026-10-16: Fertility over a life: IsInfertile also covers not-yet-mature adults; elderly = GetAgeQuarterForUI 3; GetSpeciesLongevity; game's fertile-time-left formula; PZ2QoL fertilityOf / speciesFacts.
 - 2026-10-16: archives-and-build: no personal user name in machine paths.
+- 2026-10-16: api.debug Read/WriteStringToFile, GetAgeQuarterForUI, GetSpeciesLongevity, AttemptToSendToTradeCentre are all named in the retail exe strings.
