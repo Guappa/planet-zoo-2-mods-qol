@@ -1,4 +1,6 @@
-# PZ2QoL: Genes & Gold for Planet Zoo 2
+# Genes & Gold for Planet Zoo 2 (version 1.3.0)
+
+*Breeding and market tools for Planet Zoo 2, formerly PZ2QoL. Installs as `Win64\ovldata\PZ2QoL`.*
 
 Quality-of-life additions for the hub's **Animal Market** (trading) and **Animal Storage** screens, in
 Franchise, Sandbox and Career. The mod also **shows errors** that the game normally drops, so a menu
