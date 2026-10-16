@@ -36,7 +36,7 @@ export const SEVERITY_INFO = {
     risk: { label: 'Inbreeding risk', short: 'Risk', tip: 'The game counts this pair as inbred, and both can breed now.' },
     kin: { label: 'Close kin', short: 'Kin', tip: 'Closely related, but the game does not warn about it. Their young lose fertility and immunity all the same.' },
     future: { label: 'Future risk', short: 'Later', tip: 'Related, and one of them is still young. They become a risk when it grows up.' },
-    covered: { label: 'Covered', short: 'Covered', tip: 'Related, but contraception or infertility stops them breeding.' },
+    covered: { label: 'Covered', short: 'Covered', tip: 'Related, but they cannot breed: contraception, infertility, old age, or one will be too old by the time the other grows up.' },
     distant: { label: 'Distant kin', short: 'Far', tip: 'Distantly related (below the close-kin threshold).' },
 };
 
@@ -76,6 +76,8 @@ export function normalizeSnapshot(raw) {
         lt: a.lt != null ? String(a.lt) : (a.hab != null && a.hab !== '' ? 'habitat' : ''),
         moving: !!a.moving,
         age: typeof a.age === 'number' ? a.age : undefined,
+        // the game's age quarter for the UI: 0 child, 1 young adult, 2 adult, 3 elderly
+        ageQ: typeof a.ageQ === 'number' ? a.ageQ : undefined,
         par: asArray(a.par).filter(known).map(String),
         mates: asArray(a.mates).map(String),
         genes: a.genes && typeof a.genes === 'object' ? a.genes : null,
@@ -86,6 +88,17 @@ export function normalizeSnapshot(raw) {
             if (known(g)) anc[String(g)] = asArray(snap.anc[g]).filter(known).map(String);
         }
     }
+    // per species: { maturity, infertility, life } in years (the game's
+    // fertility bounds and longevity; infertility above 900 = never)
+    const speciesFacts = {};
+    if (snap.speciesFacts && typeof snap.speciesFacts === 'object') {
+        for (const [sp, f] of Object.entries(snap.speciesFacts)) {
+            if (!f || typeof f !== 'object') continue;
+            const num = v => (typeof v === 'number' && isFinite(v) ? v : null);
+            speciesFacts[sp] = { maturity: num(f.maturity), infertility: num(f.infertility), life: num(f.life) };
+        }
+    }
+    for (const a of animals) a.fert = fertilityOf(a, speciesFacts[a.species]);
     const habitats = asArray(snap.habitats).filter(h => h && h.id != null).map(h => ({
         id: String(h.id),
         name: h.name != null ? String(h.name) : '',
@@ -99,12 +112,111 @@ export function normalizeSnapshot(raw) {
         habitats,
         animals,
         anc,
+        speciesFacts,
         names: snap.names && typeof snap.names === 'object' ? snap.names : {},
         park: snap.park != null ? String(snap.park) : '',
         // 'franchise' | 'offline' (Sandbox, Career, Challenge) | 'unknown'
         mode: snap.mode === 'franchise' || snap.mode === 'offline' ? snap.mode : 'unknown',
         tradeCentre: snap.tradeCentre && snap.tradeCentre.id != null ? { id: String(snap.tradeCentre.id), name: String(snap.tradeCentre.name || 'Trade centre') } : null,
     };
+}
+
+// ------------------------------------------------------------ fertility
+
+// Where an animal is in its breeding life, from the game's flags, its age
+// and the species' fertility ages:
+//   state: 'juvenile' (too young), 'young' (adult in looks, not yet
+//          mature: the game reports it infertile), 'fertile', 'ending'
+//          (fertile, but the last fifth of its fertile years, at least one
+//          year), 'old' (too old to breed), 'sterile' (infertile for
+//          another reason)
+//   yearsLeft: fertile years left (null: unknown, or the species never
+//          becomes infertile); yearsToMature: years until it can breed;
+//   elderly: the game's 'elderly' age group.
+export function fertilityOf(a, f) {
+    const age = a && typeof a.age === 'number' ? a.age : null;
+    const mat = f && typeof f.maturity === 'number' ? f.maturity : null;
+    const inf = f && typeof f.infertility === 'number' && f.infertility < 900 ? f.infertility : null;
+    const out = {
+        state: 'fertile', yearsLeft: null, yearsToMature: null, elderly: !!a && a.ageQ === 3,
+        forLife: !!f && typeof f.infertility === 'number' && f.infertility >= 900,
+    };
+    if (!a) return out;
+    if (age != null && inf != null) out.yearsLeft = Math.max(0, inf - age);
+    if (a.juv) {
+        out.state = 'juvenile';
+        if (age != null && mat != null) out.yearsToMature = Math.max(0, mat - age);
+        return out;
+    }
+    const pastAge = age != null && inf != null && age >= inf;
+    if (a.infertile) {
+        if (age != null && mat != null && age < mat) {
+            out.state = 'young';
+            out.yearsToMature = mat - age;
+        }
+        else out.state = pastAge || out.elderly ? 'old' : 'sterile';
+        return out;
+    }
+    if (pastAge) {
+        out.state = 'old';
+        return out;
+    }
+    if (out.yearsLeft != null && mat != null && out.yearsLeft <= Math.max(1, (inf - mat) * 0.2)) out.state = 'ending';
+    return out;
+}
+
+function yearsText(n) {
+    if (n < 1) return 'under a year';
+    const r = Math.round(n);
+    return `about ${r} year${r === 1 ? '' : 's'}`;
+}
+
+// A short phrase for cards: 'too old to breed', 'fertile for about 2 more
+// years', 'breeds in about 1 year'... ('' when there is nothing to say).
+export function fertilityText(a) {
+    const f = a && a.fert;
+    if (!f) return a && a.juv ? 'too young to breed' : a && a.infertile ? 'infertile' : '';
+    switch (f.state) {
+        case 'juvenile':
+        case 'young':
+            return f.yearsToMature != null ? (f.yearsToMature < 0.05 ? 'can breed soon' : `breeds in ${yearsText(f.yearsToMature)}`) : 'too young to breed';
+        case 'old': return 'too old to breed';
+        case 'sterile': return 'infertile';
+        case 'ending': return f.yearsLeft < 1 ? 'fertile for under a year more' : `fertile for ${yearsText(f.yearsLeft)} more`;
+        default:
+            if (f.yearsLeft != null) return `fertile for ${yearsText(f.yearsLeft)} more`;
+            return f.forLife ? 'fertile for life' : '';
+    }
+}
+
+// A small tag for animal lists: { cls, text, title } or null.
+//   young (juvenile / not yet mature), old (too old to breed), infertile,
+//   ending (last fertile years), elderly (fertile, but in the game's
+//   elderly age group)
+export function fertilityTag(a) {
+    const f = a && a.fert;
+    const say = fertilityText(a);
+    const cap = t => t.charAt(0).toUpperCase() + t.slice(1);
+    if (!f) {
+        if (a && a.juv) return { cls: 'young', text: 'young', title: 'Too young to breed' };
+        if (a && a.infertile) return { cls: 'infertile', text: 'infertile', title: 'Infertile' };
+        return null;
+    }
+    switch (f.state) {
+        case 'juvenile': return { cls: 'young', text: 'young', title: cap(say) };
+        case 'young': return { cls: 'young', text: 'not mature', title: `Adult, but not mature yet: ${say}` };
+        case 'old': return { cls: 'old', text: 'too old', title: 'Too old to breed' + (f.elderly ? ' (elderly)' : '') };
+        case 'sterile': return { cls: 'infertile', text: 'infertile', title: 'Infertile' };
+        case 'ending': return { cls: 'ending', text: f.yearsLeft < 1 ? '<1y fertile' : `${Math.round(f.yearsLeft)}y fertile`, title: cap(say) };
+        default: return f.elderly ? { cls: 'ending', text: 'elderly', title: say ? `Elderly, ${say}` : 'Elderly' } : null;
+    }
+}
+
+// Breeds now, as far as age and fertility go (contraception aside).
+export function fertileNow(a) {
+    if (!a || a.juv || a.infertile) return false;
+    const s = a.fert && a.fert.state;
+    return s !== 'old' && s !== 'young' && s !== 'sterile';
 }
 
 // ------------------------------------------------------------- pedigree
@@ -406,21 +518,49 @@ function compatibleSexes(a, b) {
 }
 
 function canBreedNow(a) {
-    return !a.juv && !a.contra && !a.infertile;
+    return !a.contra && fertileNow(a);
 }
 
-// Contraception, or adult infertility, stops this one breeding. Juveniles
-// are reported as infertile because of their age; that is a later risk,
-// not a cover.
+// Not breeding yet, but will: a juvenile, or an adult not yet mature (the
+// game reports both as infertile).
+function notYet(a) {
+    return !!a.juv || !!(a.fert && a.fert.state === 'young');
+}
+
+// Contraception, adult infertility or old age stops this one breeding.
+// Juveniles (and not yet mature adults) are reported as infertile because
+// of their age; that is a later risk, not a cover.
 function isCovered(a) {
-    return a.contra || (a.infertile && !a.juv);
+    if (a.contra) return true;
+    const s = a.fert && a.fert.state;
+    if (s === 'old') return true;
+    return !!a.infertile && !notYet(a);
+}
+
+// `other` is too old to breed by the time `young` can.
+function agesOutFirst(young, other) {
+    const yf = young.fert, of = other.fert;
+    return !!(yf && of && yf.yearsToMature != null && of.yearsLeft != null && yf.yearsToMature >= of.yearsLeft);
 }
 
 export function pairSeverity(x, y, tier) {
     if (tier === 'distant') return 'distant';
     if (isCovered(x) || isCovered(y)) return 'covered';
-    if (x.juv || y.juv) return 'future';
+    if (notYet(x) || notYet(y)) {
+        if ((notYet(x) && agesOutFirst(x, y)) || (notYet(y) && agesOutFirst(y, x))) return 'covered';
+        return 'future';
+    }
     return tier === 'game' ? 'risk' : 'kin';
+}
+
+// Why a covered pair cannot breed, in words ('' when it is not covered).
+export function coverReason(x, y) {
+    for (const a of [x, y]) if (a.contra) return `${a.name} is on contraception`;
+    for (const a of [x, y]) if (a.fert && a.fert.state === 'old') return `${a.name} is too old to breed`;
+    for (const a of [x, y]) if (a.infertile && !notYet(a)) return `${a.name} is infertile`;
+    if (notYet(x) && agesOutFirst(x, y)) return `${y.name} will be too old to breed by the time ${x.name} can`;
+    if (notYet(y) && agesOutFirst(y, x)) return `${x.name} will be too old to breed by the time ${y.name} can`;
+    return '';
 }
 
 function pairKeyOf(x, y) {
@@ -486,6 +626,7 @@ export function buildKinModel(raw, opts = {}) {
                         rel: relMF,               // f is m's <relation>
                         tier,
                         severity: pairSeverity(m, f, tier),
+                        cover: pairSeverity(m, f, tier) === 'covered' ? coverReason(m, f) : '',
                         kinship: rel.kinship,
                         mated: m.mates.includes(f.id) || f.mates.includes(m.id),
                     };
@@ -509,6 +650,7 @@ export function buildKinModel(raw, opts = {}) {
         park: snap.park,
         mode: snap.mode,
         tradeCentre: snap.tradeCentre,
+        speciesFacts: snap.speciesFacts || {},
         ped,
         animals,
         byKey,
@@ -686,10 +828,14 @@ export function mateCandidates(model, id, { includeJuveniles = false } = {}) {
             pred,
             score: offspringScore(pred),
             sameHabitat: !!self.hab && self.hab === other.hab,
+            // 'now' | 'later' (young) | 'never' (too old or infertile)
+            breeds: fertileNow(other) ? 'now' : notYet(other) ? 'later' : 'never',
         });
     }
     const tierRank = { none: 0, distant: 1, close: 2, game: 3 };
+    const breedRank = { now: 0, later: 1, never: 2 };
     out.sort((p, q) => tierRank[p.tier] - tierRank[q.tier]
+        || breedRank[p.breeds] - breedRank[q.breeds]
         || (q.score ?? -1) - (p.score ?? -1)
         || (q.sameHabitat - p.sameHabitat)
         || (p.animal.name < q.animal.name ? -1 : 1));
@@ -753,4 +899,4 @@ export function canLocate(a) {
     return !!(a && a.hab && !a.exhibit && !/^x/.test(String(a.id)));
 }
 
-export { canBreedNow, isCovered, compatibleSexes };
+export { canBreedNow, isCovered, compatibleSexes, notYet };

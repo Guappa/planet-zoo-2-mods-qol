@@ -149,7 +149,8 @@ All **offline** (decompiled `editors.animal.animalmovementeditmode.lua`,
 - **The medal (none/bronze/silver/gold) is the appeal state, not a genetics score.** The info panel's
   `geneticsRank` = `animals:GetAppealStateForInfoPopUpUI(e)` (variants: `GetAppealStateForTradingUI`,
   `GetAppealStateFromGUID`, `exhibits:GetAnimalUIDAppealStateForInfoPopUp`). Thresholds are native;
-  it can't be predicted for offspring from Lua.
+  it can't be predicted for offspring from Lua. The UI presents the same value as the **genetics
+  rating** (market/storage `ratings`, see `game-data-and-events.md`, Genetics medal).
 - Gene grades: `GetGeneticGrades(e)` -> `{nSize, nLongevity, nFertility, nImmunity}` 0..1;
   fertility and immunity are out of 6 loci, size and longevity out of 12 (Compare Mates divides
   by these). `geneticDiversity` is a Release-to-Wild group metric only.
@@ -178,6 +179,16 @@ All **offline** (decompiled `editors.animal.animalmovementeditmode.lua`,
   -> `nMaturityAge, nInfertilityAge` years (>900 = never), `GetMatingWarnings(e, 0)` ->
   `{tLabelsArray, bMatingBlocked, bInfertile}` (Interbirth is a per-animal flag only).
   `IsInfertile` is probably also true under contraception: sterile = infertile and not contracepted.
+- **Fertility over a life** (2026-10-16, **offline**): `IsInfertile(e)` (and `bIsInfertile` in the
+  list data) is true for juveniles and for adults not yet at the maturity age as well as for old
+  animals, so "infertile" alone does not mean "too old". `GetAgeStatus(e)` only has `Juvenile` /
+  `Adult`; the **elderly** stage is `GetAgeQuarterForUI(e)` = 3 (0 child, 1 youngAdult, 2 adult,
+  3 elderly: `AnimalUtils.GetHabitatAnimalAgeCategoryForUI`, `tAgeCategories`). Lifespan:
+  `GetSpeciesLongevity(sp)` -> `min, max` years. The game's own release screen rates fertile time
+  left as `1 - (age - maturity) / (infertility - maturity)` (infertility > 900 -> longevity max;
+  `RelocateAnimalsPopup._GetHabitatAnimalReleaseRatings`). PZ2QoL: `fertilityOf()` in `kincore.js`
+  (states juvenile / young / fertile / ending / old / sterile, years left), snapshot fields `ageQ`
+  and `speciesFacts` (`pz2qol.kin.lua` `_SpeciesFacts`, cached per species).
 - Mixing: `animals:DoAllSpeciesCohabit({[sp]=n})`; skip exhibit species (`exhibits:IsExhibitSpecies`)
   and boids (`animals:IsSpeciesABoid`).
 

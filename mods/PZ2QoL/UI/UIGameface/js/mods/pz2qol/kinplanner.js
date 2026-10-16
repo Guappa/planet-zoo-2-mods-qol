@@ -27,7 +27,8 @@ import {
     getKinModel, getKinSettings, getKinState, isBreedingHeatmapOn, locateAnimal, markKinActive, onKin, onKinSettings,
     requestKinScan, setBreedingHeatmap, setContraception, setKinSettings,
 } from '/js/mods/pz2qol/kin.js';
-import { hideKinCard, offspringBlock, placeOf, severityTag, sexClass, sexSymbol } from '/js/mods/pz2qol/kinui.js';
+import { ageWord, hideKinCard, offspringBlock, placeOf, severityTag, sexClass, sexSymbol } from '/js/mods/pz2qol/kinui.js';
+import { fertilityTag, fertilityText } from '/js/mods/pz2qol/kincore.js';
 import { clear, h, icon, setClass, setText, tierOf } from '/js/mods/pz2qol/ui.js';
 import { breadcrumb, reportError } from '/js/mods/pz2qol/errors.js';
 import {
@@ -88,9 +89,9 @@ function nameSpan(a, { max = 0, cls = '' } = {}) {
 
 function statusTags(a, { short = false } = {}) {
     const out = [];
-    if (a.juv) out.push(h('span.PZ2QoL_kpTag.young', { text: 'young', title: 'Juvenile: cannot breed yet' }));
+    const ft = fertilityTag(a);
+    if (ft) out.push(h(`span.PZ2QoL_kpTag.${ft.cls}`, { text: ft.text, title: ft.title }));
     if (a.contra) out.push(h('span.PZ2QoL_kpTag.contra', { text: short ? 'contra' : 'contraception', title: 'On contraception' }));
-    if (a.infertile && !a.juv) out.push(h('span.PZ2QoL_kpTag.contra', { text: 'infertile', title: 'Infertile' }));
     if (a.preg) out.push(h('span.PZ2QoL_kpTag.preg', { text: 'pregnant', title: 'Pregnant' }));
     return out;
 }
@@ -750,9 +751,10 @@ function factTile(value, label, tone) {
 }
 
 function animalLine(model, a) {
-    const bits = [a.juv ? 'young' : 'adult'];
+    const bits = [ageWord(a)];
+    const say = fertilityText(a);
+    if (say) bits.push(say);
     if (a.contra) bits.push('on contraception');
-    if (a.infertile && !a.juv) bits.push('infertile');
     if (a.preg) bits.push('pregnant');
     return bits.join(' · ');
 }
@@ -817,10 +819,19 @@ function pairDetail(model, settings) {
     const notes = [];
     if (mated) notes.push(`${a.name} and ${b.name} are mates now.`);
     for (const x of [a, b]) {
+        const st = x.fert && x.fert.state;
         if (x.contra) notes.push(`${x.name} is on contraception, so this pair cannot breed.`);
-        else if (x.infertile && !x.juv) notes.push(`${x.name} is infertile.`);
+        else if (st === 'old') notes.push(`${x.name} is too old to breed.`);
+        else if (st === 'sterile' || (!st && x.infertile && !x.juv)) notes.push(`${x.name} is infertile.`);
+        else if (st === 'ending') notes.push(`${x.name} is ${fertilityText(x)}.`);
     }
-    for (const x of [a, b]) if (x.juv) notes.push(`${x.name} is still young${pair ? ': this becomes a risk when it grows up.' : '.'}`);
+    const cover = pair && pair.severity === 'covered' ? pair.cover : '';
+    if (cover && / by the time /.test(cover)) notes.push(`${cover}, so this pair will not breed.`);
+    else {
+        for (const x of [a, b]) {
+            if (x.juv || (x.fert && x.fert.state === 'young')) notes.push(`${x.name} is still young (${fertilityText(x)})${pair ? ': this becomes a risk when it grows up.' : '.'}`);
+        }
+    }
     for (const n of notes) kids.push(h('div.PZ2QoL_kpBullet', null, h('div.PZ2QoL_kpBulletDot'), h('span', { text: n })));
     const off = offspringBlock(a, b);
     if (off) {

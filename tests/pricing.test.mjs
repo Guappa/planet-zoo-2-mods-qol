@@ -171,3 +171,116 @@ test('recommendPrice applies the player offset after pricing, before rounding an
     assert.equal(offsetLabel(0.2), '+20%');
     assert.equal(offsetLabel(0), '');
 });
+
+// Genetics medals (the market's Rating column, row field `ratings`).
+test('medalOf reads the game value, ignores shoals and unknown values', async () => {
+    const { medalOf, medalLabel } = await import('../mods/PZ2QoL/UI/UIGameface/js/mods/pz2qol/pricing.js');
+    assert.equal(medalOf({ medal: 'gold' }), 'gold');
+    assert.equal(medalOf({ medal: 'Silver' }), 'silver');
+    assert.equal(medalOf({ medal: 'none' }), 'none');
+    assert.equal(medalOf({ medal: 'platinum' }), undefined);
+    assert.equal(medalOf({}), undefined);
+    assert.equal(medalOf({ medal: 'gold', isShoal: true }), undefined);
+    assert.equal(medalLabel('none'), 'Unranked');
+});
+
+const medalBook = () => [
+    ...[1180, 1200, 1220, 1240].map((p, i) => listing('s' + i, { medal: 'silver', price: p, score: 60 + i })),
+    ...[1900, 2000, 2100, 2200].map((p, i) => listing('g' + i, { medal: 'gold', price: p, score: 64 + i })),
+    ...[700, 800].map((p, i) => listing('b' + i, { medal: 'bronze', price: p, score: 50 + i })),
+];
+
+test('comparables prefer listings with the same medal, sex and age group', () => {
+    const c = comparables(animal({ medal: 'silver' }), medalBook());
+    assert.equal(c.medalMode, 'same');
+    assert.equal(c.medal, 'silver');
+    assert.deepEqual(c.list.map(l => l.id), ['s0', 's1', 's2', 's3']);
+    const r = recommendPrice(animal({ medal: 'silver', genes: g(61) }), medalBook(), {});
+    // the silver median (1,210) less 3%, not dragged up by the gold listings
+    assert.ok(r.price >= 1150 && r.price <= 1200, `price ${r.price}`);
+    assert.match(r.reason, /^4 Silver adult males: median 1,210 CC/);
+    assert.equal(r.medal, 'silver');
+    const fem = recommendPrice(animal({ medal: 'silver', gender: Gender.Female }), medalBook().map(l => Object.assign(l, { gender: Gender.Female })), {});
+    assert.match(fem.reason, /^4 Silver adult females/);
+});
+
+test('too few of the medal: adjacent medals scaled by the observed price ratio', () => {
+    // one gold lion; silver lions; the gold/silver ratio comes from tigers (3000/2000)
+    const book = [
+        listing('g0', { medal: 'gold', price: 1600, score: 70 }),
+        ...[1000, 1000, 1000].map((p, i) => listing('s' + i, { medal: 'silver', price: p, score: 60 })),
+        ...[3000, 3000].map((p, i) => listing('tg' + i, { species: 'Tiger', medal: 'gold', price: p })),
+        ...[2000, 2000].map((p, i) => listing('ts' + i, { species: 'Tiger', medal: 'silver', price: p })),
+    ];
+    const c = comparables(animal({ medal: 'gold' }), book);
+    assert.equal(c.medalMode, 'adjacent');
+    assert.equal(c.sameCount, 1);
+    assert.equal(c.factors.silver.source, 'all species');
+    assert.ok(Math.abs(c.factors.silver.factor - 1.5) < 1e-9);
+    const scaled = c.list.find(l => l.id == 's0');
+    assert.equal(scaled.price, 1500);
+    assert.equal(scaled.rawPrice, 1000);
+    const r = recommendPrice(animal({ medal: 'gold', genes: g(70) }), book, {});
+    assert.match(r.reason, /^1 Gold adult males \+ 3 Silver scaled to Gold: median 1,500 CC/);
+    assert.match(r.reason, /Silver ×1\.50 \(all species\)/);
+    // a higher medal scales down: a silver animal among gold lions
+    const down = comparables(animal({ medal: 'silver' }), [
+        listing('x', { medal: 'silver', price: 1000 }),
+        ...[1600, 1600].map((p, i) => listing('g' + i, { medal: 'gold', price: p })),
+        listing('y', { medal: 'silver', price: 1000 }),
+    ]);
+    // same group has 2 silver and 2 gold: the ratio comes from it
+    assert.equal(down.medalMode, 'adjacent');
+    assert.equal(down.factors.gold.source, 'this sex and age group');
+    assert.ok(Math.abs(down.factors.gold.factor - 1 / 1.6) < 1e-9);
+});
+
+test('a better medal is never priced lower than the worse one', async () => {
+    const { medalStepRatio } = await import('../mods/PZ2QoL/UI/UIGameface/js/mods/pz2qol/pricing.js');
+    const list = [listing('a', { medal: 'gold', price: 500 }), listing('b', { medal: 'gold', price: 500 }),
+        listing('c', { medal: 'silver', price: 900 }), listing('d', { medal: 'silver', price: 900 })];
+    assert.equal(medalStepRatio('gold', [{ list, source: 'x' }], list).ratio, 1);
+    assert.equal(medalStepRatio('none', [{ list, source: 'x' }], list), null);
+});
+
+test('no ratio known: falls back to the gene-score tiers and says why', () => {
+    const book = [listing('g0', { medal: 'gold', price: 1600 }), ...[1000, 1000, 1000].map((p, i) => listing('s' + i, { medal: 'silver', price: p }))];
+    const c = comparables(animal({ medal: 'gold' }), book);
+    assert.equal(c.medalMode, undefined);
+    assert.equal(c.tier, 1);
+    assert.equal(c.list.length, 4);
+    const r = recommendPrice(animal({ medal: 'gold' }), book, {});
+    assert.match(r.reason, /only 1 Gold listing, so all medals compared by gene score/);
+});
+
+test('without medal data the price is the same as before', () => {
+    const book = [40, 50, 60, 70, 80, 55, 65].map((s, i) => listing('m' + i, { score: s, price: 200 + 10 * s }));
+    const plain = recommendPrice(animal({ genes: g(75) }), book, { defaultPrice: 900 });
+    const withMedal = recommendPrice(animal({ genes: g(75), medal: 'gold' }), book, { defaultPrice: 900 });
+    assert.equal(withMedal.price, plain.price);
+    assert.equal(withMedal.reason, plain.reason);
+    assert.equal(plain.price, 920);
+    // and the animal's medal unknown, listings with medals: also unchanged tiers
+    const c = comparables(animal(), medalBook());
+    assert.equal(c.medalMode, undefined);
+    assert.equal(c.list.length, 10);
+});
+
+test('speciesMarketSummary breaks live listings down by medal', () => {
+    const s = speciesMarketSummary('Lion', medalBook().concat([listing('h', { medal: 'gold', source: 'history', price: 5000 })]));
+    assert.deepEqual(Object.keys(s.byMedal), ['gold', 'silver', 'bronze']);
+    assert.equal(s.byMedal.gold.count, 4);
+    assert.equal(s.byMedal.gold.median, 2050);
+    assert.equal(s.byMedal.silver.males, 4);
+    assert.deepEqual(speciesMarketSummary('Lion', [listing('a')]).byMedal, {});
+});
+
+test('mergeListings keeps a known medal when a later read has none', () => {
+    let book = mergeListings([], [listing('a', { medal: 'silver' })], 1000);
+    book = mergeListings(book, [listing('a', { price: 1100 })], 2000);
+    assert.equal(book[0].medal, 'silver');
+    assert.equal(book[0].price, 1100);
+    // the medal is not part of the listing key (v2 keys stay valid)
+    const row = { species: 'Lion', name: 'Leo', gender: 0, maturity: 2, genes: g(60), price: 1000, isCC: true };
+    assert.equal(listingKey(Object.assign({ medal: 'gold' }, row)), listingKey(row));
+});

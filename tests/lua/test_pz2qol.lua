@@ -797,6 +797,9 @@ animalsAPI.CurrentLocationType_TradeCentre = 2
 animalsAPI.CurrentLocationType_BeingCarried = 3
 tParkAnimals[5].nLocationType = 2 -- "Away" waits at the trade centre
 animalsAPI.GetAnimalTransportData = function(self, e) return { bHasTransportJob = tJobs[e] == true } end
+animalsAPI.GetAgeQuarterForUI = function(self, e) return e == 2 and 3 or 2 end
+animalsAPI.GetSpeciesFertilityBounds = function(self, sp) return 3, 15 end
+animalsAPI.GetSpeciesLongevity = function(self, sp) return 16, 20 end
 animalsAPI.GetSpecies = function(self, e) return tParkAnimals[e] and tParkAnimals[e].sSpecies end
 animalsAPI.IsAlive = function(self, e) return e ~= 6 end
 animalsAPI.IsEscaped = function(self, e) return false end
@@ -849,6 +852,8 @@ if tBoard then
 	local byId = {}
 	for _, a in ipairs(tBoard.animals) do byId[a.id] = a end
 	check(byId["2"].lt == "habitat" and byId["5"].lt == "trade", "location kinds: habitat, trade centre")
+	check(tBoard.speciesFacts and tBoard.speciesFacts.Lion and tBoard.speciesFacts.Lion.maturity == 3 and tBoard.speciesFacts.Lion.infertility == 15 and tBoard.speciesFacts.Lion.life == 20, "species fertility ages and lifespan in the snapshot")
+	check(byId["2"].ageQ == 3 and byId["3"].ageQ == 2, "the game's age group per animal")
 	check(byId["2"].moving == false, "not on the move")
 	check(tBoard.mode == "offline", "game mode: offline (got " .. tostring(tBoard.mode) .. ")")
 	check(tBoard.park == "Lemur Valley", "park name for the habitat assignments")

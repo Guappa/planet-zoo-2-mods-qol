@@ -314,6 +314,9 @@
 }
 .PZ2QoL_kbTag.young { background-color: rgba(137, 151, 81, 0.22); color: var(--qol-olive); }
 .PZ2QoL_kbTag.contra { background-color: rgba(143, 133, 120, 0.22); color: var(--kp-covered-ink); }
+.PZ2QoL_kbTag.infertile { background-color: rgba(143, 133, 120, 0.22); color: var(--kp-covered-ink); }
+.PZ2QoL_kbTag.old { background-color: rgba(122, 104, 86, 0.24); color: #6E5A48; }
+.PZ2QoL_kbTag.ending { background-color: rgba(201, 150, 64, 0.22); color: #8A6420; }
 .PZ2QoL_kbTag.preg { background-color: rgba(231, 124, 152, 0.2); color: #B4536C; }
 .PZ2QoL_kbTag.moving, .PZ2QoL_kbTag.away { background-color: rgba(79, 138, 134, 0.18); color: var(--qol-teal); }
 .PZ2QoL_kbTag.from { background-color: rgba(89, 105, 67, 0.14); color: var(--qol-olive); }

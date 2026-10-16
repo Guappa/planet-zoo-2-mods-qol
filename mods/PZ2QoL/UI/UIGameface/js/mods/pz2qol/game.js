@@ -54,6 +54,8 @@ export function readAnimal(context) {
         auctionTimerSeconds: get(context, 'auctionTimerSeconds'),
         isMoving: !!get(context, 'isMoving'),
         name: get(context, 'name'),
+        // genetics medal of the Rating column: 'none'|'bronze'|'silver'|'gold'
+        medal: get(context, 'ratings'),
         key: childKey(context),
         genes: {
             size: gene(context, 'size'),

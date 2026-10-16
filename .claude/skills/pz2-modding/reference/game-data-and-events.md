@@ -43,6 +43,29 @@ Zoo animal rows:
   generated string, no listing GUID). Market rows also carry `name`, `age`, `auctionSource`.
   Storage row ids are real animal ids (storage isn't paged).
 
+### Genetics medal (the market's Rating column)
+
+- Market, Trade History, Rewards and Storage rows all carry **`ratings`**, a `GeneticsRank` string
+  (`js/project/data/GameTypes.js`): `'none' | 'bronze' | 'silver' | 'gold'`. Zoo management rows
+  carry the same field. **offline** (schema `AnimalMarketAndStorageSchema.js`, `MarketUtil.js`).
+- What the game draws from it: the list's **Rating** column (`MarketAnimalListItem`, an
+  `AppealIndicator`; **shoals show a dash**), and the info panel's "Rating" block
+  (`HabitatAndExhibitInfo`: `Icon_Genetics_<Medal>.svg`, label
+  `[InfoPanel_Animal_GeneticsRank_<Medal|Unranked>]`, tooltip `[AnimalExchange_GeneticRating]`).
+  The separate `appeal` field (a formatted number) is the Appeal column. The native sort has both
+  `ExchangeSortFilterType_GeneticRating` and `ExchangeSortFilterType_Appeal`. **offline**
+- Who fills it: the native market/storage datastore managers (no Lua writes `ratings`). Natively it
+  is the animal's "appeal state": exe has `animals:GetAppealStateForTradingUI` next to
+  `GetAppealStateForInfoPopUpUI` (the park info panel's `geneticsRank`/`medal`). The game presents
+  it as a **genetics** rating; how it is derived (thresholds on the gene grades?) is native and
+  unknown. **guess**: it follows the genes, so one animal always shows the same medal.
+- PZ2QoL: `readAnimal().medal` (`game.js`), `medalOf()` (pricing.js, undefined for shoals and
+  unknown values), recorded on price-book listings but **not** in `listingKey()` (v2 keys kept;
+  `mergeListings` keeps a known medal if a later read has none). Pricing prefers same-medal
+  comparables, then adjacent medals scaled by the observed median price ratio (sex+age group →
+  species → median over all species, clamped 1..4), then the old gene-score tiers. In the
+  harness the schema generator gives random medals.
+
 ## Listing limits (`animalTradeListingData`)
 
 - `tradePriceDefault`, `tradePriceMin`, `tradePriceMax`.

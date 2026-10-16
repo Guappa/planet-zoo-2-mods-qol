@@ -14,7 +14,7 @@
 // Gameface: own DOM under <body>, explicit display:flex, no CSS grid, no
 // native scrolling (kinpanel.js), pointer drag with mouse events (no HTML5
 // drag and drop).
-import { Sex, relationWord, severityRank } from '/js/mods/pz2qol/kincore.js';
+import { Sex, relationWord, severityRank, fertilityTag } from '/js/mods/pz2qol/kincore.js';
 import {
     TRADE, boardColumns, canMove, moveText, planImpact, planProblems, prunePlan, setMove, simulatePlan, speciesList, suggestPlan,
 } from '/js/mods/pz2qol/kinboardcore.js';
@@ -576,7 +576,8 @@ function tagsFor(a, x, model) {
         const before = model.animals.get(a.id);
         out.push(h('span.PZ2QoL_kbTag.from', { text: `from ${trunc(placeName(model, before ? homeOf(before) : ''), 16)}` }));
     }
-    if (a.juv) out.push(h('span.PZ2QoL_kbTag.young', { text: 'young' }));
+    const ft = fertilityTag(a);
+    if (ft) out.push(h(`span.PZ2QoL_kbTag.${ft.cls}`, { text: ft.text, title: ft.title }));
     if (a.contra) out.push(h('span.PZ2QoL_kbTag.contra', { text: 'contra' }));
     if (a.preg) out.push(h('span.PZ2QoL_kbTag.preg', { text: 'pregnant' }));
     if (S.pendingMove.has(a.id)) out.push(h('span.PZ2QoL_kbTag.moving', { text: 'moving…' }));

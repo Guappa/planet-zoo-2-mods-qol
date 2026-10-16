@@ -511,6 +511,12 @@ local function locationKind(animals, t)
 	return "other"
 end
 
+-- the game's age quarter for the UI: 0 child, 1 young adult, 2 adult, 3 elderly
+local function ageQuarter(animals, e)
+	local bOk, n = pcall(animals.GetAgeQuarterForUI, animals, e)
+	return bOk and type(n) == "number" and n or nil
+end
+
 local function hasTransportJob(animals, e)
 	local bOk, t = pcall(animals.GetAnimalTransportData, animals, e)
 	return bOk and type(t) == "table" and t.bHasTransportJob == true
@@ -534,6 +540,7 @@ Kin._AddParkAnimal = function(self, tJob, animals, e, t)
 		preg = t.bPregnant == true,
 		alpha = t.bAlpha == true,
 		age = type(t.nAge) == "number" and t.nAge or nil,
+		ageQ = ageQuarter(animals, e),
 		lt = h ~= nil and "habitat" or locationKind(animals, t),
 		moving = hasTransportJob(animals, e),
 		hab = h ~= nil and idString(h) or "",
@@ -689,6 +696,7 @@ Kin._FinishPark = function(self)
 		v = self.nVersion,
 		seq = tJob.nSeq,
 		scope = "park",
+		speciesFacts = self:_SpeciesFacts(tJob),
 		mode = self:_GameMode(tJob.tAPIs),
 		park = self:_ParkName(tJob.tAPIs),
 		tradeCentre = self:_TradeCentre(tJob.tAPIs),
@@ -698,6 +706,38 @@ Kin._FinishPark = function(self)
 	}
 	mark("kin_scan_done")
 	self:_SendSnapshot(tJob.oUI, tSnapshot)
+end
+
+-- Per species in the scan: { maturity, infertility, life } in years, from
+-- the game's fertility bounds (infertility above 900 = never infertile) and
+-- longevity. Species data does not change in a session: asked once.
+Kin._SpeciesFacts = function(self, tJob)
+	local animals = tJob.tAPIs.animals
+	self.tSpeciesFacts = self.tSpeciesFacts or {}
+	local tOut = {}
+	for _, a in ipairs(tJob.tAnimals) do
+		local sp = a.species
+		if type(sp) == "string" and sp ~= "" and tOut[sp] == nil and string.sub(a.id, 1, 1) ~= "x" then
+			local t = self.tSpeciesFacts[sp]
+			if t == nil then
+				t = {}
+				local bOk, nMat, nInf = pcall(animals.GetSpeciesFertilityBounds, animals, sp)
+				if bOk and type(nMat) == "number" then
+					t.maturity = nMat
+					t.infertility = type(nInf) == "number" and nInf or nil
+				end
+				local bOk2, _, nLife = pcall(animals.GetSpeciesLongevity, animals, sp)
+				if bOk2 and type(nLife) == "number" then
+					t.life = nLife
+				end
+				if t.maturity ~= nil then
+					self.tSpeciesFacts[sp] = t -- ask again next scan if the game had no answer
+				end
+			end
+			tOut[sp] = t
+		end
+	end
+	return tOut
 end
 
 -- 'franchise' (online Franchise zoo), 'offline' (Sandbox, Career,

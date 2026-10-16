@@ -489,6 +489,49 @@
 .PZ2QoL_compChip.female { border-left-color: var(--qol-female); }
 .PZ2QoL_compGene { margin-right: 0.35rem; color: var(--qol-ink-soft); }
 
+/* genetics medals (the game's Rating column) */
+.PZ2QoL_scoreStack { flex-direction: column; align-items: center; flex-shrink: 0; margin-right: 0.7rem; }
+.PZ2QoL_scoreStack .PZ2QoL_bigScore { margin-right: 0; }
+.PZ2QoL_medalPill {
+  height: 0.95rem;
+  margin-top: 0.25rem;
+  padding: 0 0.4rem;
+  align-items: center;
+  border-radius: 0.475rem;
+  font-size: 0.66rem;
+  font-style: normal;
+  font-weight: bold;
+  color: #FFFFFF;
+  background-color: var(--qol-ink-faint);
+}
+.PZ2QoL_medalDot {
+  flex-shrink: 0;
+  width: 0.6rem;
+  height: 0.6rem;
+  margin-right: 0.3rem;
+  border-radius: 0.3rem;
+  background-color: rgba(114, 91, 74, 0.25);
+  border: 0.06rem solid rgba(114, 91, 74, 0.45);
+}
+.PZ2QoL_tableRow .PZ2QoL_medalDot { margin: 0 0 0 0.4rem; }
+.PZ2QoL_medalPill.gold, .PZ2QoL_medalDot.gold { background-color: #C9A227; }
+.PZ2QoL_medalPill.silver, .PZ2QoL_medalDot.silver { background-color: #9AA3AB; }
+.PZ2QoL_medalPill.bronze, .PZ2QoL_medalDot.bronze { background-color: #B0703C; }
+.PZ2QoL_medalRow { flex-direction: row; flex-wrap: wrap; align-items: center; margin-top: 0.4rem; }
+.PZ2QoL_medalChip {
+  flex-direction: row;
+  align-items: center;
+  height: 1.25rem;
+  margin: 0.1rem 0.25rem 0.1rem 0;
+  padding: 0 0.5rem;
+  border-radius: 0.625rem;
+  background-color: var(--qol-card);
+  border: 0.08rem solid transparent;
+  font-size: 0.72rem;
+}
+.PZ2QoL_medalChip.mine { border-color: var(--qol-olive); font-weight: bold; }
+.PZ2QoL_medalName { margin-right: 0.35rem; color: var(--qol-ink-soft); }
+
 .PZ2QoL_recPrice { flex-direction: row; align-items: center; }
 .PZ2QoL_recPrice > .PZ2QoL_icon { margin-right: 0.45rem; }
 .PZ2QoL_listerRecPrice { font-size: 1.75rem; font-weight: bold; color: var(--qol-ink); }

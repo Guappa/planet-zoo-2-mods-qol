@@ -36,6 +36,10 @@ Run all of these before installing a build.
 - The lister scenario also fakes the Lua side of the background market check
   (`PZ2QoL_MarketPeek` → `PZ2QoL_MarketPeekState` loading/ready → `PZ2QoL_MarketPeekRelease`). It checks
   that the screen stays on storage, that 3 prices are recorded, and the −10% price offset.
+- Medals in the lister scenario: the target storage row is pinned to `ratings: 'silver'`, adult
+  (`window.__fake.pinned`, re-applied on selection because the debug panel randomises rows), and
+  the seeded listings carry `medal`; it checks the Silver pill, a "N Silver adult …" reason and the
+  By medal chips. Peek pages set `ratings` gold/silver/bronze per row.
 
 ## In game
 

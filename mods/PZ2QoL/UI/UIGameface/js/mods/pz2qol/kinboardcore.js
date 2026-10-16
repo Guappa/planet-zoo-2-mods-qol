@@ -10,7 +10,7 @@
 // Destinations come from the Lua side (the game's own checks):
 //   { bySpecies: { <species>: { <habitatId>: { ok, reason } } },
 //     habitats: [{ id, name }], tradeCentre: { id, name } | null }
-import { buildKinModel, normalizeSnapshot, severityRank, offspringScore, predictOffspring, Sex } from './kincore.js';
+import { buildKinModel, normalizeSnapshot, severityRank, offspringScore, predictOffspring, fertileNow, fertilityText, Sex } from './kincore.js';
 
 export const TRADE = 'trade';
 const COUNTED = s => s === 'risk' || s === 'kin' || s === 'future';
@@ -290,9 +290,23 @@ export function planProblems(model, plan, destinations, { assignments = null } =
 
 // ------------------------------------------------------------ suggestions
 
-// An animal that can breed now: adult, alive, not on contraception, fertile.
+// An animal that can breed now: adult, mature, alive, not on contraception,
+// fertile and not too old.
 export function fertileAdult(a) {
-    return !!a && !a.juv && !a.contra && !a.infertile && a.alive !== false;
+    return !!a && !a.contra && a.alive !== false && fertileNow(a);
+}
+
+// A pair near the end of its fertile years counts for less: it breeds for
+// a short while only.
+function pairWeight(a, b) {
+    return (a.fert && a.fert.state === 'ending') || (b.fert && b.fert.state === 'ending') ? 0.5 : 1;
+}
+
+// Why an animal does not breed, in words.
+export function notBreedingText(a) {
+    if (!a) return '';
+    if (a.contra) return 'on contraception';
+    return fertilityText(a) || (a.juv ? 'too young to breed yet' : 'not breeding');
 }
 
 // Not related closely enough to count (the game's rule or close kin).
@@ -310,16 +324,17 @@ export function breedingPairs(model, habId, species) {
     const males = list.filter(x => x.sex === Sex.Male);
     const females = list.filter(x => x.sex === Sex.Female);
     const unisex = list.filter(x => x.sex === Sex.Unisex);
-    let pairs = 0, best = null;
+    let pairs = 0, weighted = 0, best = null;
     const consider = (a, b) => {
         if (!unrelatedEnough(model, a, b)) return;
         pairs++;
+        weighted += pairWeight(a, b);
         const sc = offspringScore(predictOffspring(a.genes, b.genes));
         if (sc != null && (best == null || sc > best)) best = sc;
     };
     for (const m of males) for (const f of females) consider(m, f);
     for (let i = 0; i < unisex.length; i++) for (let j = i + 1; j < unisex.length; j++) consider(unisex[i], unisex[j]);
-    return { pairs, males: males.length, females: females.length, best };
+    return { pairs, weighted, males: males.length, females: females.length, best };
 }
 
 // A plan that removes this species' inbreeding risks (and close kin) by
@@ -397,7 +412,8 @@ export function suggestPlan(model, species, destinations, { maxMoves = 12, allow
                 const breaksOrigin = !!fromBefore && fromBefore.pairs > 0 && fromAfter.pairs === 0;
                 // breeding across the two habitats the move touches: pairs
                 // gained or lost, and groups of only males or only females
-                const pairsOf = b => (b ? b.pairs : 0);
+                // pairs near the end of their fertile years count half
+                const pairsOf = b => (b ? b.weighted : 0);
                 const pairGain = (pairsOf(toAfter) - pairsOf(toBefore)) + (pairsOf(fromAfter) - pairsOf(fromBefore));
                 const singleSex = b => (!!b && b.males + b.females >= 2 && (b.males === 0 || b.females === 0)) ? 1 : 0;
                 const singleSexDelta = singleSex(toAfter) - singleSex(toBefore) + singleSex(fromAfter) - singleSex(fromBefore);
@@ -425,7 +441,7 @@ export function suggestPlan(model, species, destinations, { maxMoves = 12, allow
                 ? `gives ${destName(model, chosen.to, destinations)} its first breeding pair (an unrelated fertile ${mate})`
                 : `${chosen.gained} more breeding pair${chosen.gained > 1 ? 's' : ''} there (unrelated fertile ${mate}${chosen.gained > 1 ? 's' : ''})`);
         }
-        else if (!fertileAdult(a)) parts.push(a.juv ? 'too young to breed yet' : 'not breeding (contraception or infertile)');
+        else if (!fertileAdult(a)) parts.push(notBreedingText(a));
         else parts.push(`no unrelated fertile ${a.sex === Sex.Male ? 'female' : a.sex === Sex.Female ? 'male' : 'partner'} there yet`);
         if (chosen.breaksOrigin) parts.push(`${chosen.fromName} loses its last breeding pair`);
         plan = plan.concat([{ id: a.id, to: chosen.to, reason: parts.join('; ') }]);

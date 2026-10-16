@@ -4,6 +4,7 @@
 import {
     SEVERITY_INFO, Sex, animalPairs, partnerOf, explainRelation, relationWord, percent, predictOffspring,
     offspringScore, habitatSummary, canLocate,
+    fertilityText,
 } from '/js/mods/pz2qol/kincore.js';
 import { getKinSettings, locateAnimal, setContraception } from '/js/mods/pz2qol/kin.js';
 import { clear, h, icon, setClass } from '/js/mods/pz2qol/ui.js';
@@ -103,12 +104,19 @@ function locateButton(a, onDone) {
     }, icon('IconLocation', 'brown', 'xs'), h('span', { text: `Locate ${a.name}` }));
 }
 
+// 'juvenile' | 'adult' | 'elderly' (the game's age groups)
+export function ageWord(a) {
+    if (a.juv) return 'juvenile';
+    return a.ageQ === 3 || (a.fert && a.fert.elderly) ? 'elderly' : 'adult';
+}
+
 // One related partner of `self`: who, how, how bad, and what to do.
 export function pairRow(model, pair, self, { actions = false, detail = true, onAction } = {}) {
     const other = partnerOf(pair, self.id);
     const word = relationWord(model.ped.relation(self.guid, other.guid), other.sex);
     const facts = [word, `${percent(pair.kinship)} kinship`];
     if (pair.mated) facts.push('mates now');
+    if (pair.severity === 'covered' && pair.cover) facts.push(pair.cover);
     if (!self.hab || self.hab !== other.hab) facts.push(placeOf(model, other));
     const row = h(`div.PZ2QoL_kinPair.sev_${pair.severity}`, null,
         h('div.PZ2QoL_kinPairHead', null, severityTag(pair.severity), nameTag(other), h('div.PZ2QoL_kinFacts', { text: facts.filter(Boolean).join(' · ') })),
@@ -131,7 +139,7 @@ export function animalCardContent(model, animal, { pinned = false, onAction, ope
         h('div.PZ2QoL_kinCardIcon'),
         h('div.PZ2QoL_cardTitles', null,
             h('div.PZ2QoL_cardTitle', { text: `${animal.name} ${sexSymbol(animal.sex)}` }),
-            h('div.PZ2QoL_cardSubtitle', { text: [place, animal.juv ? 'juvenile' : 'adult', animal.contra ? 'on contraception' : ''].filter(Boolean).join(' · ') }))));
+            h('div.PZ2QoL_cardSubtitle', { text: [place, ageWord(animal), fertilityText(animal), animal.contra ? 'on contraception' : ''].filter(Boolean).join(' · ') }))));
     if (!pairs.length) {
         body.appendChild(h('div.PZ2QoL_kinOk', null, icon('Icon_Tick', 'brown', 'sm'),
             h('span', { text: animal.hab ? 'No relatives it could breed with in this habitat.' : 'Not in a habitat, so no breeding risk here.' })));

@@ -278,6 +278,8 @@ async function installFakeNative(page) {
             const settle = () => {
                 if (!key) return;
                 DS.setValue(LIST.concat(key), 'isMoving', false);
+                const pin = (window.__fake.pinned || {})[key];
+                if (pin) for (const [prop, v] of Object.entries(pin)) DS.setValue(LIST.concat(key), prop, v);
                 if (!(window.__fake.listed || []).includes(key)) DS.setValue(LIST.concat(key), 'auctionTimerSeconds', 0);
                 DS.setValue(ACTIONS, 'tradeAllowed', true);
             };
@@ -344,11 +346,18 @@ async function runListerScenario(page) {
             && !DS.getValue(LIST.concat(k), 'isShoal'));
         if (!withGenes.length) throw new Error('no storage animal with genes in the dummy data');
         const k = withGenes[0];
+        // a Silver adult (the medal is the row's `ratings`, as in the game's
+        // Rating column); the fake debug panel must not randomise it away
+        const pin = { ratings: 'silver', maturity: 2 };
+        window.__fake.pinned = { [k]: pin };
+        for (const [prop, v] of Object.entries(pin)) DS.setValue(LIST.concat(k), prop, v);
         const a = { id: DS.getValue(LIST.concat(k), 'id'), key: k, species: DS.getValue(LIST.concat(k), 'species'), gender: DS.getValue(LIST.concat(k), 'gender') };
         const { mergeIntoPriceBook } = await import('/js/mods/pz2qol/pricebook.js');
         const fake = [];
-        [40, 50, 55, 60, 65, 70, 80].forEach((s, i) => fake.push({ id: 'fake' + i, species: a.species, gender: a.gender, maturity: 2, isShoal: false, score: s, price: 400 + 10 * s, isCC: true, source: 'market' }));
-        fake.push({ id: 'fakeF', species: a.species, gender: a.gender == 0 ? 1 : 0, maturity: 2, isShoal: false, score: 60, price: 1500, isCC: true, source: 'market' });
+        [40, 50, 55, 60, 65, 70, 80].forEach((s, i) => fake.push({ id: 'fake' + i, species: a.species, gender: a.gender, maturity: 2, isShoal: false, score: s, medal: 'silver', price: 400 + 10 * s, isCC: true, source: 'market' }));
+        // gold listings of the same sex cost more and must not be compared
+        [82, 88].forEach((s, i) => fake.push({ id: 'fakeG' + i, species: a.species, gender: a.gender, maturity: 2, isShoal: false, score: s, medal: 'gold', price: 3000 + 100 * i, isCC: true, source: 'market' }));
+        fake.push({ id: 'fakeF', species: a.species, gender: a.gender == 0 ? 1 : 0, maturity: 2, isShoal: false, score: 60, medal: 'silver', price: 1500, isCC: true, source: 'market' });
         mergeIntoPriceBook(fake);
         return { ...a, withGenes };
     });
@@ -382,7 +391,12 @@ async function runListerScenario(page) {
         }
     }
     await page.waitForTimeout(600);
-    facts.panelText = (await page.locator('.PZ2QoL_lister').innerText()).replace(/\s+/g, ' ').slice(0, 600);
+    facts.panelText = (await page.locator('.PZ2QoL_lister').innerText()).replace(/\s+/g, ' ').slice(0, 900);
+    facts.medal = await page.evaluate(() => ({
+        pill: document.querySelector('.PZ2QoL_lister .PZ2QoL_medalPill')?.className || null,
+        why: document.querySelector('.PZ2QoL_lister .PZ2QoL_recWhy')?.textContent || '',
+        chips: Array.from(document.querySelectorAll('.PZ2QoL_lister .PZ2QoL_medalChip')).map(e => e.textContent),
+    }));
     const recText = await page.locator('.PZ2QoL_listerRecPrice').textContent();
     facts.recommended = Number((recText.replace(/,/g, '').match(/(\d+)/) || [])[1]);
     await shot(page, '8_lister_single');
@@ -412,6 +426,7 @@ async function runListerScenario(page) {
                 DS.setValue(ctx, 'species', current);
                 DS.setValue(ctx, 'auctionIsConservationCredits', true);
                 DS.setValue(ctx, 'auctionPrice', 2000 + 111 * i + 1000 * n);
+                DS.setValue(ctx, 'ratings', ['gold', 'silver', 'bronze'][i]);
             });
             DS.setValue(DATA, 'pages', 3);
             DS.setValue(DATA, 'pageIndex', n);
@@ -771,6 +786,9 @@ async function runListerScenario(page) {
         if (c.hours != 12) problems.push(`duration ${c.hours} != game maximum 12`);
         if (!(Array.isArray(c.selected) && c.selected.length == 1 && c.selected[0] == target.key)) problems.push('animal was not the sole selection when listed');
     }
+    if (!/silver/.test(facts.medal.pill || '')) problems.push(`no Silver medal on the selected animal: ${facts.medal.pill}`);
+    if (!/^\d+ Silver adult (males|females|animals): median [\d,]+ CC/.test(facts.medal.why)) problems.push(`recommendation does not use the Silver listings: ${facts.medal.why}`);
+    if (!(facts.medal.chips.some(c => /Gold ×2/.test(c)) && facts.medal.chips.some(c => /Silver ×\d/.test(c)))) problems.push(`no per-medal summary: ${facts.medal.chips}`);
     const p = facts.peek;
     if (p.starts.length != 1) problems.push(`market check sent ${p.starts.length} requests`);
     if (p.pages.join(',') != '1,2') problems.push(`market check paged ${p.pages.join(',')}, expected 1,2`);

@@ -4,7 +4,8 @@
 // Value of a breeding pair = expected young (the mean of the predicted
 // fertility, immunity, size and longevity, by the game's own gene formula)
 // x the chance of conception (the game's own probability, by fertility
-// grade). Relatives never breed: a related, fertile male-female pair in one
+// grade) x how long the pair can breed (fertile years left of the one that
+// ages out first; old or infertile animals are not breeders). Relatives never breed: a related, fertile male-female pair in one
 // habitat is a heavy penalty, so the search removes it.
 //
 // Group shape follows the species' mating system:
@@ -54,6 +55,8 @@ export function isBreeder(a, info = {}) {
     if (!a || a.exhibit || a.juv || a.alive === false) return false;
     if (a.contra) return false;
     if (a.infertile) return false;              // sterile (contraception handled above)
+    const st = a.fert && a.fert.state;
+    if (st === 'old' || st === 'young' || st === 'sterile') return false;
     const bounds = info.fertilityAges;
     if (bounds && typeof a.age === 'number') {
         if (bounds.maturity != null && a.age < bounds.maturity) return false;
@@ -70,6 +73,27 @@ export function conceptionChance(m, f, info = {}) {
     if (t && fm != null && ff != null && t[fm] && typeof t[fm][ff] === 'number') return t[fm][ff];
     if (fm == null || ff == null) return 0.5;
     return Math.max(0.05, Math.min(1, (fm + ff) / 12));
+}
+
+// Fertile years left (null: unknown or for life): the snapshot's
+// fertility, else the species' fertility ages from the game.
+export function fertileYearsLeft(a, info = {}) {
+    if (a.fert && a.fert.yearsLeft != null) return a.fert.yearsLeft;
+    const b = info.fertilityAges;
+    if (b && typeof a.age === 'number' && b.infertility != null && b.infertility < 900) return Math.max(0, b.infertility - a.age);
+    return null;
+}
+
+// How long a pair can breed, as a weight 0.25..1: full when both have at
+// least `horizon` fertile years left (a third of the species' fertile span,
+// at least 2 years), less as the first of them ages out.
+export function longevityWeight(m, f, info = {}) {
+    const left = [fertileYearsLeft(m, info), fertileYearsLeft(f, info)].filter(v => v != null);
+    if (!left.length) return 1;
+    const b = info.fertilityAges;
+    const span = b && b.infertility != null && b.infertility < 900 && b.maturity != null ? b.infertility - b.maturity : null;
+    const horizon = Math.max(2, span != null ? span / 3 : 3);
+    return Math.max(0.25, Math.min(1, Math.min(...left) / horizon));
 }
 
 // Expected young genetics (0..1): mean of the predicted means.
@@ -135,7 +159,8 @@ function pairValue(ctx, m, f) {
     const key = m.id < f.id ? m.id + '|' + f.id : f.id + '|' + m.id;
     let v = ctx.pairCache.get(key);
     if (v === undefined) {
-        v = relatedPair(ctx.model, m, f) ? -1 : youngQuality(m, f) * conceptionChance(m, f, ctx.info);
+        // expected young x the game's chance of conception x how long they can breed
+        v = relatedPair(ctx.model, m, f) ? -1 : youngQuality(m, f) * conceptionChance(m, f, ctx.info) * longevityWeight(m, f, ctx.info);
         ctx.pairCache.set(key, v);
     }
     return v; // -1 = related
@@ -238,6 +263,9 @@ function totalScore(ctx, layout) {
 export function planProgramme(model, species, info = {}, destinations = null, { assignments = null, options = {} } = {}) {
     const opts = Object.assign({}, PROGRAMME_DEFAULTS, options);
     if (!model || !species) return null;
+    // the species' fertility ages from the kin snapshot when the game was not asked
+    const facts = model.speciesFacts && model.speciesFacts[species];
+    if (!info.fertilityAges && facts && facts.maturity != null) info = Object.assign({}, info, { fertilityAges: { maturity: facts.maturity, infertility: facts.infertility } });
     const all = Array.from(model.animals.values()).filter(a => a.species === species && !a.exhibit && a.alive !== false);
     const byId = new Map(all.map(a => [a.id, a]));
     const canMoveA = a => !a.moving && (a.lt === 'habitat' || a.lt === 'trade' || (!a.lt && !!a.hab));

@@ -12,7 +12,7 @@ import * as DS from '/js/common/core/DataStore.js';
 import { translate } from '/js/common/core/Localisation.js';
 import { GameMode } from '/js/project/data/GameTypes.js';
 import { currentGamemodeIs } from '/js/project/data/SimulationDataModel.js';
-import { offsetLabel, recommendPrice, speciesMarketSummary } from '/js/mods/pz2qol/pricing.js';
+import { medalLabel, medalOf, offsetLabel, recommendPrice, speciesMarketSummary } from '/js/mods/pz2qol/pricing.js';
 import { Gender, geneScore, relevantGenes } from '/js/mods/pz2qol/scores.js';
 import { clear, fmtInt, GENES, h, icon, setClass, setText, tierOf } from '/js/mods/pz2qol/ui.js';
 import {
@@ -998,7 +998,10 @@ function animalColumn(a) {
             h('div.PZ2QoL_animalSpecies', { text: t(a.species) || 'Animal' })),
         h('div.PZ2QoL_animalNick', { text: t(a.name) }),
         h('div.PZ2QoL_geneRow', null,
-            h(`div.PZ2QoL_bigScore.${tierOf(g)}`, { text: g == null ? '–' : String(g), title: 'Gene score' }),
+            h('div.PZ2QoL_scoreStack', null,
+                h(`div.PZ2QoL_bigScore.${tierOf(g)}`, { text: g == null ? '–' : String(g), title: 'Gene score' }),
+                // the game's genetics rating (Rating column), used for pricing
+                medalOf(a) != undefined ? h(`div.PZ2QoL_medalPill.${medalOf(a)}`, { text: medalLabel(medalOf(a)), title: 'Genetics rating shown by the game' }) : null),
             h('div.PZ2QoL_geneList', null, GENES.filter(x => relevantGenes(a).includes(x.id)).map(x => {
                 const v = a.genes[x.id];
                 const pct = typeof v === 'number' ? Math.round(v * 100) : null;
@@ -1021,12 +1024,31 @@ function marketColumn(a, book, advice) {
             statTile('♀', 'female', s.female),
             s.juvenile.count ? statTile('juv', 'juvenile', s.juvenile) : null,
             s.history.count ? statTile('you', 'history', s.history) : null),
+        medalRow(s, medalOf(a)),
         priceStrip(a.species, book, advice) || h('div.PZ2QoL_emptyNote', { text: 'No prices recorded for this species yet. Use “Check market prices”.' }),
         closest.length ? h('div.PZ2QoL_compRow', null,
             h('div.PZ2QoL_compLabel', { text: 'Closest' }),
-            closest.map(c => h(`div.PZ2QoL_compChip.${SEX_CLASS[c.gender] || 'other'}`, { title: `${SEX[c.gender] || ''} gene ${c.score ?? '–'}` },
+            closest.map(c => h(`div.PZ2QoL_compChip.${SEX_CLASS[c.gender] || 'other'}`, { title: `${SEX[c.gender] || ''} ${medalLabel(medalOf(c))} gene ${c.score ?? '–'}` },
+                medalOf(c) != undefined ? h(`span.PZ2QoL_medalDot.${medalOf(c)}`) : null,
                 h('span.PZ2QoL_compGene', { text: `G${c.score ?? '–'}` }),
-                h('span', { text: fmtInt(c.price) })))) : null);
+                // the listed price, also for a listing scaled from another medal
+                h('span', { text: fmtInt(c.rawPrice ?? c.price) })))) : null);
+}
+
+// Live CC listings of the species by genetics medal (only when recorded),
+// the selected animal's medal highlighted.
+function medalRow(s, mine) {
+    const medals = Object.keys(s.byMedal || {});
+    if (!medals.length) return null;
+    return h('div.PZ2QoL_medalRow', null,
+        h('div.PZ2QoL_compLabel', { text: 'By medal' }),
+        medals.map(m => {
+            const g = s.byMedal[m];
+            return h(`div.PZ2QoL_medalChip.${m}${m == mine ? '.mine' : ''}`, { title: `${medalLabel(m)}: ${g.count} listed (${g.males}♂ ${g.females}♀), ${fmtInt(g.min)}–${fmtInt(g.max)} CC` },
+                h(`span.PZ2QoL_medalDot.${m}`),
+                h('span.PZ2QoL_medalName', { text: `${medalLabel(m)} ×${g.count}` }),
+                h('span', { text: fmtInt(g.median) }));
+        }));
 }
 
 function runBlock() {
@@ -1189,6 +1211,7 @@ function multiColumn(keys) {
             h('div.PZ2QoL_tableRow', null,
                 h(`div.PZ2QoL_sexDot.${SEX_CLASS[a.gender] || 'other'}`, { text: SEX[a.gender] || '·' }),
                 h('div.PZ2QoL_tableName', { text: `${t(a.species)} · ${t(a.name)}` }),
+                medalOf(a) != undefined ? h(`span.PZ2QoL_medalDot.${medalOf(a)}`, { title: medalLabel(medalOf(a)) }) : null,
                 h(`div.PZ2QoL_miniScore.${tierOf(g)}`, { text: g == null ? '–' : String(g) }),
                 h(`div.PZ2QoL_tablePrice.conf_${adv.confidence}`, { text: adv.price > 0 ? `${fmtInt(adv.price)} CC` : '–', title: CONFIDENCE[adv.confidence] })))));
 }

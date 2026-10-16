@@ -40,3 +40,5 @@ One line per update: date, what changed, why.
 - 2026-10-15: Breeding programme preview on the Species board; harness pitfall: fake Lua handlers leak between scenarios (testing).
 - 2026-10-15: Trade-centre moves must use animals:AttemptToSendToTradeCentre; AttemptRequestToTransportAnimalToTarget to a trade centre returns true but does nothing (seen in game).
 - 2026-10-16: Gameface localStorage is not kept across restarts; PZ2QoL keeps player data in userdata.json in its pack folder via api.debug.ReadStringFromFile/WriteStringToFile (retail behaviour still to prove); install tool keeps userdata.json.
+- 2026-10-16: Genetics medal: market/storage/history rows carry `ratings` (none/bronze/silver/gold, the Rating column, natively the appeal state); PZ2QoL records it in the price book (not in the key) and prices same-medal comparables first, then adjacent medals scaled by observed ratios (game-data-and-events, testing).
+- 2026-10-16: Fertility over a life: IsInfertile also covers not-yet-mature adults; elderly = GetAgeQuarterForUI 3; GetSpeciesLongevity; game's fertile-time-left formula; PZ2QoL fertilityOf / speciesFacts.

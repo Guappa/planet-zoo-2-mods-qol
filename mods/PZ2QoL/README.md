@@ -46,7 +46,7 @@ Click **Details** for the last 50 entries.
 **Market lister** (Franchise only; **off by default**; turn it on with the **Lister** chip in the
 storage toolbar):
 - **Price book.** The mod remembers every Conservation Credits listing you have seen on the Market,
-  and every row in your Trade History. It records species, sex, age group, gene score and price.
+  and every row in your Trade History. It records species, sex, age group, gene score, genetics medal and price.
   It only reads what is already on screen and never requests data. Entries expire after 12 hours.
   Each listing is identified by what it shows (species, name, sex, age, genes, price), because the
   game reuses the same row ids on every market page. 1.2.1 starts a fresh book for this reason.
@@ -58,6 +58,10 @@ storage toolbar):
 - **How the price is worked out:**
   - It uses comparable listings in order of preference: same sex and age group, then same sex, then
     any sex. CC listings only.
+  - The **genetics medal** (Gold, Silver, Bronze or Unranked: the game's Rating column) comes
+    first: listings with the same medal, sex and age group, then the next medal up or down scaled
+    by the price ratio seen between those medals, and only then the gene-score fit below; the
+    panel names the medal it used and shows the species' prices by medal.
   - Price is fitted against gene score with a fit that a few odd listings can't skew, then set 3%
     below the fit so it sells.
   - It's blended with the game's own suggested price when there are fewer than 6 comparables.
@@ -104,7 +108,15 @@ which male and female in the same habitat are related and would inbreed.
   - **amber, Close kin**: grandparents, aunts/uncles and cousins. The game does not warn about
     these, but their young lose fertility and immunity just the same;
   - **gold, Later**: related, but one of them is still young;
-  - **grey, Covered**: related, but contraception or infertility keeps them from breeding.
+  - **grey, Covered**: related, but they cannot breed: contraception, infertility, old age, or one
+    of them will be too old by the time the young one grows up. The card says which.
+- **Fertility over a life:** cards, the planner and the Species board say where each animal is:
+  too young ("breeds in about 2 years"), not mature yet, fertile ("fertile for about 9 years
+  more", or "for life" for species that never age out), its **last fertile years** (a "2y
+  fertile" tag), **too old to breed**, or infertile, from the game's own age group (elderly) and
+  the species' fertility ages. Too old animals are never counted as breeders; Suggest fixes counts
+  a pair in its last fertile years as half a pair, Find a mate lists animals that can breed first,
+  and the Breeding programme weighs each pair by how long it can still breed.
 - **Zoo management, Animals list:** a DNA badge on every animal that has a relative to breed with
   in its habitat. Hover it to see who and how ("Zuri ♀, half-sister, 12.5% kinship, mates now"),
   why ("they share their mother Ama"), and the young they would have (fertility, immunity, size

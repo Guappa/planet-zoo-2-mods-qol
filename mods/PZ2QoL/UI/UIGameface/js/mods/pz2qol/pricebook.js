@@ -3,7 +3,7 @@
 //
 // Purely passive: it reads the DataStore lists the game already filled for
 // the screen you are looking at. It never requests data itself.
-import { listingKey, mergeListings } from '/js/mods/pz2qol/pricing.js';
+import { listingKey, medalOf, mergeListings } from '/js/mods/pz2qol/pricing.js';
 import { geneScore } from '/js/mods/pz2qol/scores.js';
 import { childrenOf, HISTORY_LIST, MARKET_LIST, readAnimal } from '/js/mods/pz2qol/game.js';
 import { reportError } from '/js/mods/pz2qol/errors.js';
@@ -48,6 +48,9 @@ function toListing(ctx, source) {
         isShoal: a.isShoal,
         isExhibit: a.isExhibit,
         score: geneScore(a),
+        // not part of the id: one animal always shows the same medal, and
+        // keeping the v2 key lets older entries pick it up when seen again
+        medal: medalOf(a),
         price: a.price,
         isCC: a.isCC,
         source,
@@ -60,7 +63,7 @@ export function recordVisibleListings() {
     for (const ctx of childrenOf(MARKET_LIST)) observed.push(toListing(ctx, 'market'));
     for (const ctx of childrenOf(HISTORY_LIST)) observed.push(toListing(ctx, 'history'));
     const valid = observed.filter(l => l.id != undefined && l.price > 0 && l.species);
-    const signature = valid.map(l => `${l.source}:${l.id}:${l.price}`).join('|');
+    const signature = valid.map(l => `${l.source}:${l.id}:${l.price}:${l.medal}`).join('|');
     if (signature == lastSignature) {
         return 0;
     }
