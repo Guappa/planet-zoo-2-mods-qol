@@ -102,8 +102,22 @@
 - **The game UI never scrolls natively.** Its CSS has no `overflow: auto/scroll`. `ScrollPane`
   (`js/common/components/ScrollPane.js`) keeps the content in an `overflow: hidden` box, sets
   `scrollTop`/`scrollLeft` itself, handles `wheel` (sign of `deltaY` × `scrollSpeed` em) and draws its
-  own `ScrollBar`. Mod scroll areas do the same: `kinplanner.js` `makeScroll` (wheel, draggable
-  thumbs, Shift+wheel sideways). **offline**; works in the harness.
+  own `ScrollBar`. Mod scroll areas do the same: `kinpanel.js` `makeScroll` (wheel, draggable
+  thumbs, Shift+wheel sideways), shared by the Kin planner and the Species board. **offline**; works
+  in the harness.
+- **Big mod panels share one kit** (`kinpanel.js`): scroll areas, buttons, switches, count pills,
+  `placePanel` (min(96rem, 92vw) × 84vh, centred) and a registry (`registerPanel`, `panelApi`,
+  `closeOtherPanels`) so panels open each other without import cycles and only one is on screen.
+  A later stylesheet's `.X *` catch-all overrides the kit's single-class rules (direction,
+  `display: none` on scroll thumbs), so `pz2qol_kinboard.css` restates them with two-class selectors.
+- **Pointer drag** (Species board): mousedown on the card, then document `mousemove`/`mouseup`, a
+  6 px threshold, a `position: fixed; pointer-events: none` ghost, and drop targets found by
+  hit-testing the columns' rects (no HTML5 drag and drop, no `elementFromPoint`). Call
+  `preventDefault()` on the mousedown and set `user-select: none`: in a browser a text selection
+  left by one drag makes the next mousedown start a native text drag, and no more `mousemove`
+  arrives. Clear the "this click belongs to the drag" flag in a `setTimeout(0)` after mouseup, since
+  no click fires when the drag ends on another element. Hold re-renders while a drag or a menu is
+  open. **harness**
 - **Frozen table headers** without `position: sticky`: put the column heads and row heads in their own
   `overflow: hidden` strips and copy the body's `scrollLeft`/`scrollTop` to them (the Kin planner's
   relatedness matrix). Also copy on the body's native `scroll` event: a click or focus can scroll an

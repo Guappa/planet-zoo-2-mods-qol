@@ -242,6 +242,7 @@ export async function runPlan(plan, { destinations } = {}) {
     const stopped = run.stopping;
     setRun({ running: false, stopping: false, current: null, error, finished: true });
     breadcrumb('kin_plan_end');
-    if (error) reportError('mod', 'Kin plan stopped', error);
+    // the board shows the error itself; keep a silent copy in the log
+    if (error) reportError('mod', 'Kin plan stopped', error, { silent: true });
     return { ok: !error, detail: error || (stopped ? 'Stopped.' : ''), done: run.done };
 }

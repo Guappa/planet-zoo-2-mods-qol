@@ -149,15 +149,15 @@ function buildZooBar() {
     const minFert = chip('Fertility ≥ any', 'Minimum fertility gene; click to step', () => setFilters({ minFertility: next(SCORE_STEPS, filters.minFertility) }), 'IconFertility');
     const kinChip = chip('Kin', "Relatives that could breed. Click to cycle: off, only animals with an inbreeding risk (the game's own rule: parent, child or sibling in the same habitat), or every related pair including close kin the game does not warn about and young animals", () => setFilters({ kin: next(KIN_STEPS, filters.kin || 'off') }), 'IconGenetics');
     kinChip.classList.add('kin');
-    const plannerChip = chip('Kin planner', 'Who can safely breed with whom: relatedness of every pair, expected young, and the best unrelated mates', () => {
+    const plannerChip = chip('Planner', 'Who can safely breed with whom: relatedness of every pair, expected young, and the best unrelated mates', () => {
         const model = getKinModel();
         const hab = model && filters.habitat != null ? habitatByName(model, filters.habitat) : null;
         openKinPlanner(hab ? { habitatId: hab.id } : {});
     }, 'IconGenetics');
-    const boardChip = chip('Species board', 'Every habitat of one species side by side: see where the related animals are, plan moves, and run the plan', () => {
+    const boardChip = chip('Board', 'Every habitat of one species side by side: see where the related animals are, plan moves, and run the plan', () => {
         import('/js/mods/pz2qol/kinboard.js').then(m => m.openSpeciesBoard({})).catch(e => reportError('ui', 'Species board could not open', e));
     }, 'IconAnimals');
-    const heatChip = chip('Heat map', "The game's own breeding heat map (inbreeding risk in the world)", () => {
+    const heatChip = chip('Heat', "The game's own breeding heat map (inbreeding risk in the world)", () => {
         setBreedingHeatmap(!isBreedingHeatmapOn());
         setTimeout(sync, 200);
     }, 'Icon_Heatmap');

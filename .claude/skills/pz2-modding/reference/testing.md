@@ -63,6 +63,18 @@ Run all of these before installing a build.
   button, and matrix headers aligned with the squares.
 - Pitfall: Playwright's `click()` scrolls `overflow: hidden` ancestors to bring the target into view.
   Synced header strips must follow the native `scroll` event, or they drift.
+- `kin_board.mjs` (harness): the Species board. It extends the fixture (a second lion habitat, an
+  empty suitable one, an unsuitable one, the trade centre, a lion in transit, a shared species,
+  `mode`, `lt`) and fakes Lua in the page: `PZ2QoL_KinDestinations` → `…Result`, and
+  `PZ2QoL_KinMove` → `…Result`, then a snapshot with the animal `moving` (one id is refused).
+  It checks rail order, columns, hover relatives, drag-to-plan with its effect, a refused drop,
+  select + "Move N here", Suggest fixes (0 risks left), the Franchise block and its switch, a run
+  that sends one move at a time ≥1.5 s apart, in order, and stops at the refusal, Move now from a
+  card menu, layout (including content spilling out of visible-overflow boxes), and Esc.
+- Pitfall: `page.waitForFunction(async () => …)` returns a Promise, which counts as true at once.
+  Use a synchronous predicate (expose the module on `window` first).
+- Pitfall: the planner and the board share kit classes (`.PZ2QoL_kpMainTitle`…) and a closed panel
+  stays in the DOM, so scope selectors to the panel root (`.PZ2QoL_kp …`, `.PZ2QoL_kb …`).
 - `probe_imports.mjs` imports every file in `js/mods/pz2qol/` and fails on any error.
 - In the detached harness the info panel is laid out partly off-screen; check info-panel
   injections through the DOM, not only screenshots.

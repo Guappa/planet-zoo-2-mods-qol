@@ -157,7 +157,7 @@ export async function hud(page, ctx) {
     facts.matrix = await page.evaluate(() => {
         const count = s => document.querySelectorAll(s).length;
         return {
-            title: (document.querySelector('.PZ2QoL_kpMainTitle') || {}).innerText,
+            title: (document.querySelector('.PZ2QoL_kp .PZ2QoL_kpMainTitle') || {}).innerText,
             rows: count('.PZ2QoL_kpRowHead'),
             cols: count('.PZ2QoL_kpColHead'),
             cells: count('.PZ2QoL_kpCell'),
@@ -310,13 +310,30 @@ export async function hud(page, ctx) {
     else {
         await open(page, { habitatId: target.hab, animalId: target.a, pairKey: target.key });
         await page.waitForTimeout(300);
-        facts.openPair = { title: await text(page, '.PZ2QoL_kpMainTitle'), pair: await page.locator('.PZ2QoL_kpDet.pair').count(), on: await page.locator('.PZ2QoL_kpCell.on').count() };
+        facts.openPair = { title: await text(page, '.PZ2QoL_kp .PZ2QoL_kpMainTitle'), pair: await page.locator('.PZ2QoL_kpDet.pair').count(), on: await page.locator('.PZ2QoL_kpCell.on').count() };
         if (!/Jungle/.test(facts.openPair.title) || facts.openPair.pair !== 1 || facts.openPair.on !== 1) problems.push(`open with pairKey: ${JSON.stringify(facts.openPair)}`);
         await open(page, { animalId: target.b });
         await page.waitForTimeout(300);
-        facts.openAnimal = { title: await text(page, '.PZ2QoL_kpMainTitle'), mates: await page.locator('.PZ2QoL_kpDet.mates').count(), on: await page.locator('.PZ2QoL_kpColHead.on, .PZ2QoL_kpRowHead.on').count() };
+        facts.openAnimal = { title: await text(page, '.PZ2QoL_kp .PZ2QoL_kpMainTitle'), mates: await page.locator('.PZ2QoL_kpDet.mates').count(), on: await page.locator('.PZ2QoL_kpColHead.on, .PZ2QoL_kpRowHead.on').count() };
         if (!/Jungle/.test(facts.openAnimal.title) || facts.openAnimal.mates !== 1 || facts.openAnimal.on !== 1) problems.push(`open with animalId: ${JSON.stringify(facts.openAnimal)}`);
     }
+
+    // 6b. the species board and back: one big panel at a time
+    await click(page.locator('.PZ2QoL_kp .PZ2QoL_kpBtn', { hasText: 'Species board' }));
+    await page.waitForTimeout(400);
+    facts.toBoard = await page.evaluate(async () => ({
+        board: (await import('/js/mods/pz2qol/kinboard.js')).isSpeciesBoardOpen(),
+        planner: (await import('/js/mods/pz2qol/kinplanner.js')).isKinPlannerOpen(),
+        species: (document.querySelector('.PZ2QoL_kbSpecies.on') || { getAttribute: () => null }).getAttribute('data-species'),
+    }));
+    await click(page.locator('.PZ2QoL_kb .PZ2QoL_kpBtn', { hasText: 'Kin planner' }));
+    await page.waitForTimeout(400);
+    facts.backFromBoard = await page.evaluate(async () => ({
+        board: (await import('/js/mods/pz2qol/kinboard.js')).isSpeciesBoardOpen(),
+        planner: (await import('/js/mods/pz2qol/kinplanner.js')).isKinPlannerOpen(),
+    }));
+    if (!facts.toBoard.board || facts.toBoard.planner || facts.toBoard.species !== 'Tiger') problems.push(`planner -> species board: ${JSON.stringify(facts.toBoard)}`);
+    if (facts.backFromBoard.board || !facts.backFromBoard.planner) problems.push(`species board -> planner: ${JSON.stringify(facts.backFromBoard)}`);
 
     // 7. empty states: all clear, then Kin off; then the fixture again
     await page.evaluate(async () => {

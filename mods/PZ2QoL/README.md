@@ -112,7 +112,8 @@ which male and female in the same habitat are related and would inbreed.
   **Contraception** for one animal (the game's own toggle) and **Locate**.
 - **Toolbar:** **Kin** filter (cycle: inbreeding risks only, or every related pair; combine it
   with the habitat picker), **Sort: Kin** (relatives next to each other, worst first), an
-  "inbreeding risks" count, **Kin planner** and the game's own breeding **Heat map** one click away.
+  "inbreeding risks" count, and **Planner** (Kin planner), **Board** (Species board) and **Heat**
+  (the game's own breeding heat map) one click away.
 - **Habitats list:** a badge per habitat with its related pairs.
 - **Habitat info panel, Animals tab:** a line under each species' male/female counts
   ("2 inbreeding risks · 1 close kin") and a badge on each animal row.
