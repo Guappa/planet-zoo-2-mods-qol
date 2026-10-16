@@ -7,7 +7,7 @@
 - Machines used here:
   - local: `D:\SteamLibrary\steamapps\common\Planet Zoo 2`;
   - second PC: game at `Y:\SteamLibrary\...` from here (it sees it as `D:\`), its system drive
-    is `X:` (user `micha`).
+    is `X:` (profiles under `X:\Users\`).
 
 ## OVL archives
 
