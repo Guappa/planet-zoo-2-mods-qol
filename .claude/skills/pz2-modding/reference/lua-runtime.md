@@ -39,9 +39,12 @@
   `api.debug.WriteStringToFile(sText, path[, bAppend])` -> `bOk`.** **offline** (the game's own
   dev tools use them: scenario editor, camera paths, blueprint debug save). Both names are in the
   retail exe's strings (1.0.4), so they are registered there; not yet proven that they do
-  anything in retail (a release stub is possible) or which folder relative paths start from. PZ2QoL's store tries
-  `.\Win64\ovldata\PZ2QoL\userdata.json` then the `/` form, verifies by reading back, and marks
-  `store_found` / `store_created` / `store_unavailable` in the debug trace. Only ASCII JSON objects
+  anything in retail (a release stub is possible) or which folder relative paths start from. **Proven 2026-10-16: plain OS paths (`.\Win64\...`, `Win64/...`) do not work** (`store_unavailable`,
+  no file written). The game's own calls use virtual paths: `/run/` = the install folder (retail
+  reads `/run/Blueprints/WildArea/ReleaseBox.blueprint`), `/tmp/`, `/dbg/`; `CommandLineLib.ToVfsPath`
+  converts. PZ2QoL's store tries `/run/Win64/ovldata/PZ2QoL/userdata.json` first, then the OS forms
+  and `/tmp/PZ2QoL_userdata.json`, verifies by reading back, and marks `store_p<N>_found|created|err|false|diff`
+  per try and `store_found` / `store_created` / `store_unavailable` in the debug trace. Only ASCII JSON objects
   are written (the UI escapes non-ASCII as `\uXXXX`).
 - **`package.loadlib` works from game Lua.** **proven**: the trace DLLs load.
   - With `"*"` it only loads the DLL, so `DllMain` runs.

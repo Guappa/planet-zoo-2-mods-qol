@@ -1277,8 +1277,20 @@ end
 -- not written to disk by the game, so it is lost when the game closes.
 -- The text is the UI's JSON (ASCII only), stored as it is.
 -----------------------------------------------------------------------
-Kin.tStorePaths = { ".\\Win64\\ovldata\\PZ2QoL\\userdata.json", "Win64/ovldata/PZ2QoL/userdata.json" }
+-- The game's file calls take its virtual paths: "/run/" is the install
+-- folder (the game reads "/run/Blueprints/..."), "/tmp/" a temp folder.
+-- Plain OS paths come last, just in case.
+Kin.tStorePaths = {
+	"/run/Win64/ovldata/PZ2QoL/userdata.json",
+	".\\Win64\\ovldata\\PZ2QoL\\userdata.json",
+	"Win64/ovldata/PZ2QoL/userdata.json",
+	"/tmp/PZ2QoL_userdata.json",
+}
 Kin.nStoreMax = 400000
+
+local function trimmed(s)
+	return (string.gsub(s, "%s+$", ""))
+end
 
 local function readFile(sPath)
 	local bOk, bRead, sText = pcall(api.debug.ReadStringFromFile, sPath)
@@ -1288,35 +1300,52 @@ local function readFile(sPath)
 	return nil
 end
 
+-- true, or false and why: 'err' (raised), 'false' (said no), 'diff' (reads back different)
 local function writeFile(sPath, sText)
-	local bOk = pcall(api.debug.WriteStringToFile, sText, sPath)
-	return bOk and readFile(sPath) == sText
+	local bOk, bWrote = pcall(api.debug.WriteStringToFile, sText, sPath)
+	if not bOk then
+		return false, "err"
+	end
+	if bWrote == false then
+		return false, "false"
+	end
+	local sBack = readFile(sPath)
+	if sBack == nil or trimmed(sBack) ~= trimmed(sText) then
+		return false, "diff"
+	end
+	return true
 end
 
--- The path that works here (found once): an existing file, else the first
--- one that writes and reads back.
+-- The path that works here (found once per session): an existing file,
+-- else the first one that writes and reads back. Each try leaves a trace
+-- mark (store_p<N>_found / _created / _err / _false / _diff).
 Kin._StorePath = function(self)
 	if self.sStorePath ~= nil then
 		return self.sStorePath or nil
 	end
 	if type(api.debug) ~= "table" or type(api.debug.ReadStringFromFile) ~= "function" or type(api.debug.WriteStringToFile) ~= "function" then
 		self.sStorePath = false
+		mark("store_no_api")
 		mark("store_unavailable")
 		return nil
 	end
-	for _, sPath in ipairs(self.tStorePaths) do
+	for i, sPath in ipairs(self.tStorePaths) do
 		if readFile(sPath) ~= nil then
 			self.sStorePath = sPath
+			mark("store_p" .. i .. "_found")
 			mark("store_found")
 			return sPath
 		end
 	end
-	for _, sPath in ipairs(self.tStorePaths) do
-		if writeFile(sPath, "{}") then
+	for i, sPath in ipairs(self.tStorePaths) do
+		local bOk, sWhy = writeFile(sPath, "{}")
+		if bOk then
 			self.sStorePath = sPath
+			mark("store_p" .. i .. "_created")
 			mark("store_created")
 			return sPath
 		end
+		mark("store_p" .. i .. "_" .. tostring(sWhy))
 	end
 	self.sStorePath = false
 	mark("store_unavailable")
