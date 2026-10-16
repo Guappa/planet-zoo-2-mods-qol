@@ -38,3 +38,4 @@ One line per update: date, what changed, why.
 - 2026-10-15: Breeding-programme facts: medal = appeal state, gene scales, conception probability, social/outsider/maturation APIs, space APIs, move costs, breeding timing (animals-and-breeding).
 - 2026-10-15: Breeding programme: PZ2QoL_KinSpecies event (Lua species facts) and kinprogramme.js (local-search optimiser); snapshot adds animal age.
 - 2026-10-15: Breeding programme preview on the Species board; harness pitfall: fake Lua handlers leak between scenarios (testing).
+- 2026-10-15: Trade-centre moves must use animals:AttemptToSendToTradeCentre; AttemptRequestToTransportAnimalToTarget to a trade centre returns true but does nothing (seen in game).

@@ -168,7 +168,8 @@ export async function moveAnimal(id, to) {
 function waitConfirmed(id, to, timeoutMs) {
     const confirmed = model => {
         const a = model && model.animals.get(String(id));
-        if (!a) return false;
+        // gone from the zoo after Send to Trade Centre: it has left
+        if (!a) return to === TRADE && !!model;
         if (a.moving) return true;
         return to === TRADE ? a.lt === 'trade' : a.hab === String(to);
     };

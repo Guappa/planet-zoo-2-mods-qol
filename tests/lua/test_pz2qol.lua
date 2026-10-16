@@ -824,7 +824,15 @@ tParkAPIs.habitat.IsAquariumGateBelowWaterLevel = function(self, h) return false
 tParkAPIs.staff = { CanStaffDeliverAnimalToFacility = function(self, e, h) return h ~= 105 end }
 tParkAPIs.facilities = { GetTradeCentres = function(self) return { [555] = true } end }
 tParkAPIs.franchise = { PlanetHubType_FranchiseOnline = 3, GetPlanetHubType = function(self) return 1 end }
-tParkAPIs.park = { GetParkName = function(self) return "Lemur Valley" end }
+tParkAPIs.park = { GetParkName = function(self) return "Lemur Valley" end,
+	GetTradeCentreMaxCapacity = function(self) return 10 end,
+	GetNumberOfAnimalsInTradeCentre = function(self) return tTradeCount or 0 end }
+animalsAPI.CanSendAnimalToTradeCentre = function(self, e) return e ~= 4 end
+animalsAPI.AttemptToSendToTradeCentre = function(self, e)
+	table.insert(tMoveCalls, "Trade:" .. e)
+	tJobs[e] = true
+	return true
+end
 api.ui2.GetEntityName = function(e) return ({ [101] = "Savannah Habitat", [102] = "Reef", [103] = "Pond", [104] = "Plains", [555] = "Trade Centre" })[e] end
 api.world.GetWorldAPIs = function() return tParkAPIs end
 -- a park again
@@ -913,13 +921,25 @@ tCalls = {}
 tMoveCalls = {}
 fireUI(oHUD, "PZ2QoL_KinMove", "m8", "2", "trade:555")
 r = lastMoveResult()
-check(r and r[3] == true and moveCalls("Transport:2>555/7") == 1 and moveCalls("Claim") == 0, "to the trade centre (no box claim, like the game)")
+check(r and r[3] == true and moveCalls("Trade:2") == 1 and #tMoveCalls == 1, "to the trade centre: the game's own Send to Trade Centre, nothing else")
 tJobs[2] = false
 tCalls = {}
 tMoveCalls = {}
 fireUI(oHUD, "PZ2QoL_KinMove", "m8b", "2", "trade:auto")
 r = lastMoveResult()
-check(r and r[3] == true and moveCalls("Transport:2>555/7") == 1, "trade:auto finds the trade centre at move time")
+check(r and r[3] == true and moveCalls("Trade:2") == 1, "trade:auto finds the trade centre at move time")
+tJobs[2] = false
+tTradeCount = 10
+tCalls = {}
+tMoveCalls = {}
+fireUI(oHUD, "PZ2QoL_KinMove", "m8d", "2", "trade:555")
+r = lastMoveResult()
+check(r and r[3] == false and string.find(r[4], "full", 1, true) and #tMoveCalls == 0, "a full trade centre: refused, nothing sent")
+tTradeCount = nil
+tCalls = {}
+fireUI(oHUD, "PZ2QoL_KinMove", "m8e", "4", "trade:555")
+r = lastMoveResult()
+check(r and r[3] == false and #tMoveCalls == 0, "an animal the game won't send is refused")
 tJobs[2] = false
 local fnTC = tParkAPIs.facilities.GetTradeCentres
 tParkAPIs.facilities.GetTradeCentres = function(self) return {} end

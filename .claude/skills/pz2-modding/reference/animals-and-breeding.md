@@ -127,8 +127,12 @@ All **offline** (decompiled `editors.animal.animalmovementeditmode.lua`,
   for animals with `DoesTransportRequireStaff(e, h) == false` claim the box (`IsBoxingClaimed` /
   `ClaimBoxing`); then `AttemptRequestToTransportAnimalToTarget(e, h, nType)` (returns a bool) for
   each animal; release the claims (`ReleaseBoxing`) when the transport is refused.
-- **Trade centre** (`RelocateAnimalsPopup._AttemptSendToTradeCentre`): `next(facilities:GetTradeCentres())`,
-  `CanTransportToEntity(false, tc)`, `AttemptRequestToTransportAnimalToTarget(e, tc, nType)`, no box claim.
+- **Trade centre: use `animals:AttemptToSendToTradeCentre(e)`** (proven 1.0.4): what the info
+  panel, radial menu, habitat gate and facility panel call, after `animals:CanSendAnimalToTradeCentre(e)`
+  and capacity `park:GetNumberOfAnimalsInTradeCentre() < park:GetTradeCentreMaxCapacity()`. The game
+  picks the centre and books the keeper. **Pitfall (proven):** `AttemptRequestToTransportAnimalToTarget(e,
+  tc, nType)` (as in `RelocateAnimalsPopup._AttemptSendToTradeCentre`) returns true for a habitat animal
+  but nothing happens: no transport job, the animal stays. Used in `pz2qol.kin.lua` `Kin.Move`.
 - **Busy animals:** `animals:GetAnimalTransportData(e).bHasTransportJob`, `IsBoxAnimating`,
   `IsBoxingClaimed` (the info panel disables Move on these); `api.planetHub.IsPlayerAnimalMovementEnabled()`.
 - `animals:GetUIAnimalListDataForIDs` location types: `animals.CurrentLocationType_Habitat`,

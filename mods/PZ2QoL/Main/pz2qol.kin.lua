@@ -1019,7 +1019,8 @@ Kin.Destinations = function(self, oUI, sReq, sIds)
 end
 
 -- ONE animal to a habitat (habitat entity id) or the trade centre
--- ("trade:<id>"): the game's own Move sequence. Never more than one.
+-- ("trade:<id>" / "trade:auto"): the game's own Move sequence, or its own
+-- Send to Trade Centre. Never more than one.
 Kin.Move = function(self, oUI, sReq, sId, sTo)
 	local function answer(bOk, sDetail)
 		mark(bOk and "kin_move_ok" or "kin_move_failed")
@@ -1058,6 +1059,23 @@ Kin.Move = function(self, oUI, sReq, sId, sTo)
 	end
 	if call(animals, "IsBoxAnimating", e) == true or call(animals, "IsBoxingClaimed", e) == true or hasTransportJob(animals, e) then
 		return answer(false, "This animal is already being moved.")
+	end
+	if bTrade then
+		-- the info panel's / habitat gate's Send to Trade Centre: the game picks
+		-- the trade centre and books the keeper itself. (A plain transport
+		-- request to the trade centre is accepted but never carried out.)
+		local park = tAPIs.park
+		local nMax, nNow = call(park, "GetTradeCentreMaxCapacity"), call(park, "GetNumberOfAnimalsInTradeCentre")
+		if type(nMax) == "number" and type(nNow) == "number" and nNow >= nMax then
+			return answer(false, "The trade centre is full (" .. nNow .. " of " .. nMax .. ").")
+		end
+		if call(animals, "CanSendAnimalToTradeCentre", e) == false then
+			return answer(false, "The game won't send this animal to the trade centre right now.")
+		end
+		if call(animals, "AttemptToSendToTradeCentre", e) ~= true then
+			return answer(false, "The game refused to send it to the trade centre.")
+		end
+		return answer(true, "")
 	end
 	if not bTrade then
 		if call(animals, "GetAssignedHabitatEntityID", e) == nDest then
