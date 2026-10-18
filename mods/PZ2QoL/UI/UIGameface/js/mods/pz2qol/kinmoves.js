@@ -6,17 +6,17 @@
 //    (a keeper boxes the animal and carries it). One click, one move.
 //  - runPlan(plan): a staged plan, started by one click, run ONE move at a
 //    time: send it, wait for the game to confirm it (the animal gets a
-//    transport job), pause, then the next. It stops at the first refusal or
-//    when the game does not confirm, and on Stop. In Franchise (or when the
-//    mode is not known) it only runs with the player's explicit opt-in
-//    (allowPlansOnline, off by default).
+//    transport job), pause, then the next. A refused or unconfirmed move is
+//    skipped and the run carries on; only Stop ends it. Franchise zoos run the
+//    same way: the Execute click is the opt-in.
 import { getKinModel, getKinSettings, onKin, requestKinScan } from '/js/mods/pz2qol/kin.js';
 import { prunePlan, moveText, TRADE } from '/js/mods/pz2qol/kinboardcore.js';
 import { breadcrumb, reportError } from '/js/mods/pz2qol/errors.js';
+import { getPaceMs } from '/js/mods/pz2qol/pace.js';
 
 const ANSWER_TIMEOUT_MS = 6000;
 const CONFIRM_TIMEOUT_MS = 12000;
-const GAP_MS = 1500;
+// the pause after each confirmed move: the player's 'moves' pace (default 1.5 s)
 const DEST_CACHE_MS = 30000;
 
 let reqSeq = 0;
@@ -222,11 +222,7 @@ export function onPlanRun(fn) {
 export function planBlockedReason(model = getKinModel()) {
     if (!model) return 'No kin data yet.';
     if (run.running) return 'A plan is already running.';
-    if (model.mode !== 'offline' && !getKinSettings().allowPlansOnline) {
-        return model.mode === 'franchise'
-            ? 'This is a Franchise zoo: running a whole plan is off unless you allow it in the settings. You can still move animals one at a time.'
-            : 'Running a whole plan is off until you allow it in the settings (the game mode is not known). You can still move animals one at a time.';
-    }
+    // Franchise too: the Execute click is the opt-in (the developer's decision, 2026-10-16)
     return '';
 }
 
@@ -245,6 +241,7 @@ export async function runPlan(plan, { destinations } = {}) {
     setRun({ running: true, stopping: false, done: 0, total: moves.length, current: null, log: [], error: null, finished: false });
     breadcrumb('kin_plan_start');
     let error = null;
+    let skipped = 0;
     for (const m of moves) {
         if (run.stopping) break;
         const model = getKinModel();
@@ -255,21 +252,28 @@ export async function runPlan(plan, { destinations } = {}) {
             continue;
         }
         setRun({ current: text });
+        // a refused or unconfirmed move is skipped and the plan carries on;
+        // only Stop ends a run (the developer's decision, 2026-10-16)
         const r = await moveAnimal(m.id, m.to);
         if (!r.ok) {
+            skipped++;
             error = `${text}: ${r.detail || 'the game refused the move'}`;
-            setRun({ log: run.log.concat([{ text, ok: false, detail: r.detail }]) });
-            break;
+            setRun({ log: run.log.concat([{ text, ok: false, detail: `skipped: ${r.detail || 'refused'}` }]) });
+            await sleep(getPaceMs('moves'));
+            continue;
         }
         const ok = await waitConfirmed(m.id, m.to, CONFIRM_TIMEOUT_MS);
         if (!ok) {
-            error = `${text}: the game did not confirm the move. Stopped to be safe.`;
-            setRun({ log: run.log.concat([{ text, ok: false, detail: 'not confirmed' }]) });
-            break;
+            skipped++;
+            error = `${text}: the game did not confirm the move.`;
+            setRun({ log: run.log.concat([{ text, ok: false, detail: 'skipped: not confirmed' }]) });
+            await sleep(getPaceMs('moves'));
+            continue;
         }
         setRun({ done: run.done + 1, log: run.log.concat([{ text, ok: true }]) });
-        await sleep(GAP_MS);
+        await sleep(getPaceMs('moves'));
     }
+    if (skipped) error = `${skipped} move${skipped === 1 ? '' : 's'} skipped; the last: ${error}`;
     const stopped = run.stopping;
     setRun({ running: false, stopping: false, current: null, error, finished: true });
     breadcrumb('kin_plan_end');

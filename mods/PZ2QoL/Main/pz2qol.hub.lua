@@ -51,6 +51,15 @@ local function cp(sName)
 	end
 end
 
+-- repeating breadcrumb (debug builds): the exit-to-menu path, logged on
+-- every pass (the crash on exit to main menu, 2026-10-17)
+local function mk(sName)
+	local Core = global.package.loaded["pz2qol.core"]
+	if Core then
+		pcall(Core.Mark, Core, sName)
+	end
+end
+
 -- Lua 5.3: coroutine.running() returns (thread, isMain); never nil.
 Hub._CanYield = function(self)
 	local co, bMain = coroutine.running()
@@ -224,6 +233,7 @@ Hub._PatchFrontEndUI = function(self, FrontEndUI)
 	local ViewWrapper = global.require("UI2.ViewWrapper")
 	local fnInit = FrontEndUI.Init or ViewWrapper.Init
 	FrontEndUI.Init = function(oUI, tInitSettings)
+		mk("x_fe_init")
 		local bModded = false
 		if type(tInitSettings) == "table" and tInitSettings.sViewAddress == self.sVanillaFrontEnd then
 			cp("fe_init_begin")
@@ -234,7 +244,9 @@ Hub._PatchFrontEndUI = function(self, FrontEndUI)
 				local fnReady = tInitSettings.fnOnReadyCallback
 				tInitSettings.fnOnReadyCallback = function(...)
 					cp("fe_mod_ready")
+					mk("x_fe_ready")
 					self:_OnModFrontEndReady(oUI)
+					mk("x_fe_ready_done")
 					if fnReady then
 						return fnReady(...)
 					end
@@ -248,6 +260,7 @@ Hub._PatchFrontEndUI = function(self, FrontEndUI)
 			if bModded then cp("fe_redirected") end
 		end
 		local tResult = table.pack(fnInit(oUI, tInitSettings))
+		mk("x_fe_init_done")
 		if bModded then
 			cp("fe_init_done")
 		end
@@ -255,6 +268,7 @@ Hub._PatchFrontEndUI = function(self, FrontEndUI)
 	end
 	local fnShutdown = FrontEndUI.Shutdown or ViewWrapper.Shutdown
 	FrontEndUI.Shutdown = function(oUI, ...)
+		mk("x_fe_shutdown")
 		if self.oFrontEndUI == oUI then
 			self.oFrontEndUI = nil
 			self.bFrontEndIsModded = false
@@ -328,6 +342,7 @@ Hub._PatchHUDUI = function(self, HUDUI)
 	local ViewWrapper = global.require("UI2.ViewWrapper")
 	local fnInit = HUDUI.Init or ViewWrapper.Init
 	HUDUI.Init = function(oUI, tInitSettings)
+		mk("x_hud_init")
 		local bModded = false
 		if type(tInitSettings) == "table" and tInitSettings.sViewAddress == self.sVanillaHUD then
 			cp("hud_init_begin")
@@ -353,11 +368,14 @@ Hub._PatchHUDUI = function(self, HUDUI)
 	end
 	local fnShutdown = HUDUI.Shutdown or ViewWrapper.Shutdown
 	HUDUI.Shutdown = function(oUI, ...)
+		mk("x_hud_shutdown")
 		if self.oHUDUI == oUI then
 			self.oHUDUI = nil
 			self.bHUDIsModded = false
 		end
-		return fnShutdown(oUI, ...)
+		local tResult = table.pack(fnShutdown(oUI, ...))
+		mk("x_hud_shutdown_done")
+		return table.unpack(tResult, 1, tResult.n)
 	end
 end
 
@@ -370,6 +388,11 @@ Hub._OnModFrontEndReady = function(self, oUI)
 		if MarketPeek then
 			pcall(MarketPeek.Attach, MarketPeek, oUI)
 		end
+		-- the Market desk's listing engine
+		local Lister = global.package.loaded["pz2qol.lister"]
+		if Lister then
+			pcall(Lister.Attach, Lister, oUI)
+		end
 	end
 	-- relatedness: the park (HUD) and Animal Storage (FrontEnd) both ask
 	local Kin = global.package.loaded["pz2qol.kin"]
@@ -379,6 +402,25 @@ Hub._OnModFrontEndReady = function(self, oUI)
 	pcall(function()
 		local Core = global.package.loaded["pz2qol.core"]
 		oUI:TriggerEventAtNextAdvance("PZ2QoL_Hello", Core and Core.sVersion or "?")
+	end)
+	-- after the greeting: it sends its state straight away
+	local Autosave = global.package.loaded["pz2qol.autosave"]
+	if Autosave then
+		pcall(Autosave.Attach, Autosave, oUI)
+	end
+	-- "Find a habitat": the hub arms it, the park HUD places the animals
+	local StorageSend = global.package.loaded["pz2qol.storagesend"]
+	if StorageSend then
+		pcall(StorageSend.Attach, StorageSend, oUI)
+	end
+	-- once per session: remove what the 2026-10-16 persistence probe left
+	-- in the player save (PZ2QoL.Probe and a 12 KB PZ2QoL.Big)
+	pcall(function()
+		local Core = global.package.loaded["pz2qol.core"]
+		local PlayerStore = (Core and Core.PlayerStore) or global.package.loaded["pz2qol.playerstore"]
+		if PlayerStore then
+			PlayerStore:Cleanup()
+		end
 	end)
 	local Errors = errors()
 	if Errors then
@@ -391,13 +433,17 @@ Hub._PatchStartScreenHUD = function(self, StartScreenHUD)
 	if type(fnActivate) == "function" then
 		StartScreenHUD.Activate = function(oHUD, ...)
 			cp("hud_activate")
+			mk("x_ssh_activate")
 			self.oStartScreenHUD = oHUD
-			return fnActivate(oHUD, ...)
+			local tResult = table.pack(fnActivate(oHUD, ...))
+			mk("x_ssh_activate_done")
+			return table.unpack(tResult, 1, tResult.n)
 		end
 	end
 	local fnDeactivate = StartScreenHUD.Deactivate
 	if type(fnDeactivate) == "function" then
 		StartScreenHUD.Deactivate = function(oHUD, ...)
+			mk("x_ssh_deactivate")
 			if self.oStartScreenHUD == oHUD then
 				self.oStartScreenHUD = nil
 			end
@@ -406,7 +452,32 @@ Hub._PatchStartScreenHUD = function(self, StartScreenHUD)
 	end
 end
 
+-- Debug builds: breadcrumbs for the game's exit to main menu (Franchise:
+-- save the zoo, then activate the hub world). Originals called unchanged.
+Hub._PatchSaveAgent = function(self, SaveAgent)
+	local Core = global.package.loaded["pz2qol.core"]
+	if not (Core and Core.bTrace) then
+		return
+	end
+	local function wrap(sMethod, sBegin, sEnd)
+		local fn = SaveAgent[sMethod]
+		if type(fn) ~= "function" then
+			return
+		end
+		SaveAgent[sMethod] = function(...)
+			mk(sBegin)
+			local tResult = table.pack(fn(...))
+			mk(sEnd)
+			return table.unpack(tResult, 1, tResult.n)
+		end
+	end
+	wrap("SaveFranchiseZooNowWithoutMessage", "x_exit_save", "x_exit_save_done")
+	wrap("_ReturnToStartScreenNow", "x_return", "x_return_done")
+	wrap("WaitForEditorsToClose", "x_wait_editors", "x_wait_editors_done")
+end
+
 Hub.Init = function(self, Core)
+	Core:AddModulePatch("Windows.SaveAgent", function(t) self:_PatchSaveAgent(t) end)
 	Core:AddModulePatch("UI.Controllers.FrontEndUI", function(t) self:_PatchFrontEndUI(t) end)
 	Core:AddModulePatch("UI.Controllers.HUDUI", function(t) self:_PatchHUDUI(t) end)
 	Core:AddModulePatch("Game.GameScript", function(t) self:_PatchGameScript(t) end)

@@ -5,7 +5,7 @@
 // side of moves (PZ2QoL_KinDestinations / PZ2QoL_KinMove), including one
 // refusal. Walks: species rail -> columns -> hover relatives -> drag to plan
 // -> refused drop -> select + "Move N here" -> Suggest fixes -> Execute (one
-// move at a time, stops at the refusal) -> Franchise block -> Move now -> Esc.
+// move at a time, skips the refusal) -> Franchise block -> Move now -> Esc.
 import { seedZooKin } from './kin_fixture.mjs';
 
 export const name = 'board';
@@ -347,7 +347,7 @@ export async function hud(page, ctx) {
         }
         facts.planForRun = ids;
 
-        // 6. Franchise: whole plans are off until allowed
+        // 6. Franchise: whole plans run like anywhere (the Execute click is the opt-in)
         await page.evaluate(async () => {
             const kin = await import('/js/mods/pz2qol/kin.js');
             window.__kbSnap.mode = 'franchise';
@@ -360,15 +360,10 @@ export async function hud(page, ctx) {
         layoutProblems('franchise', facts.layoutFranchise, problems);
         facts.franchise = {
             execDisabled: await page.locator('.PZ2QoL_kbActions .PZ2QoL_kpBtn.disabled', { hasText: 'Execute plan' }).count(),
-            blocked: await text(page, '.PZ2QoL_kbBlocked'),
+            execShown: await page.locator('.PZ2QoL_kbActions .PZ2QoL_kpBtn', { hasText: 'Execute plan' }).count(),
             switch: await page.locator('.PZ2QoL_kbActions .PZ2QoL_kpSwitch', { hasText: 'Allow running plans in Franchise' }).count(),
         };
-        await click(page.locator('.PZ2QoL_kbActions .PZ2QoL_kpSwitch', { hasText: 'Allow running plans in Franchise' }));
-        await page.waitForTimeout(250);
-        facts.franchise.execAfterAllow = await page.locator('.PZ2QoL_kbActions .PZ2QoL_kpBtn.disabled', { hasText: 'Execute plan' }).count();
-        facts.franchise.setting = await page.evaluate(async () => (await import('/js/mods/pz2qol/kin.js')).getKinSettings().allowPlansOnline);
-        if (facts.franchise.execDisabled !== 1 || !/Franchise/.test(facts.franchise.blocked) || facts.franchise.switch !== 1) problems.push(`Franchise block: ${JSON.stringify(facts.franchise)}`);
-        if (facts.franchise.execAfterAllow !== 0 || facts.franchise.setting !== true) problems.push('allowing plans in Franchise did not enable Execute');
+        if (facts.franchise.execShown !== 1 || facts.franchise.execDisabled !== 0 || facts.franchise.switch !== 0) problems.push(`Franchise: Execute should simply work: ${JSON.stringify(facts.franchise)}`);
         await page.evaluate(async () => {
             const kin = await import('/js/mods/pz2qol/kin.js');
             kin.setKinSettings({ allowPlansOnline: false });
@@ -378,7 +373,7 @@ export async function hud(page, ctx) {
         });
         await page.waitForTimeout(300);
 
-        // 7. Execute: one move at a time, in order, stops at the refusal
+        // 7. Execute: one move at a time, in order, skips the refusal and carries on
         ids = await planIds(page);
         const refuseAt = Math.min(2, ids.length - 1);
         await page.evaluate(id => { window.__kb.refuse = id; window.__kb.moves.length = 0; }, ids[refuseAt]);
@@ -400,18 +395,22 @@ export async function hud(page, ctx) {
         await page.waitForTimeout(200);
         facts.afterRunPlan = await planIds(page);
         facts.runResult = await text(page, '.PZ2QoL_kbRunResult');
+        // a refused move is skipped and the run carries on (2026-10-16)
         const sent = facts.run.moves.map(m => m.id);
-        if (sent.join() !== ids.slice(0, refuseAt + 1).join()) problems.push(`moves sent ${sent} for plan ${ids} (refusal at ${refuseAt})`);
+        if (sent.join() !== ids.join()) problems.push(`moves sent ${sent} for plan ${ids} (refusal at ${refuseAt}, the rest should still go)`);
         if (facts.run.overlap) problems.push('two moves were in flight at once');
         for (let i = 1; i < facts.run.moves.length; i++) {
             const prev = facts.run.moves[i - 1], cur = facts.run.moves[i];
             if (cur.start - prev.start < 1500) problems.push(`moves ${i} and ${i + 1} only ${cur.start - prev.start} ms apart`);
-            if (prev.end == null || cur.start < prev.end) problems.push(`move ${i + 1} was sent before move ${i} was confirmed`);
+            if (prev.end == null || cur.start < prev.end) problems.push(`move ${i + 1} was sent before move ${i} was answered`);
         }
-        if (facts.run.done !== refuseAt || !/cannot reach/.test(facts.run.error || '')) problems.push(`run result: ${JSON.stringify({ done: facts.run.done, error: facts.run.error })}`);
-        if (!/stopped/.test(facts.runResult)) problems.push(`no "Stopped" result shown: "${facts.runResult}"`);
-        if (facts.runLogRows !== refuseAt + 1) problems.push(`the run log shows ${facts.runLogRows} rows`);
-        if (facts.afterRunPlan.join() !== ids.slice(refuseAt).join()) problems.push(`plan after the run ${facts.afterRunPlan}, expected the refused and later moves ${ids.slice(refuseAt)}`);
+        if (facts.run.done !== ids.length - 1 || !/1 move skipped.*cannot reach/.test(facts.run.error || '')) problems.push(`run result: ${JSON.stringify({ done: facts.run.done, error: facts.run.error })}`);
+        if (!/skipped/.test(facts.runResult)) problems.push(`no skip shown in the result: "${facts.runResult}"`);
+        if (facts.runLogRows !== ids.length) problems.push(`the run log shows ${facts.runLogRows} rows`);
+        if (facts.afterRunPlan.join() !== ids[refuseAt]) problems.push(`plan after the run ${facts.afterRunPlan}, expected only the refused move ${ids[refuseAt]}`);
+        // the pause slider sits under the run controls
+        facts.paceSlider = await text(page, '.PZ2QoL_kbActions .PZ2QoL_pace');
+        if (!/Pause between moves/.test(facts.paceSlider) || !/1\.5 s/.test(facts.paceSlider)) problems.push(`no pause slider: "${facts.paceSlider}"`);
         facts.layoutStopped = await layoutFacts(page);
         layoutProblems('stopped', facts.layoutStopped, problems);
 
@@ -431,6 +430,63 @@ export async function hud(page, ctx) {
         if (!/move now to/i.test(facts.menu) || /Jungle/.test(facts.menu)) problems.push(`card menu: "${facts.menu}"`);
         if (facts.moveNow.length !== 1 || facts.moveNow[0][0] !== mover || facts.moveNow[0][1] !== '9003') problems.push(`Move now sent ${JSON.stringify(facts.moveNow)}`);
         if (facts.moverMoving !== 1) problems.push('the moved animal is not shown on the move');
+
+        // 8b. the trade centre is pinned on the right, outside the sideways
+        // scroll, and drags work both ways
+        facts.pinned = await page.evaluate(() => {
+            const root = document.querySelector('.PZ2QoL_kb').getBoundingClientRect();
+            const strip = document.querySelector('.PZ2QoL_kpScroll.kbCols').getBoundingClientRect();
+            const t = document.querySelector('.PZ2QoL_kbPinned .PZ2QoL_kbCol[data-col="trade"]');
+            const r = t && t.getBoundingClientRect();
+            return {
+                inPinned: !!t,
+                inStrip: !!document.querySelector('.PZ2QoL_kbColRow .PZ2QoL_kbCol[data-col="trade"]'),
+                rightOfStrip: r ? r.left >= strip.right - 1 : false,
+                nearRight: r ? root.right - r.right : null,
+                width: Math.round(root.width),
+                cards: t ? t.querySelectorAll('.PZ2QoL_kbCard').length : 0,
+            };
+        });
+        if (!facts.pinned.inPinned || facts.pinned.inStrip || !facts.pinned.rightOfStrip) problems.push(`trade centre not pinned: ${JSON.stringify(facts.pinned)}`);
+        if (!(facts.pinned.nearRight < 80)) problems.push(`pinned trade centre not at the right edge: ${JSON.stringify(facts.pinned)}`);
+        if (facts.pinned.width < 1600) problems.push(`board not widened: ${facts.pinned.width}px`);
+        // from the pinned trade centre into a habitat
+        const zawadi = '8021';
+        // drops count only on columns in view: bring Grassland into the strip's view
+        const stripTo = colId => page.evaluate(id => {
+            const vp = document.querySelector('.PZ2QoL_kpScroll.kbCols .PZ2QoL_kpViewport');
+            const c = document.querySelector(`.PZ2QoL_kbColRow .PZ2QoL_kbCol[data-col="${id}"]`);
+            vp.scrollLeft = id == null ? 0 : id === 'end' ? vp.scrollWidth : Math.max(0, c.offsetLeft - 20);
+        }, colId);
+        await stripTo('9004');
+        await page.waitForTimeout(150);
+        d = await drag(page, card(zawadi), col('9004'));
+        facts.fromTradePreview = await text(page, '.PZ2QoL_kbCol[data-col="9004"] .PZ2QoL_kbColDrop');
+        await d.up();
+        facts.fromTrade = await page.locator(`.PZ2QoL_kbCol[data-col="9004"] .PZ2QoL_kbCard[data-id="${zawadi}"][data-planned="1"]`).count();
+        if (facts.fromTrade !== 1) problems.push(`drag from the pinned trade centre not planned (preview "${facts.fromTradePreview}")`);
+        // scroll the strip to its end: a habitat card dropped on the pinned column
+        await stripTo('end');
+        await page.waitForTimeout(150);
+        // the last habitat card in view (the strip is scrolled to its end)
+        const toTrade = await page.evaluate(() => {
+            const vr = document.querySelector('.PZ2QoL_kpScroll.kbCols .PZ2QoL_kpViewport').getBoundingClientRect();
+            const cards = [...document.querySelectorAll('.PZ2QoL_kbColRow .PZ2QoL_kbCol[data-kind="habitat"] .PZ2QoL_kbCard[data-id]:not([data-planned="1"])')]
+                .filter(n => { const r = n.getBoundingClientRect(); return r.left >= vr.left && r.right <= vr.right && !n.querySelector('.PZ2QoL_kbTag.moving'); });
+            return cards.length ? cards[cards.length - 1].getAttribute('data-id') : null;
+        });
+        facts.toTradeId = toTrade;
+        if (!toTrade) problems.push('no habitat card in view to drag onto the trade centre');
+        else {
+            d = await drag(page, card(toTrade), page.locator('.PZ2QoL_kbPinned .PZ2QoL_kbCol[data-col="trade"] .PZ2QoL_kbColHead'));
+            await d.up();
+            facts.toTrade = await page.locator(`.PZ2QoL_kbPinned .PZ2QoL_kbCard[data-id="${toTrade}"][data-planned="1"]`).count();
+            if (facts.toTrade !== 1) problems.push('drag onto the pinned trade centre not planned');
+        }
+        await ctx.shot(page, 'kb_8b_pinned_trade');
+        // the board keeps its sideways scroll: leave it at the start for the next scenarios
+        await stripTo(null);
+        await page.waitForTimeout(150);
 
         // 9. Esc closes
         await page.keyboard.press('Escape');

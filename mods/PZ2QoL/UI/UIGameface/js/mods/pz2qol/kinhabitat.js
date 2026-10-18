@@ -134,7 +134,8 @@ function overviewLine(model, entity) {
     const other = partnerOf(p, a.id);
     const word = relationWord(model.ped.relation(a.guid, other.guid), other.sex);
     const more = pairs.length > 1 ? ` · +${pairs.length - 1} more` : '';
-    return lineVNode(p.severity, `${SEVERITY_INFO[p.severity].label}: ${other.name} ${sexSymbol(other.sex)} (${word})${p.mated ? ', mates now' : ''}${more}`, { build, extraClass: 'overview' });
+    const bond = p.held ? `, ${p.held.by.name} bonded to ${p.held.mate.name}` : '';
+    return lineVNode(p.severity, `${SEVERITY_INFO[p.severity].label}: ${other.name} ${sexSymbol(other.sex)} (${word})${p.mated ? ', mates now' : ''}${bond}${more}`, { build, extraClass: 'overview' });
 }
 
 function patchOverviewCard(AnimalOverviewCard) {

@@ -3,7 +3,7 @@
 // Plain DOM in our own root under <body>, positioned under the screen's
 // header each tick. Nothing is inserted into the game's preact tree; the
 // list is pushed down with a stylesheet rule so nothing overlaps.
-import { MARKET_PRESETS, storageFiltersActive, storageSummary, applyStorageFilters, speciesStats, surplusIds, isAdult, isOnMarket } from '/js/mods/pz2qol/scores.js';
+import { MARKET_PRESETS, storageFiltersActive, storageSummary, applyStorageFilters, speciesStats, surplusIds, isAdult, isFertileAdult, isOnMarket, isSellable, sellBlockers, SELL_BLOCKERS } from '/js/mods/pz2qol/scores.js';
 import { MARKET_EVENT, readAnimal, sendScreenEvent } from '/js/mods/pz2qol/game.js';
 import { getStorageFilters, getStoragePredicates, getStorageSource, onStorageFiltersChanged, resetStorageFilters, setStorageFilters } from '/js/mods/pz2qol/listfilter.js';
 import { getMarketDimBelow, setMarketDimBelow } from '/js/mods/pz2qol/badges.js';
@@ -154,18 +154,23 @@ function buildStorageBar() {
     const toggles = [
         ['pregnant', 'Pregnant', 'Only pregnant animals', 'IconFertility'],
         ['alpha', 'Alpha', 'Only alphas', 'IconStar'],
-        ['adults', 'Adults', 'Hide infants', 'Icon_Maturation'],
-        ['juveniles', 'Juveniles', 'Only infants', 'Icon_Maturation'],
+        ['adults', 'Adults', "Click to cycle: all adults (hides infants), then fertile adults only (also hides infertile adults, such as elderly animals past breeding age, which the market won't take), then juveniles only, then off", 'Icon_Maturation'],
         ['pairsOnly', 'Has pair', 'Only species where you hold at least one breeding-age male and female', 'IconGender'],
         ['hideListed', 'Not listed', 'Hide animals already listed on the market', 'IconTrade'],
         ['related', 'Kin', 'Kin: only animals with a close relative in storage (same species, from the family records the game keeps)', 'IconGenetics'],
     ];
     for (const [key, label, tip, ic] of toggles) {
         chips[key] = chip(label, tip, () => {
-            const patch = { [key]: !getStorageFilters()[key] };
-            if (key == 'adults' && patch.adults) patch.juveniles = false;
-            if (key == 'juveniles' && patch.juveniles) patch.adults = false;
-            setStorageFilters(patch);
+            const f = getStorageFilters();
+            // Adults cycles: off -> all adults -> fertile adults -> juveniles -> off
+            if (key == 'adults') {
+                if (f.juveniles) setStorageFilters({ adults: false, fertileAdults: false, juveniles: false });
+                else if (f.fertileAdults) setStorageFilters({ adults: false, fertileAdults: false, juveniles: true });
+                else if (f.adults) setStorageFilters({ adults: false, fertileAdults: true, juveniles: false });
+                else setStorageFilters({ adults: true, fertileAdults: false, juveniles: false });
+                return;
+            }
+            setStorageFilters({ [key]: !f[key] });
         }, ic);
     }
     chips.surplus = chip('Surplus', 'Animals beyond your best N of each species and sex (by gene score): trade or release candidates. Click to step N; off after the last step.', () => {
@@ -174,6 +179,11 @@ function buildStorageBar() {
         else if (f.surplusKeep == KEEP_STEPS[KEEP_STEPS.length - 1]) setStorageFilters({ surplusOnly: false });
         else setStorageFilters({ surplusKeep: next(KEEP_STEPS, f.surplusKeep) });
     }, 'IconTrade');
+    // Sellable cycles: off -> sellable -> not sellable -> off
+    const SELLABLE_NEXT = { any: 'yes', yes: 'no', no: 'any' };
+    const SELLABLE_LABEL = { any: 'Sellable', yes: 'Sellable', no: 'Not sellable' };
+    const SELLABLE_TIP = "Click to cycle: animals the market would take, then animals it won't, then off. Not sellable: juveniles, infertile animals (including elderly past breeding age), pregnant animals, animals already listed and animals being moved. The game still checks each animal when you list it.";
+    chips.sellable = chip('Sellable', SELLABLE_TIP, () => setStorageFilters({ sellable: SELLABLE_NEXT[getStorageFilters().sellable] || 'yes' }), 'IconTrade');
     chips.minScore = chip('Gene ≥ any', 'Minimum gene score; click to step', () => setStorageFilters({ minScore: next(SCORE_STEPS, getStorageFilters().minScore) }), 'IconMedalStandard');
     const clearChip = chip('Clear', "Clear the mod's storage filters", () => resetStorageFilters(), 'reset');
     clearChip.classList.add('ghost');
@@ -184,7 +194,7 @@ function buildStorageBar() {
 
     const knob = h('div.PZ2QoL_switchKnob');
     const listerSwitch = h('div.PZ2QoL_switch', {
-        title: 'Market lister: live prices, a recommended price and "Sell at recommended price" (Franchise only). Off by default.',
+        title: 'Market lister: live prices, a recommended price and "Sell at recommended price" (Franchise only). Listing only starts when you click Sell.',
         onClick: safe('Market lister', () => setListerEnabled(!isListerEnabled())),
     }, h('div.PZ2QoL_switchTrack', null, knob), h('div.PZ2QoL_switchLabel', { text: 'Market lister' }));
     const syncLister = () => setClass(listerSwitch, 'on', isListerEnabled());
@@ -195,7 +205,7 @@ function buildStorageBar() {
     const bar = h('div.PZ2QoL_bar.PZ2QoL_card.storage');
     bar.appendChild(collapser(bar, 'storage', 'Filters'));
     bar.appendChild(h('div.PZ2QoL_expandOnly', null,
-        toggles.map(([key]) => chips[key]), chips.surplus, chips.minScore, sort, clearChip));
+        toggles.map(([key]) => chips[key]), chips.sellable, chips.surplus, chips.minScore, sort, clearChip));
     bar.appendChild(h('div.PZ2QoL_flex1'));
     bar.appendChild(stats);
     bar.appendChild(h('div.PZ2QoL_divider'));
@@ -204,6 +214,8 @@ function buildStorageBar() {
     const sync = () => {
         const f = getStorageFilters();
         for (const [key] of toggles) setClass(chips[key], 'on', !!f[key]);
+        setChip(chips.adults, !!(f.adults || f.fertileAdults || f.juveniles), f.juveniles ? 'Juveniles' : f.fertileAdults ? 'Fertile adults' : 'Adults');
+        setChip(chips.sellable, (f.sellable || 'any') != 'any', SELLABLE_LABEL[f.sellable] || 'Sellable');
         setChip(chips.surplus, f.surplusOnly, f.surplusOnly ? `Surplus · keep ${f.surplusKeep}` : 'Surplus');
         setChip(chips.minScore, f.minScore > 0, f.minScore > 0 ? `Gene ≥ ${f.minScore}` : 'Gene ≥ any');
         setChip(sort, f.sort != 'none', SORT_LABEL[f.sort]);
@@ -226,11 +238,18 @@ function buildStorageBar() {
         const st = speciesStats(animals);
         setChip(chips.pregnant, !!f.pregnant, undefined, animals.filter(a => a.isPregnant).length);
         setChip(chips.alpha, !!f.alpha, undefined, animals.filter(a => a.isAlpha).length);
-        setChip(chips.adults, !!f.adults, undefined, animals.filter(a => isAdult(a)).length);
-        setChip(chips.juveniles, !!f.juveniles, undefined, animals.filter(a => !isAdult(a)).length);
+        setChip(chips.adults, !!(f.adults || f.fertileAdults || f.juveniles), undefined, animals.filter(a => f.juveniles ? !isAdult(a) : f.fertileAdults ? isFertileAdult(a) : isAdult(a)).length);
         setChip(chips.pairsOnly, !!f.pairsOnly, undefined, animals.filter(a => (st.get(a.species || '?') || {}).pairs > 0).length);
         setChip(chips.surplus, f.surplusOnly, undefined, surplusIds(animals, f.surplusOnly ? f.surplusKeep : 2).size);
         setChip(chips.hideListed, !!f.hideListed, undefined, animals.filter(a => !isOnMarket(a)).length);
+        // count for the state the chip is in (off: how many are sellable),
+        // and why the rest aren't in the tooltip
+        const reasons = {};
+        for (const a of animals) for (const r of sellBlockers(a)) reasons[r] = (reasons[r] || 0) + 1;
+        const sellableCount = animals.filter(isSellable).length;
+        setChip(chips.sellable, (f.sellable || 'any') != 'any', undefined, f.sellable == 'no' ? animals.length - sellableCount : sellableCount);
+        const why = Object.keys(SELL_BLOCKERS).filter(r => reasons[r]).map(r => `${reasons[r]} ${SELL_BLOCKERS[r].toLowerCase()}`);
+        chips.sellable.title = `Sellable now: ${sellableCount} of ${animals.length}.${why.length ? ` Not sellable: ${why.join(', ')}.` : ''} ${SELLABLE_TIP}`;
         // Kin adds the `related` predicate when it has lineage for storage
         setChip(chips.related, !!f.related, undefined, predicates.related ? animals.filter(predicates.related).length : '');
         setClass(chips.related, 'disabled', !predicates.related && !f.related);

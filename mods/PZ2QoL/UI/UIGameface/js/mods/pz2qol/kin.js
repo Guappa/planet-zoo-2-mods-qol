@@ -23,6 +23,9 @@ export const DEFAULT_KIN_SETTINGS = Object.freeze({
     alertKin: false,      // also alert for close kin the game does not flag
     closeKinship: DEFAULT_CLOSE_KINSHIP,
     showCovered: true,    // grey badges for pairs kept apart by contraception
+    // a related pair the game keeps apart by a monogamous pair bond counts as
+    // 'held' (Bonded elsewhere) instead of a risk; off: every such pair is a risk
+    bondHolds: true,
     // Species board: run a whole staged plan in a Franchise zoo (or when the
     // mode is unknown). Off by default; single moves are always one click.
     allowPlansOnline: false,
@@ -56,7 +59,7 @@ export function setKinSettings(patch) {
     catch (e) {
         // session only
     }
-    if (before.closeKinship !== settings.closeKinship) rebuild();
+    if (before.closeKinship !== settings.closeKinship || before.bondHolds !== settings.bondHolds) rebuild();
     settingsListeners.forEach(fn => safeCall(fn, settings));
     notify();
 }
@@ -118,10 +121,15 @@ function notify(scope) {
     listeners.forEach(fn => safeCall(fn, getKinModel(), scope || 'park'));
 }
 
+// What every kin model is built with (the planner's settings).
+function modelOpts() {
+    return { closeKinship: settings.closeKinship, bondHolds: settings.bondHolds !== false };
+}
+
 function rebuild() {
     try {
-        if (parkSnapshot) parkModel = buildKinModel(parkSnapshot, { closeKinship: settings.closeKinship });
-        if (storageSnapshot) storageModel = buildKinModel(storageSnapshot, { closeKinship: settings.closeKinship });
+        if (parkSnapshot) parkModel = buildKinModel(parkSnapshot, modelOpts());
+        if (storageSnapshot) storageModel = buildKinModel(storageSnapshot, modelOpts());
     }
     catch (e) {
         reportError('mod', 'Kin could not read the animals', e);
@@ -131,7 +139,7 @@ function rebuild() {
 // Applies a snapshot (also used by the browser harness).
 export function applyKinSnapshot(raw) {
     const snap = normalizeSnapshot(raw);
-    const model = buildKinModel(snap, { closeKinship: settings.closeKinship });
+    const model = buildKinModel(snap, modelOpts());
     if (snap.scope === 'storage') {
         storageSnapshot = snap;
         storageModel = model;
@@ -383,6 +391,16 @@ export function installKin() {
             // older Lua side
         }
         requestKinScan('hello', { force: true, delay: 1500 });
+    });
+    // a park started or ended (a wildlife reserve and back): the last park
+    // snapshot holds the previous load's entity ids, so it is not used again
+    engine.on('PZ2QoL_StoreReset', () => {
+        if (!parkSnapshot) return;
+        breadcrumb('kin_park_reset');
+        parkModel = null;
+        parkSnapshot = null;
+        notify('park');
+        requestKinScan('park_reset', { force: true, delay: 1500 });
     });
     // anything that may change who can breed with whom
     for (const name of ['ManagementAnimals_ContraceptionToggled', 'InfoPanel_Animal_Contraceptive', 'CompareMates_UI_ContraceptionToggled']) {

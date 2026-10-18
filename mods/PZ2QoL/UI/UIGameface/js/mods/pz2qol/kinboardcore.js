@@ -10,7 +10,7 @@
 // Destinations come from the Lua side (the game's own checks):
 //   { bySpecies: { <species>: { <habitatId>: { ok, reason } } },
 //     habitats: [{ id, name }], tradeCentre: { id, name } | null }
-import { buildKinModel, normalizeSnapshot, severityRank, offspringScore, predictOffspring, fertileNow, fertilityText, Sex } from './kincore.js';
+import { buildKinModel, normalizeSnapshot, isCollective, severityRank, offspringScore, predictOffspring, fertileNow, fertilityText, Sex } from './kincore.js';
 
 export const TRADE = 'trade';
 const COUNTED = s => s === 'risk' || s === 'kin' || s === 'future';
@@ -22,17 +22,18 @@ export function canMove(a) {
 }
 
 function emptyCounts() {
-    return { risk: 0, kin: 0, future: 0, covered: 0 };
+    return { risk: 0, kin: 0, future: 0, held: 0, covered: 0 };
 }
 
 // -------------------------------------------------------------- species
 
-// Every species in the zoo (not exhibits), worst problems first.
+// Every species in the zoo (not exhibits, shoals or colonies), worst
+// problems first.
 export function speciesList(model) {
     if (!model) return [];
     const map = new Map();
     for (const a of model.animals.values()) {
-        if (a.exhibit || !a.species) continue;
+        if (a.exhibit || !a.species || isCollective(model, a.species)) continue;
         let s = map.get(a.species);
         if (!s) map.set(a.species, s = { species: a.species, animals: 0, males: 0, females: 0, juveniles: 0, habitats: new Set(), away: 0, counts: emptyCounts() });
         s.animals++;
@@ -62,15 +63,18 @@ function destName(model, to, destinations) {
 }
 
 // The snapshot as it would be after the plan: moved animals sit in their
-// destination habitat (or the trade centre, outside any habitat).
+// destination habitat (or the trade centre, outside any habitat). A move
+// breaks the moved animal's pair bond, and its mate's: neither holds a
+// related pair apart any more (whether a bond comes back when the mate
+// returns is not known, so it does not).
 export function plannedSnapshot(model, plan, destinations) {
     const snap = model.snapshot;
     const moves = new Map((plan || []).map(m => [String(m.id), m]));
     const animals = snap.animals.map(a => {
         const m = moves.get(a.id);
-        if (!m) return a;
-        if (m.to === TRADE) return Object.assign({}, a, { hab: '', loc: destName(model, TRADE, destinations), lt: 'trade', mates: [] });
-        return Object.assign({}, a, { hab: String(m.to), loc: destName(model, m.to, destinations), lt: 'habitat', mates: [] });
+        if (!m) return a.bond && moves.has(a.bond.mate) ? Object.assign({}, a, { bond: null }) : a;
+        if (m.to === TRADE) return Object.assign({}, a, { hab: '', loc: destName(model, TRADE, destinations), lt: 'trade', mates: [], bond: null });
+        return Object.assign({}, a, { hab: String(m.to), loc: destName(model, m.to, destinations), lt: 'habitat', mates: [], bond: null });
     });
     const habitats = snap.habitats.slice();
     for (const m of moves.values()) {
@@ -81,10 +85,16 @@ export function plannedSnapshot(model, plan, destinations) {
     return Object.assign({}, snap, { animals, habitats, normalized: true });
 }
 
+// A rebuilt model keeps the options of the one it comes from (close-kin
+// threshold, the pair bond switch).
+function modelOptsOf(model) {
+    return model.opts || { closeKinship: model.closeKinship };
+}
+
 export function simulatePlan(model, plan, destinations) {
     if (!model) return null;
     if (!plan || !plan.length) return model;
-    return buildKinModel(plannedSnapshot(model, plan, destinations), { closeKinship: model.closeKinship });
+    return buildKinModel(plannedSnapshot(model, plan, destinations), modelOptsOf(model));
 }
 
 // What a plan changes: pairs it removes and pairs it creates (counted
@@ -149,6 +159,157 @@ export function habitatAllowedFor(assignments, habId, species) {
     return !set || set.has(species);
 }
 
+// ------------------------------------------------- saved assignments
+//
+// Habitat entity ids are handed out afresh each time a zoo loads, so a saved
+// id may point at nothing (a ghost column) or at another habitat. Each saved
+// assignment keeps a fingerprint of its habitat, refreshed while the zoo
+// runs: { species, name, hid (the game's habitat id), guids (some residents),
+// seen (the load the player last changed it in) }. After a reload the
+// fingerprints are matched to the zoo's habitats; the entity id only counts
+// within the load the player clicked in (a re-key never sets `seen`: it may
+// run on a board built before the zoo reloaded).
+
+const PRINT_GUIDS = 8;
+const DROP_AFTER_MISSES = 3;
+
+function nameKey(s) {
+    return String(s || '').trim().toLowerCase();
+}
+
+// The zoo's habitats as fingerprints: [{ id, name, names, hid, guids }].
+// Uses the scan's full habitat list (empty habitats too) when there is one.
+export function habitatPrints(model) {
+    if (!model) return [];
+    const out = new Map();
+    const add = (id, name, hid) => {
+        id = String(id);
+        let p = out.get(id);
+        if (!p) out.set(id, p = { id, name: '', names: new Set(), hid: null, guids: [] });
+        if (name) {
+            if (!p.name) p.name = String(name);
+            p.names.add(nameKey(name));
+        }
+        if (hid != null && hid !== '' && p.hid == null) p.hid = String(hid);
+    };
+    const habs = model.snapshot && Array.isArray(model.snapshot.habs) ? model.snapshot.habs : [];
+    for (const h of habs) if (h && h.id != null) add(h.id, h.name, h.hid);
+    for (const h of model.habitats ? model.habitats.values() : []) {
+        if (h.kind === 'exhibit') continue;
+        if (habs.length && !out.has(String(h.id))) continue; // not a habitat any more
+        add(h.id, h.name, null);
+    }
+    for (const a of model.animals ? model.animals.values() : []) {
+        if (!a.hab || a.exhibit || !a.guid) continue;
+        const p = out.get(String(a.hab));
+        if (p) p.guids.push(String(a.guid));
+    }
+    for (const p of out.values()) p.guids.sort();
+    return Array.from(out.values());
+}
+
+// What is saved for one habitat besides its species. `token`: the load the
+// player clicked in (toggleAssignment only).
+export function printOf(p, token) {
+    return { name: p.name || '', hid: p.hid != null ? p.hid : undefined, guids: p.guids.slice(0, PRINT_GUIDS), seen: token || undefined };
+}
+
+// How sure are we that saved entry `e` (saved under `key`) is habitat `p`?
+// 0 = no evidence. An entity id only counts within its own load.
+function matchScore(key, e, p, token, nameCount) {
+    let score = 0;
+    let evidence = false;
+    if (token && e.seen === token && String(key) === p.id) {
+        score += 100;
+        evidence = true;
+    }
+    const n = nameKey(e.name);
+    if (n && p.names.has(n)) {
+        score += nameCount.get(n) > 1 ? 8 : 20;
+        evidence = true;
+    }
+    if (Array.isArray(e.guids) && e.guids.length && p.guids.length) {
+        const mine = new Set(p.guids);
+        let shared = 0;
+        for (const g of e.guids) if (mine.has(String(g))) shared++;
+        if (shared) {
+            score += 5 * Math.min(shared, 5);
+            evidence = true;
+        }
+    }
+    if (e.hid != null && p.hid != null && String(e.hid) === p.hid) score += 4;
+    return evidence ? score : 0;
+}
+
+// Saved entries of one zoo -> its habitats now, one to one, best match first.
+//   section: { <saved key>: { species, name, hid, guids, seen } }
+//   returns { byHab: Map(habitat id -> saved key), orphans: [saved keys] }
+export function resolveAssignments(section, prints, token) {
+    const byHab = new Map();
+    const orphans = [];
+    const entries = Object.entries(section && typeof section === 'object' ? section : {})
+        .filter(([, e]) => e && Array.isArray(e.species) && e.species.length);
+    const nameCount = new Map();
+    for (const p of prints || []) for (const n of p.names) nameCount.set(n, (nameCount.get(n) || 0) + 1);
+    const cands = [];
+    for (const [key, e] of entries) {
+        for (const p of prints || []) {
+            const s = matchScore(key, e, p, token, nameCount);
+            if (s > 0) cands.push({ key, hab: p.id, s });
+        }
+    }
+    cands.sort((x, y) => y.s - x.s || (x.key === x.hab ? -1 : 0) - (y.key === y.hab ? -1 : 0) || (x.key < y.key ? -1 : x.key > y.key ? 1 : 0));
+    const used = new Set();
+    for (const c of cands) {
+        if (used.has(c.key) || byHab.has(c.hab)) continue;
+        used.add(c.key);
+        byHab.set(c.hab, c.key);
+    }
+    for (const [key] of entries) if (!used.has(key)) orphans.push(key);
+    return { byHab, orphans };
+}
+
+// The section again, keyed by today's habitat ids with fresh fingerprints.
+// Entries that match nothing are kept for a few loads (the habitat list may
+// be incomplete), then dropped: their habitat is gone. A change replayed
+// on data read later passes countMisses = false.
+export function rekeyAssignments(section, prints, token, { countMisses = true } = {}) {
+    const src = section && typeof section === 'object' ? section : {};
+    if (!prints || !prints.length) return Object.assign({}, src);
+    const { byHab, orphans } = resolveAssignments(src, prints, token);
+    const byId = new Map(prints.map(p => [p.id, p]));
+    const out = {};
+    for (const [hab, key] of byHab) {
+        const e = src[key];
+        const fresh = printOf(byId.get(hab), e.seen);
+        if (!fresh.name && e.name) fresh.name = e.name;
+        if (fresh.hid === undefined && e.hid != null) fresh.hid = e.hid;
+        out[hab] = Object.assign({ species: e.species.slice() }, fresh);
+    }
+    for (const key of orphans) {
+        const e = Object.assign({}, src[key]);
+        if (countMisses && e.missAt !== token) {
+            e.miss = (Number(e.miss) || 0) + 1;
+            e.missAt = token;
+        }
+        if (e.miss >= DROP_AFTER_MISSES) continue;
+        // never under an id that is a habitat today
+        let k = key;
+        while (out[k] || byId.has(k)) k = '~' + k;
+        out[k] = e;
+    }
+    for (const e of Object.values(out)) for (const f of Object.keys(e)) if (e[f] === undefined) delete e[f];
+    return out;
+}
+
+// habitat id -> Set(species), only for habitats the zoo has now.
+export function assignmentsFromSection(section, prints, token) {
+    const { byHab } = resolveAssignments(section, prints, token);
+    const out = {};
+    for (const [hab, key] of byHab) out[hab] = section[key].species;
+    return normalizeAssignments(out);
+}
+
 // --------------------------------------------------------------- columns
 
 function habitatOk(destinations, species, habId) {
@@ -193,7 +354,7 @@ export function boardColumns(model, species, plan, destinations, { includeEmpty 
         if (a.hab) c = col(a.hab, (after.habitats.get(a.hab) || {}).name || a.loc || a.hab, 'habitat');
         else if (a.lt === 'trade') c = col(TRADE, destName(model, TRADE, destinations), 'trade');
         else c = col('away', 'Elsewhere', 'away');
-        const pairs = (after.byAnimal.get(a.id) || []).filter(p => COUNTED(p.severity) || p.severity === 'covered');
+        const pairs = (after.byAnimal.get(a.id) || []).filter(p => COUNTED(p.severity) || p.severity === 'held' || p.severity === 'covered');
         c.animals.push({ a, severity: pairs.length ? pairs[0].severity : null, pairs, planned: m ? 'in' : null, from: m && before ? (before.hab || before.lt || '') : null });
         if (m && before) {
             const fromId = before.hab || (before.lt === 'trade' ? TRADE : 'away');
@@ -354,7 +515,7 @@ export function breedingPairs(model, habId, species) {
 function speciesModel(model, species) {
     const snap = model.snapshot;
     if (!snap) return model;
-    return buildKinModel(Object.assign({}, snap, { animals: snap.animals.filter(a => a.species === species), normalized: true }), { closeKinship: model.closeKinship });
+    return buildKinModel(Object.assign({}, snap, { animals: snap.animals.filter(a => a.species === species), normalized: true }), modelOptsOf(model));
 }
 
 export function suggestPlan(model, species, destinations, { maxMoves = 12, allowTrade = false, includeKin = true, assignments = null } = {}) {

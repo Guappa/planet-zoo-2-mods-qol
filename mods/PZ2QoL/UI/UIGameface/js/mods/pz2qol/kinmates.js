@@ -19,7 +19,7 @@
 // Everything is VNodes added to the game's own renders (kinhooks.js), so it
 // survives re-renders; every patch turns itself off after repeated errors.
 import { getKinModel, getKinSettings, getStorageKinModel, markKinActive, onKin } from '/js/mods/pz2qol/kin.js';
-import { explainRelation, partnerOf, percent, relationWord, Sex, SEVERITY_INFO } from '/js/mods/pz2qol/kincore.js';
+import { explainRelation, holdReason, partnerOf, percent, relationWord, Sex, SEVERITY_INFO } from '/js/mods/pz2qol/kincore.js';
 import { animalCardContent, offspringBlock, placeOf, riskSummaryText, sexClass, sexSymbol, visiblePairs, worstOfCounts } from '/js/mods/pz2qol/kinui.js';
 import {
     appendVNode, badgeVNode, cardHandlers, dsValue, findByClass, gameModule, h, hasClass, isFrontendPage, isHudPage,
@@ -201,6 +201,10 @@ function matePair(selId, candId) {
         if (!a.guid || !b.guid) return { model, a, b, rel: null, unknown: true };
         const rel = model.ped.relation(a.guid, b.guid);
         const tier = tierOf(model, rel);
+        // the same two in one habitat, kept apart by a pair bond: say so, as
+        // the game's own monogamy lock in this popup does
+        const same = (model.byAnimal.get(a.id) || []).find(q => partnerOf(q, a.id) === b);
+        if (same && same.severity === 'held') return { model, a, b, rel, tier, severity: 'held', held: same.held, unheld: same.unheld };
         return { model, a, b, rel, tier, severity: tier ? TIER_SEVERITY[tier] : null };
     }
     return null;
@@ -225,7 +229,7 @@ function pairCard(p, pinned) {
         dom('div.PZ2QoL_kinPairHead', null, dom(`div.PZ2QoL_kinTag.sev_${p.severity}`, { text: info.label }),
             dom(`span.PZ2QoL_kinName.${sexClass(p.b.sex)}`, { text: `${p.b.name} ${sexSymbol(p.b.sex)}` }),
             dom('div.PZ2QoL_kinFacts', { text: `${word} of ${p.a.name}` })),
-        dom('div.PZ2QoL_kinWhy', { text: `${explainRelation(p.model, p.a, p.b)} ${gameNote(p.tier)}` }),
+        dom('div.PZ2QoL_kinWhy', { text: `${explainRelation(p.model, p.a, p.b)} ${gameNote(p.tier)}${p.held ? ` ${holdReason(p)}.` : ''}` }),
         offspringBlock(m, f)));
     if (!pinned) body.appendChild(dom('div.PZ2QoL_kinCardFoot', null, dom('div.PZ2QoL_kinHint', { text: 'Kin reads the family records the game keeps' })));
     return body;
@@ -263,6 +267,7 @@ function offspringLine() {
         sub = p.tier === 'game' ? 'The game flags this pair as inbred.'
             : p.tier === 'close' ? 'The game does NOT warn about this: their young lose fertility and immunity.'
                 : 'Distant relatives: the game does not count it.';
+        if (p.held) sub += ' A pair bond keeps them apart for now.';
     }
     const build = pinned => {
         if (p.rel) return pairCard(p, pinned);
@@ -419,7 +424,7 @@ function genealogySummary(model) {
     active();
     const pairs = visiblePairs(model, focus.id);
     if (!pairs.length) return null;
-    const counts = { risk: 0, kin: 0, future: 0, covered: 0 };
+    const counts = { risk: 0, kin: 0, future: 0, held: 0, covered: 0 };
     for (const p of pairs) if (counts[p.severity] != null) counts[p.severity]++;
     const worst = worstOfCounts(counts);
     if (!worst) return null;

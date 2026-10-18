@@ -94,10 +94,13 @@ function pairToast(model, p) {
         { label: 'Show', icon: 'IconGenetics', primary: true, run: () => openKinPlanner({ habitatId: p.hab, animalId: p.a.id, pairKey: p.key }) },
     ];
     if (!female.contra) actions.push({ label: `Contraception for ${female.name}`, icon: 'Icon_Contracepted', run: () => setContraception(female.id, true) });
+    const label = p.severity === 'risk' ? 'inbreeding risk' : SEVERITY_INFO[p.severity].label.toLowerCase();
     toast({
         severity: p.severity,
-        title: p.severity === 'risk' ? 'New inbreeding risk' : `New ${SEVERITY_INFO[p.severity].label.toLowerCase()}`,
-        text: pairText(model, p) + (p.tier === 'game' ? '' : ' The game does not warn about this pair.'),
+        // a pair bond kept them apart until now (newRisks sets bondEnded)
+        title: p.bondEnded ? `Bond ended: ${label}` : `New ${label}`,
+        text: pairText(model, p) + (p.bondEnded ? ' The pair bond that kept them apart has ended.' : '')
+            + (p.tier === 'game' ? '' : ' The game does not warn about this pair.'),
         actions,
     });
 }

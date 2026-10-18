@@ -15,8 +15,10 @@ import { installKinMates } from '/js/mods/pz2qol/kinmates.js';
 import { installKinStorage } from '/js/mods/pz2qol/kinstorage.js';
 import { installKinPlanner } from '/js/mods/pz2qol/kinplanner.js';
 import { installKinAlerts } from '/js/mods/pz2qol/kinalerts.js';
+import { installHudLauncher } from '/js/mods/pz2qol/hudlauncher.js';
+import { installStorageSend } from '/js/mods/pz2qol/storagesend.js';
 
-export const VERSION = '1.3.0';
+export const VERSION = '2.1.0';
 
 // Debug builds: tell Lua how far the page got (written to dbg/trace.log).
 const trace = breadcrumb;
@@ -41,6 +43,7 @@ step('Styles', () => {
     loadCSS('mods/pz2qol_kin');
     loadCSS('mods/pz2qol_kinplanner');
     loadCSS('mods/pz2qol_kinmates');
+    loadCSS('mods/pz2qol_hud');
 });
 step('Storage filters', installListFilter);
 step('Select-all guard', installSelectAllGuard);
@@ -57,6 +60,9 @@ step('Kin in Compare Mates and Genealogy', installKinMates);
 step('Kin in Animal Storage', installKinStorage);
 step('Kin planner', installKinPlanner);
 step('Kin alerts', installKinAlerts);
+// in the park: one-click Species board and the autosave control
+step('Park launcher', installHudLauncher);
+step('Find a habitat', installStorageSend);
 // Species board: loaded on its own, so a missing or broken board never
 // stops the rest of the mod
 step('Species board', () => {
@@ -66,6 +72,16 @@ step('Species board', () => {
             if (m.installSpeciesBoard() === false) reportError('mod', 'Species board not installed', 'The game UI did not look as expected.', { silent: true });
         })
         .catch(e => reportError('mod', 'Species board failed to start', e));
+});
+// Market desk: list many storage animals at once (its own module, so a
+// broken desk never stops the rest of the mod)
+step('Market desk', () => {
+    import('/js/mods/pz2qol/marketdesk.js')
+        .then(m => {
+            loadCSS('mods/pz2qol_marketdesk');
+            if (m.installMarketDesk() === false) reportError('mod', 'Market desk not installed', 'The game UI did not look as expected.', { silent: true });
+        })
+        .catch(e => reportError('mod', 'Market desk failed to start', e));
 });
 document.body.classList.add('PZ2QoL');
 console.log(`[PZ2QoL] UI v${VERSION} loaded`);

@@ -1,4 +1,4 @@
-﻿# PZ2QoL logo: sources and licences
+﻿# Mike's QoL Toolbox logo (formerly PZ2QoL, then Genes & Gold): sources and licences
 
 Everything in the logo is modelled procedurally by `build_logo.py` (the medallion, paw print,
 magnifying glass, gems, ribbon, plaque and leaves). Only these third-party assets are used:

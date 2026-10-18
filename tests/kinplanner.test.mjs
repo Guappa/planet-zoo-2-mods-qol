@@ -130,7 +130,10 @@ test('words and notes', () => {
     assert.match(tierNote('game'), /inbred/);
     assert.match(tierNote('distant', 1 / 16), /1\/16/);
     assert.match(tierNote('none'), /Not related/);
-    assert.deepEqual(visibleCounts({ risk: 1, covered: 2 }, false), { risk: 1, kin: 0, future: 0, covered: 0 });
+    assert.deepEqual(visibleCounts({ risk: 1, covered: 2 }, false), { risk: 1, kin: 0, future: 0, held: 0, covered: 0 });
+    // pairs held apart by a pair bond are shown even when covered pairs are hidden
+    assert.deepEqual(visibleCounts({ held: 3, covered: 2 }, false), { risk: 0, kin: 0, future: 0, held: 3, covered: 0 });
+    assert.equal(worstOf({ risk: 0, kin: 0, future: 0, held: 1, covered: 1 }), 'held');
     assert.equal(worstOf({ risk: 0, kin: 0, future: 2, covered: 1 }), 'future');
     assert.equal(worstOf(null), null);
 });

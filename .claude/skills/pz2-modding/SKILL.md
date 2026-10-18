@@ -22,7 +22,8 @@ an afterthought:
   Don't leave contradictions.
 - Mark how sure a fact is: **proven** (seen in game), **offline** (seen in files, tests or
   decompiled code only), or **guess**. Upgrade the mark once it is confirmed.
-- Note the game version for anything a patch could change. Current: **1.0.4, build 1018486**.
+- Note the game version for anything a patch could change. Current: **1.0.5, build 1023906** (second PC, from
+  2026-10-16 10:01; facts marked 1.0.4 were seen on build 1018486 and are unchecked since).
 - Add one dated line to `reference/changelog.md` per update.
 - Keep entries short: the fact, why it matters, where it's used (file path). No session narration.
 
@@ -31,15 +32,26 @@ an afterthought:
 1. **Never touch the exe or Denuvo.** No patching, unpacking, proxy DLLs, or bypassing online or
    offline activation. Each new game build needs one online launch with Steam online.
 2. **Mods are drop-in folders.** `Win64\ovldata\<Pack>\`, with `Manifest.xml` and OVLs. No game
-   files are changed, and nothing is written to saves or the profile. Uninstalling means deleting
-   the folder. Data a mod must keep (e.g. PZ2QoL's habitat assignments) goes in ONE file inside its
-   own pack folder (`userdata.json`), never elsewhere; updates must keep it.
+   files are changed. The only thing written to the profile is the mod's own `PZ2QoL` entry in
+   the player save's data store (`Saves\player`, MainPlayer `SetData`; developer-approved
+   2026-10-16, for device-local data such as Franchise habitat assignments; see
+   `reference/lua-runtime.md`). It holds short ASCII strings only, with a size cap, `pcall` around
+   every call, and never anything else in that save. Uninstalling means deleting the
+   folder. Data a mod must keep (e.g. PZ2QoL's habitat assignments, per zoo, Franchise included)
+   goes in that player-save entry (mod files can't be written in retail). No mod data goes into
+   park or online saves; PZ2QoL only keeps a read-only world serialisation client in offline
+   parks so saves from the 2026-10-16 park-save builds load as before and their data moves over.
 3. **Online (Franchise) safety.** Never change what is sent to Frontier's servers. Any automation
    that acts online:
-   - is off by default, Franchise only, and only ever started by a user click (never a timer or
-     the background);
-   - does one action at a time, each confirmed by the game;
-   - stops on fatal errors.
+   - only ever starts from the player's click (never a timer or the background). That click is
+     the opt-in: there are no "allow in Franchise" switches (developer, 2026-10-16). Franchise is
+     the mod's main target, so every feature should work there;
+   - does one action at a time, each confirmed by the game (or timed out), with a pause after
+     each (player-adjustable, 1 s minimum). The market lister uses that same pause after a server
+     error (developer, 2026-10-16: no longer back-off); "Find a habitat" still pauses 8 s;
+   - **skips a step that fails and carries on; only the player's Stop ends a run.** The developer
+     decided this on 2026-10-16 and accepts the risk: in-game crashes have followed server
+     refusals. Don't show the player warnings about it.
 4. **Fail soft.** Wrap every hook in `pcall`. If anything is missing, fall back to the vanilla
    view or behaviour. Hook by module or function name, not by offset.
 5. **Ship nothing of Frontier's** (no decompiled code, no assets) except unavoidable copies of the
@@ -71,6 +83,7 @@ an afterthought:
 | `reference/game-data-and-events.md` | Data contexts, UI events, enums, trade and listing limits, server errors |
 | `reference/debugging.md` | Trace DLL breadcrumbs, crash dumps and how to read them, known crashes |
 | `reference/animals-and-breeding.md` | Lineage and parent APIs, the game's inbreeding rule, habitat membership, kin-related UI surfaces |
+| `reference/cheats-and-debug.md` | Vanilla rename cheats, native cheat functions, the retail debug stub, launch args, dev tools |
 | `reference/testing.md` | Unit, Lua and browser-harness tests and when to run each |
 | `reference/changelog.md` | Dated log of updates to this skill |
 

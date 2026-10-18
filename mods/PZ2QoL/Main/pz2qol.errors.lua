@@ -28,6 +28,7 @@ Errors.tEntries = {}
 Errors.tPending = {}       -- not yet delivered to the UI
 Errors.tLastShown = {}     -- dedupe key -> time
 Errors.nDedupeSeconds = 5
+Errors.tServerErrorListeners = {} -- fn(nError, sName or nil, nRequestType)
 
 local tDatabaseErrorNames = {
 	"DatabaseError_Ok", "DatabaseError_Unknown", "DatabaseError_DidNotGetResponse",
@@ -174,6 +175,11 @@ Errors.OnDatabaseErrorMessages = function(self, tMessages)
 			local sRequest = enumName(tFranchise, tRequestTypeNames, tMsg.nRequestType) or ("request #" .. tostring(tMsg.nRequestType))
 			local sHint = tDatabaseErrorHints["DatabaseError_" .. sError] or ""
 			if sError ~= "Ok" then
+				-- first, so a failing report can't hide it (the market desk
+				-- engine waits for its listing's answer)
+				for _, fnListener in ipairs(self.tServerErrorListeners) do
+					pcall(fnListener, tMsg.nError, sName, tMsg.nRequestType)
+				end
 				if self.Core then
 					if sName ~= nil then
 						self.Core:Mark("srv_" .. sName)
@@ -189,6 +195,15 @@ Errors.OnDatabaseErrorMessages = function(self, tMessages)
 				self:Report("server", "Server error: " .. sError, sHint .. (sHint ~= "" and " " or "") .. "(" .. sRequest .. ")")
 			end
 		end
+	end
+end
+
+-- fn(nError, sName, nRequestType) for every franchise server error that is
+-- not Ok; sName is the DatabaseError_* name without its prefix
+-- ("DidNotGetResponse"), or nil when no name matches the code.
+Errors.AddServerErrorListener = function(self, fn)
+	if type(fn) == "function" then
+		self.tServerErrorListeners[#self.tServerErrorListeners + 1] = fn
 	end
 end
 

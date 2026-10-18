@@ -4,7 +4,7 @@
 import {
     SEVERITY_INFO, Sex, animalPairs, partnerOf, explainRelation, relationWord, percent, predictOffspring,
     offspringScore, habitatSummary, canLocate,
-    fertilityText,
+    fertilityText, holdReason,
 } from '/js/mods/pz2qol/kincore.js';
 import { getKinSettings, locateAnimal, setContraception } from '/js/mods/pz2qol/kin.js';
 import { clear, h, icon, setClass } from '/js/mods/pz2qol/ui.js';
@@ -117,10 +117,12 @@ export function pairRow(model, pair, self, { actions = false, detail = true, onA
     const facts = [word, `${percent(pair.kinship)} kinship`];
     if (pair.mated) facts.push('mates now');
     if (pair.severity === 'covered' && pair.cover) facts.push(pair.cover);
+    if (pair.held) facts.push(`${pair.held.by.name} bonded to ${pair.held.mate.name}`);
     if (!self.hab || self.hab !== other.hab) facts.push(placeOf(model, other));
     const row = h(`div.PZ2QoL_kinPair.sev_${pair.severity}`, null,
         h('div.PZ2QoL_kinPairHead', null, severityTag(pair.severity), nameTag(other), h('div.PZ2QoL_kinFacts', { text: facts.filter(Boolean).join(' · ') })),
-        detail && h('div.PZ2QoL_kinWhy', { text: explainRelation(model, self, other) + (pair.tier === 'game' ? '' : ' The game does not warn about this pair.') }),
+        detail && h('div.PZ2QoL_kinWhy', { text: explainRelation(model, self, other) + (pair.tier === 'game' ? '' : ' The game does not warn about this pair.')
+            + (pair.held ? ` ${holdReason(pair)}.` : '') }),
         detail && offspringBlock(pair.a, pair.b),
         actions && h('div.PZ2QoL_kinActions', null,
             other.sex === Sex.Female || self.sex === Sex.Female ? contraButton(self.sex === Sex.Female ? self : other, onAction) : contraButton(other, onAction),
@@ -274,6 +276,7 @@ export function riskSummaryText(counts) {
     if (counts.risk) parts.push(`${counts.risk} inbreeding risk${counts.risk > 1 ? 's' : ''}`);
     if (counts.kin) parts.push(`${counts.kin} close kin`);
     if (counts.future) parts.push(`${counts.future} later`);
+    if (counts.held) parts.push(`${counts.held} bonded elsewhere`);
     if (counts.covered && getKinSettings().showCovered) parts.push(`${counts.covered} covered`);
     return parts.join(' · ');
 }
@@ -282,6 +285,7 @@ export function worstOfCounts(counts) {
     if (counts.risk) return 'risk';
     if (counts.kin) return 'kin';
     if (counts.future) return 'future';
+    if (counts.held) return 'held';
     if (counts.covered) return 'covered';
     return null;
 }

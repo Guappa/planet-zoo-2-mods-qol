@@ -113,7 +113,7 @@ test('model: pairs, severities and per-animal badges', () => {
     assert.equal(animalSeverity(m, 'h1'), 'covered');
     assert.equal(animalSeverity(m, 'y'), 'kin');
     assert.equal(animalSeverity(m, 'u'), null);
-    assert.deepEqual(m.counts, { risk: 2, kin: 2, future: 1, covered: 2, distant: 0 });
+    assert.deepEqual(m.counts, { risk: 2, kin: 2, future: 1, held: 0, covered: 2, distant: 0 });
     // male first in every pair
     for (const p of m.pairs) assert.notEqual(p.a.sex, F);
     assert.equal(describeRelation(m, m.animals.get('k1'), m.animals.get('k2')), 'sister');
@@ -123,7 +123,7 @@ test('model: habitat summaries and lookups', () => {
     const m = buildKinModel(zoo());
     const s = habitatSummary(m, '1');
     assert.equal(s.name, 'Savannah Habitat');
-    assert.deepEqual(s.counts, { risk: 2, kin: 0, future: 0, covered: 2 });
+    assert.deepEqual(s.counts, { risk: 2, kin: 0, future: 0, held: 0, covered: 2 });
     assert.equal(s.species[0].species, 'Lion');
     assert.equal(s.species[0].males.length, 2);
     assert.equal(habitatByName(m, 'Jungle Habitat').id, '2');
@@ -259,4 +259,18 @@ test('new risks: a pair that moves habitat together is not new', () => {
     for (const a of snap.animals) if (a.hab === '1') a.hab = '3';
     const after = buildKinModel(snap);
     assert.equal(newRisks(before, after).length, 0);
+});
+
+test('shoals and colonies are left out: no pairs, no habitat counts', () => {
+    const fish = (id, sex, par) => an(id, sex, par, { species: 'Clownfish', hab: '4', loc: 'Reef' });
+    const snap = zoo([fish('f1', M, ['', '']), fish('f2', F, ['f1', '']), fish('f3', M, ['f1', ''])]);
+    snap.habitats.push({ id: '4', name: 'Reef' });
+    snap.speciesFacts = { Clownfish: { collective: true } };
+    const model = buildKinModel(snap);
+    assert.equal(model.pairs.filter(p => p.species === 'Clownfish').length, 0);
+    assert.equal(animalSeverity(model, 'f2'), null);
+    assert.equal(habitatSummary(model, '4'), null);
+    assert.equal(model.habitats.get('4').name, 'Reef');
+    snap.speciesFacts = {};
+    assert.ok(buildKinModel(snap).pairs.some(p => p.species === 'Clownfish'), 'counted when the species is not collective');
 });

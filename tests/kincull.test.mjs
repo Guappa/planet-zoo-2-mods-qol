@@ -110,3 +110,85 @@ test('juveniles are never picked automatically, only by hand', () => {
     const hand = cullPlan(model(animals), 'Lemur', { social: { max: 4 } }, { options: { fill: 1, cullIds: new Set(['a6']) } });
     assert.ok(hand.moves.some(m => m.id === 'a6'));
 });
+
+// fertility gene 0%: both strands the same at every fertility locus
+const ZF = q => Object.assign(G(q), { F: 'AAAAAAAAAAAA' });
+
+test('a 0% fertility gene goes from every habitat, even one with room and from the breeding core', () => {
+    n = 0;
+    const animals = [an(M, '2', 6, { genes: ZF(6) }), an(M, '2', 3), an(F, '2', 5), an(F, '2', 6, { genes: ZF(6) }), an(F, '2', 4, { preg: true, genes: ZF(4) })];
+    const plan = cullPlan(model(animals), 'Lemur', INFO, { options: { fill: 1 } });
+    const out = new Map(plan.moves.map(m => [m.id, m.reason]));
+    assert.deepEqual([...out.keys()].sort(), ['a1', 'a4']);
+    assert.match(out.get('a1'), /0% fertility/);
+    assert.ok(!out.has('a5'), 'pregnant stays');
+    assert.equal(plan.before.zeroFert, 3);
+    assert.equal(plan.after.zeroFert, 1);
+    assert.equal(plan.poorKept, 1);
+    // the switch turns it off
+    assert.equal(cullPlan(model(animals), 'Lemur', INFO, { options: { fill: 1, zeroFertility: false } }).moves.length, 0);
+});
+
+test('when every breeder of a sex has poor genes, the best of them stays', () => {
+    n = 0;
+    const animals = [an(M, '2', 4, { genes: ZF(4) }), an(M, '2', 6, { genes: ZF(6) }), an(F, '2', 5), an(F, '2', 3)];
+    const plan = cullPlan(model(animals), 'Lemur', INFO, { options: { fill: 1 } });
+    assert.deepEqual(plan.moves.map(m => m.id), ['a1']);
+    assert.equal(plan.habitats[0].keep.find(k => k.id === 'a2').why, 'last breeder of its sex');
+});
+
+test('poor gene levels send more away, from habitats with room too', () => {
+    n = 0;
+    const animals = [an(M, '1', 6), an(M, '1', 4), an(M, '1', 1), an(F, '1', 6), an(F, '1', 5), an(F, '1', 4), an(F, '1', 3), an(F, '1', 2), an(F, '1', 1)];
+    const m = model(animals);
+    const big = { social: { max: 20 }, mating: 'polygyny' };
+    const count = genes => cullPlan(m, 'Lemur', big, { options: { fill: 1, genes } }).moves.length;
+    const c = { off: count('off'), weak: count('weak'), below: count('below'), best: count('best') };
+    assert.equal(c.off, 0, 'room for everyone');
+    assert.ok(c.weak > 0 && c.below > c.weak && c.best > c.below, JSON.stringify(c));
+    const best = cullPlan(m, 'Lemur', big, { options: { fill: 1, genes: 'best' } });
+    const stay = best.habitats[0].keep.map(k => k.id).sort();
+    assert.deepEqual(stay, ['a1', 'a4', 'a5'], 'the best male and the best quarter of the females');
+    assert.match(best.moves.find(x => x.id === 'a9').reason, /poor genes/);
+});
+
+test('young are picked by the gene rules only with young on', () => {
+    n = 0;
+    const animals = [an(M, '2', 5), an(F, '2', 5), an(F, '2', 4, { juv: true, infertile: true, age: 1, genes: ZF(4) })];
+    assert.equal(cullPlan(model(animals), 'Lemur', INFO).moves.length, 0);
+    assert.deepEqual(cullPlan(model(animals), 'Lemur', INFO, { options: { young: true } }).moves.map(x => x.id), ['a3']);
+});
+
+test('core only keeps just the breeding core', () => {
+    n = 0;
+    const animals = [an(M, '1', 6), an(M, '1', 4), an(F, '1', 6), an(F, '1', 5), an(F, '1', 4), an(F, '1', 3)];
+    const plan = cullPlan(model(animals), 'Lemur', INFO, { options: { fill: 0 } });
+    assert.equal(plan.habitats[0].target, 3);
+    assert.equal(plan.after.adults, 3);
+});
+
+test('the group make-up decides how many breeding males a habitat keeps', () => {
+    n = 0;
+    // 2 fertile males, 6 fertile females, room for 7: one must go
+    const big = [an(M, '1', 6), an(M, '1', 5), an(F, '1', 6), an(F, '1', 5), an(F, '1', 5), an(F, '1', 4), an(F, '1', 4), an(F, '1', 3)];
+    const room = { social: { max: 7 }, mating: 'polygyny' };
+    // a harem (the mating system alone) keeps one breeding male: the second goes
+    const harem = cullPlan(model(big), 'Lemur', room, { options: { fill: 1, keepBest: 0 } });
+    assert.deepEqual(harem.moves.map(m => m.id), ['a2']);
+    assert.match(harem.moves[0].reason, /harem: one breeding male per habitat/);
+    // 1:3 (the player's choice, or the game's social groups) needs both males
+    // for six females: the weakest female goes instead
+    for (const plan of [
+        cullPlan(model(big), 'Lemur', room, { options: { fill: 1, keepBest: 0, ratio: '1:3' } }),
+        cullPlan(model(big), 'Lemur', Object.assign({ groups: [{ kind: 'mixed', m: 1, f: 3 }] }, room), { options: { fill: 1, keepBest: 0 } }),
+    ]) {
+        assert.equal(plan.moves.length, 1);
+        assert.equal(model(big).animals.get(plan.moves[0].id).sex, F, JSON.stringify(plan.moves));
+    }
+    // with three females 1:3 needs one male: the weaker male is the extra one
+    n = 0;
+    const small = [an(M, '1', 6), an(M, '1', 5), an(F, '1', 6), an(F, '1', 5), an(F, '1', 4)];
+    const plan = cullPlan(model(small), 'Lemur', { social: { max: 4 }, mating: 'polygyny' }, { options: { fill: 1, keepBest: 0, ratio: '1:3' } });
+    assert.deepEqual(plan.moves.map(m => m.id), ['a2']);
+    assert.match(plan.moves[0].reason, /extra male \(1 ♂ : 3 ♀: room for 1 breeding male here\)/);
+});

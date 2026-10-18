@@ -7,4 +7,7 @@
   something in it is wrong, update the matching file in `.claude/skills/pz2-modding/reference/` in
   the same change and add a line to its `changelog.md`. Do this without being asked.
 - Never patch the exe or touch Denuvo or online activation. Franchise automation must stay
-  click-started, one action at a time, and off by default.
+  click-started (the player's click on Execute / Sell / Find a habitat is the opt-in; no extra
+  "allow in Franchise" switches, decided 2026-10-16) and one action at a time.
+- Franchise is the priority: the developer only plays Franchise. Every feature should work there
+  unless it would change what is sent to Frontier's servers.

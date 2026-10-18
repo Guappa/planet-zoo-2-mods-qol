@@ -285,7 +285,7 @@ export async function hud(page, ctx) {
     }));
     facts.layoutSettings = await layoutFacts(page);
     layoutProblems('settings', facts.layoutSettings, problems);
-    if (facts.settings.switches.length !== 3) problems.push(`settings switches: ${facts.settings.switches}`);
+    if (facts.settings.switches.length !== 4) problems.push(`settings switches: ${facts.settings.switches}`);
     if (facts.settings.thresholds.join(' ') !== '1/8 1/16* 1/32') problems.push(`thresholds: ${facts.settings.thresholds}`);
     // covered pairs can be hidden from the counts, then shown again
     await click(page.locator('.PZ2QoL_kpPopover .PZ2QoL_kpSwitch', { hasText: 'Covered pairs' }));

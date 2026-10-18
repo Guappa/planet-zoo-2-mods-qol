@@ -1,4 +1,4 @@
-﻿"""Builds the PZ2QoL logo scene in Blender, renders it, and saves the .blend.
+﻿"""Builds the Mike's QoL Toolbox logo scene (formerly PZ2QoL, then Genes & Gold) in Blender, renders it, and saves the .blend.
 
 Run headless:
   blender -b --factory-startup -P art/logo/build_logo.py -- [--res 2048] [--samples 512]
@@ -463,7 +463,7 @@ MAG.rotation_euler = (math.radians(-16), math.radians(-10), math.radians(-27))
 # ---------------------------------------------------------------- ribbon banner
 
 RIB_R, RIB_ZC, RIB_YC, RIB_ARCH = 2.3, 0.42, -0.8, 0.13
-RIB_HALF_W, RIB_HALF_H = 1.32, 0.25
+RIB_HALF_W, RIB_HALF_H = 1.48, 0.25
 
 
 def wrap(x, y, d=0.0):
@@ -550,10 +550,19 @@ piping("Ribbon piping bottom", RIB_YC - RIB_HALF_H + 0.03)
 # ---------------------------------------------------------------- text
 
 
-def text_mesh(name, body, font_file, width, extrude, bevel, spacing=1.0):
+def text_mesh(name, body, font_file, width, extrude, bevel, spacing=1.0, accent=(), grow=None):
+    """Text fitted to `width`. Characters at the `accent` indices get material slot 1;
+    `grow` maps character indices to a scale factor applied around each glyph's centre."""
+    grow = grow or {}
+    marks = sorted(set(accent) | set(grow))
     font = bpy.data.fonts.load(os.path.join(ASSETS, font_file), check_existing=True)
     cu = bpy.data.curves.new(name, "FONT")
     cu.body = body
+    # Tag each marked character with its own material slot so its faces can be found later.
+    for _ in range(len(marks) + 1):
+        cu.materials.append(MAT_TEXT)
+    for slot, i in enumerate(marks, 1):
+        cu.body_format[i].material_index = slot
     cu.font = font
     cu.align_x = "CENTER"
     cu.align_y = "CENTER"
@@ -566,6 +575,25 @@ def text_mesh(name, body, font_file, width, extrude, bevel, spacing=1.0):
     scene.collection.objects.link(tmp)
     bpy.context.view_layer.update()
     o = to_mesh_object(tmp, name)
+    me = o.data
+    slot_of = [p.material_index for p in me.polygons]
+    for slot, i in enumerate(marks, 1):
+        polys = [p for p in me.polygons if slot_of[p.index] == slot]
+        vs = {me.vertices[vi] for p in polys for vi in p.vertices}
+        f = grow.get(i, 1.0)
+        if vs and f != 1.0:
+            gx = (max(v.co.x for v in vs) + min(v.co.x for v in vs)) / 2
+            gy = (max(v.co.y for v in vs) + min(v.co.y for v in vs)) / 2
+            for v in vs:
+                v.co.x = gx + (v.co.x - gx) * f
+                v.co.y = gy + (v.co.y - gy) * f
+    me.materials.clear()  # this also resets every face to slot 0
+    me.materials.append(MAT_TEXT)
+    if accent:
+        me.materials.append(MAT_TEXT)
+        for p in me.polygons:
+            if slot_of[p.index] and marks[slot_of[p.index] - 1] in accent:
+                p.material_index = 1
     xs = [v.co.x for v in o.data.vertices]
     k = width / (max(xs) - min(xs))
     cx = (max(xs) + min(xs)) / 2
@@ -577,13 +605,24 @@ def text_mesh(name, body, font_file, width, extrude, bevel, spacing=1.0):
     return o
 
 
-title = text_mesh("Title", "PZ2 QoL", "LilitaOne-Regular.ttf", 1.3, 0.05, 0.012)
+TITLE = arg("--title", "MIKE'S QoL TOOLBOX")
+TITLE_W = arg("--title-w", 2.56)
+# "QoL" in its own brighter gold so it stays light against the red.
+GOLD_AT = TITLE.find("QoL")
+GOLD = tuple(range(GOLD_AT, GOLD_AT + 3)) if GOLD_AT >= 0 else ()
+title = text_mesh("Title", TITLE, "LilitaOne-Regular.ttf", TITLE_W, 0.05, 0.012, accent=GOLD)
 for v in title.data.vertices:
-    v.co = wrap(v.co.x, v.co.y + RIB_YC + 0.02, v.co.z)
-link(title); smooth(title, 35); set_mat(title, MAT_TEXT)
+    v.co = wrap(v.co.x, v.co.y + RIB_YC + 0.035, v.co.z)
+link(title); smooth(title, 35)
+MAT_AMP_GOLD, _, _ = principled("Accent gold", (1.0, 0.78, 0.38), 1.0, 0.24)
+title.data.materials[0] = MAT_TEXT
+if GOLD:
+    title.data.materials[1] = MAT_AMP_GOLD
 
-subtitle = text_mesh("Subtitle", "THE CURATOR’S TOOLKIT", "BarlowCondensed-ExtraBold.ttf",
-                     2.5, 0.06, 0.008, spacing=1.02)
+SUBTITLE = arg("--subtitle", "BREED · TRADE · MANAGE")
+subtitle = text_mesh("Subtitle", SUBTITLE, "BarlowCondensed-ExtraBold.ttf",
+                     2.32, 0.06, 0.008, spacing=1.02,
+                     grow={i: 1.25 for i, c in enumerate(SUBTITLE) if c == "·"})
 for v in subtitle.data.vertices:
     v.co = (v.co.x, v.co.y - 1.3, v.co.z + 0.18)
 link(subtitle); smooth(subtitle, 35); set_mat(subtitle, MAT_SUB_GOLD)

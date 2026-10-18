@@ -15,7 +15,7 @@ local ipairs   = global.ipairs
 
 local Core = module(...)
 
-Core.sVersion = "1.0.0"
+Core.sVersion = "2.1.0"
 Core.bBooted = false
 
 -- lower-cased module name -> list of patch functions(tModule)
@@ -164,6 +164,48 @@ Core._PatchEnvironment = function(self, Environment)
 	end
 end
 
+-- Apply pending patches to every module that is already loaded, whichever
+-- require loaded it.
+Core.ApplyLoadedPatches = function(self)
+	local tLoaded = global.package and global.package.loaded
+	if type(tLoaded) ~= "table" then
+		return
+	end
+	for sKey in global.pairs(self.tPatches) do
+		if type(tLoaded[sKey]) == "table" then
+			self:_ApplyPatches(sKey, tLoaded[sKey])
+		end
+	end
+end
+
+-- ModeHelper (engine Lua, loaded before the mod) requires every mode of a
+-- world in SetModes with its own copy of require, so mode modules can miss
+-- the require hook. Sweep the loaded modules right after, before any mode
+-- instance exists.
+Core._PatchModeHelper = function(self, ModeHelper)
+	local fnSetModes = ModeHelper.SetModes
+	if type(fnSetModes) ~= "function" then
+		trace("ModeHelper has no SetModes; mode patches only via require")
+		return
+	end
+	ModeHelper.SetModes = function(oHelper, tModes, ...)
+		if type(tModes) == "table" then
+			-- require them first (no-op when loaded), so they are patched
+			-- before SetModes hands out the first mode
+			for _, sModule in global.pairs(tModes) do
+				if type(sModule) == "string" then
+					pcall(global.require, sModule)
+				end
+			end
+		end
+		pcall(self.ApplyLoadedPatches, self)
+		self:Mark("x_setmodes")
+		local tResult = global.table.pack(fnSetModes(oHelper, tModes, ...))
+		self:Mark("x_setmodes_done")
+		return global.table.unpack(tResult, 1, tResult.n)
+	end
+end
+
 Core.Boot = function(self)
 	if self.bBooted then
 		return
@@ -175,7 +217,8 @@ Core.Boot = function(self)
 	self:_InstallRequireHook()
 	self:Checkpoint("require_hook")
 	self:AddModulePatch("Environment.Environment", function(t) self:_PatchEnvironment(t) end)
-	for _, sFeature in ipairs({ "PZ2QoL.Errors", "PZ2QoL.Hub", "PZ2QoL.MarketPeek", "PZ2QoL.Kin" }) do
+	self:AddModulePatch("GameHelpers.ModeHelper", function(t) self:_PatchModeHelper(t) end)
+	for _, sFeature in ipairs({ "PZ2QoL.Errors", "PZ2QoL.Hub", "PZ2QoL.MarketPeek", "PZ2QoL.Lister", "PZ2QoL.PlayerStore", "PZ2QoL.Kin", "PZ2QoL.Guards", "PZ2QoL.SaveTrace", "PZ2QoL.Autosave", "PZ2QoL.StorageSend" }) do
 		local bOk, sErr = pcall(function()
 			global.require(sFeature):Init(self)
 		end)

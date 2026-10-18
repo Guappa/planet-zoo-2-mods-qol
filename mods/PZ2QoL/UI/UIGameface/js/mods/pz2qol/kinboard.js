@@ -3,9 +3,11 @@
 //
 //   header   title, Kin planner, Rescan, Close
 //   left     every species, problems first
-//   middle   the species' habitats as columns of animal cards (plus the
-//            trade centre and "Elsewhere"); drag cards between columns, or
-//            select them and press "Move N here", to stage moves in a plan
+//   middle   the species' habitats as columns of animal cards (plus
+//            "Elsewhere"), scrolling sideways, and the trade centre pinned
+//            on the right so it is always in view; drag cards between
+//            columns, or select them and press "Move N here", to stage
+//            moves in a plan
 //   bottom   the plan: its moves, what it fixes and creates (simulated on
 //            the kin model), Suggest fixes, Clear, Execute
 //
@@ -14,7 +16,7 @@
 // Gameface: own DOM under <body>, explicit display:flex, no CSS grid, no
 // native scrolling (kinpanel.js), pointer drag with mouse events (no HTML5
 // drag and drop).
-import { Sex, relationWord, severityRank, fertilityTag } from '/js/mods/pz2qol/kincore.js';
+import { Sex, relationWord, severityRank, fertilityTag, holdReason } from '/js/mods/pz2qol/kincore.js';
 import {
     TRADE, boardColumns, canMove, moveText, planImpact, planProblems, prunePlan, setMove, simulatePlan, speciesList, suggestPlan,
 } from '/js/mods/pz2qol/kinboardcore.js';
@@ -25,12 +27,16 @@ import {
 import {
     cachedDestinations, getPlanRun, moveAnimal, onPlanRun, planBlockedReason, requestDestinations, requestSpeciesInfo, runPlan, stopPlan,
 } from '/js/mods/pz2qol/kinmoves.js';
-import { PROGRAMME_DEFAULTS, conceptionChance, planProgramme, youngQuality } from '/js/mods/pz2qol/kinprogramme.js';
-import { FILL_STEPS, cullPlan, geneScore } from '/js/mods/pz2qol/kincull.js';
+import {
+    PROGRAMME_DEFAULTS, RATIO_CHOICES, conceptionChance, groupRule, planProgrammeAsync, ratioKey, unknownMakeupText, youngQuality,
+} from '/js/mods/pz2qol/kinprogramme.js';
+import { FILL_STEPS, GENE_STEPS, cullPlan, geneScore } from '/js/mods/pz2qol/kincull.js';
 import { hideKinCard, kinBadge, sexClass, sexSymbol } from '/js/mods/pz2qol/kinui.js';
 import { clear, h, icon, setClass, setText } from '/js/mods/pz2qol/ui.js';
 import { breadcrumb, reportError } from '/js/mods/pz2qol/errors.js';
-import { getAssignments, onAssignments, toggleAssignment, assignmentStorage } from '/js/mods/pz2qol/kinassign.js';
+import { getUserData, updateUserData } from '/js/mods/pz2qol/userstore.js';
+import { paceSlider } from '/js/mods/pz2qol/pace.js';
+import { getAssignments, onAssignments, toggleAssignment, assignmentStorage, assignmentStorageReason } from '/js/mods/pz2qol/kinassign.js';
 import {
     btn as kitBtn, closeButton, closeOtherPanels, countPills, makeGuard, makeScroll, panelApi, placePanel, refreshBars, registerPanel,
     remPx, restoreScroll, scrollBoxTo, speciesName, switchEl as kitSwitch, trunc, wheelScroll,
@@ -39,6 +45,9 @@ import {
 const TICK_MS = 2000;
 const NOTICE_MS = 9000;
 const DRAG_START_PX = 6;
+// wider than the other big panels by about one column: room for the pinned
+// trade centre without taking any from the habitats
+const BOARD_SIZE = { maxRem: 112, maxVw: 0.96 };
 
 const guard = makeGuard('Species board');
 const btn = (...args) => kitBtn(guard, ...args);
@@ -94,18 +103,27 @@ const PROG_DEFAULT_STEP = 2;
 
 // Thin out: the last known "over the room" count per species (for the rail)
 const overBySpecies = new Map();
+// Thin out: the player's last choices (this session), for the next species
+const cullPrefs = { fill: 'balanced', genes: 'off', zeroFertility: true, oldAlways: false, young: false };
 const CULL_MARKS = {
     'breeding core': { cls: 'core', text: 'core', title: 'The breeding core of this habitat: kept' },
     pregnant: { cls: 'preg', text: 'pregnant', title: 'Pregnant: never sent away' },
     'best genes of the species': { cls: 'best', text: 'best', title: 'The best genes of the species: kept' },
+    'last breeder of its sex': { cls: 'best', text: 'last breeder', title: 'Every breeder of this sex has poor genes; the best of them stays so the species can still breed' },
     'your choice': { cls: 'mine', text: 'your choice', title: 'You chose this' },
     'on the move': { cls: 'moving', text: 'on the move', title: 'Already on the move' },
 };
-const SYSTEM_WORDS = {
-    polygyny: 'Harem: one breeding male per habitat',
-    polyandry: 'One breeding female per habitat',
-    monogamy: 'Pairs: one partner each',
-    mixed: 'Mixed groups',
+// The optimiser's budget on the board: it runs in slices (the page stays
+// responsive), so it can search longer than a one-go call.
+const PROG_SEARCH = { maxEvaluations: 3000000, timeBudgetMs: 6000 };
+// The group make-up per species, the player's choice (kept per zoo).
+const RATIO_STORE = 'kinRatio';
+const RATIO_SOURCE_WORDS = {
+    yours: 'your choice',
+    game: "the game's most per sex",
+    groups: "the game's social groups",
+    mating: 'the mating system',
+    none: 'not known',
 };
 
 function notice(text, tone = 'info') {
@@ -154,6 +172,7 @@ function ensureRoot() {
         h('div.PZ2QoL_kpFlex'),
         btn('Kin planner', 'IconGenetics', openPlanner, { title: 'The relatedness matrix and mate finder' }),
         btn('Rescan', 'Icon_CircleWithArrows', () => {
+            if (S.prog || S.cull) return recomputePanel();
             requestKinScan('board', { force: true });
             loadDestinations(true);
             notice('Reading the animals and the habitats again…');
@@ -197,6 +216,7 @@ function buildLegend() {
     l.appendChild(item('sev_risk', 'Inbreeding risk'));
     l.appendChild(item('sev_kin', 'Close kin'));
     l.appendChild(item('sev_future', 'Future risk'));
+    l.appendChild(item('sev_held', 'Bonded elsewhere'));
     l.appendChild(item('sev_covered', 'Covered'));
     l.appendChild(item('planned', 'Planned move'));
     l.appendChild(item('ghost', 'Leaving'));
@@ -304,10 +324,12 @@ function assignEl(model, c) {
     const others = c.assigned.filter(x => x !== S.species).map(speciesName);
     const toggle = () => {
         toggleAssignment(model, c.id, S.species, c.name);
-        // once per session: the game gives mods no place to keep data (its file calls are stubs)
-        if (assignmentStorage() === 'memory' && !S.memoryNoted) {
+        // once per session: assignments that only last until the game closes
+        // (not while the store is still being found: 'wait' keeps the change
+        // and saves it once the store answers)
+        if (assignmentStorage() === 'memory' && assignmentStorageReason() !== 'wait' && !S.memoryNoted) {
             S.memoryNoted = true;
-            notice('Habitat assignments last until you close the game. Planet Zoo 2 gives mods no place to keep them yet.', 'info');
+            notice('Habitat assignments last until you close the game: the game\'s player profile could not be used to keep them on this PC.', 'info');
         }
         renderAll();
     };
@@ -353,7 +375,7 @@ function renderRail(model) {
         const on = s.species === S.species;
         const counts = visibleCounts(s.counts, showCovered);
         const pills = countPills(counts, { compact: true });
-        const worst = counts.risk ? 'risk' : counts.kin ? 'kin' : counts.future ? 'future' : counts.covered ? 'covered' : 'none';
+        const worst = counts.risk ? 'risk' : counts.kin ? 'kin' : counts.future ? 'future' : counts.held ? 'held' : counts.covered ? 'covered' : 'none';
         const meta = [`${s.males}♂ ${s.females}♀`];
         if (s.juveniles) meta.push(`${s.juveniles} young`);
         meta.push(`${s.habitats.length} habitat${s.habitats.length === 1 ? '' : 's'}`);
@@ -443,10 +465,14 @@ function renderBoard(model, dest) {
         onScroll: (x) => { S.scroll.board = x; },
     });
     S.boxes.board = box;
+    // the trade centre stays pinned on the right, outside the sideways scroll
+    const pinned = cols.find(c => c.kind === 'trade') || null;
     const row = h('div.PZ2QoL_kbColRow');
-    for (const c of cols) row.appendChild(columnEl(model, c));
+    for (const c of cols) if (c !== pinned) row.appendChild(columnEl(model, c));
     box.content.appendChild(row);
-    el.appendChild(box.wrap);
+    el.appendChild(h('div.PZ2QoL_kbStage', null,
+        box.wrap,
+        pinned ? h('div.PZ2QoL_kbPinned', null, columnEl(model, pinned, { pinned: true })) : null));
     restoreScroll(box, S.scroll.board, 0);
 }
 
@@ -503,7 +529,7 @@ function dropCheck(model, c, ids) {
     return { ok: true, reason: '', unknown: c.kind === 'habitat' && !c.dest, noop };
 }
 
-function columnEl(model, c) {
+function columnEl(model, c, { pinned = false } = {}) {
     const empty = !c.animals.length;
     const unsuitable = c.kind === 'habitat' && c.dest && c.dest.ok === false;
     const unknown = c.kind === 'habitat' && !c.dest;
@@ -512,6 +538,7 @@ function columnEl(model, c) {
     if (empty) cls.push('empty');
     if (unsuitable) cls.push('unsuitable');
     if (unknown) cls.push('unknown');
+    if (pinned) cls.push('pinned');
     const node = h(`div.PZ2QoL_kbCol.${cls.join('.')}`, { 'data-col': c.id, 'data-kind': c.kind });
     // head
     const counts = [];
@@ -532,7 +559,7 @@ function columnEl(model, c) {
     }
     else if (unsuitable) status = h('div.PZ2QoL_kbColStatus.bad', { text: `Not suitable: ${c.dest.reason || 'the game says no'}`, title: c.dest.reason || '' });
     else if (c.kind === 'away') status = h('div.PZ2QoL_kbColStatus', { text: 'On the move, quarantine, vet: cannot move' });
-    else if (c.kind === 'trade') status = h('div.PZ2QoL_kbColStatus', { text: 'Holding area for trading or release' });
+    else if (c.kind === 'trade') status = h('div.PZ2QoL_kbColStatus', { text: 'Always here: drag to or from a habitat', title: 'The trade centre: the holding area for trading or release. Pinned on the right so you can drag its animals into any habitat and see who is related.' });
     else if (unknown) status = h('div.PZ2QoL_kbColStatus.faint', { text: S.destLoading ? 'Checking…' : 'Not checked yet' });
     else if (empty) status = h('div.PZ2QoL_kbColStatus.ok', { text: 'Empty · suitable' });
     else status = h('div.PZ2QoL_kbColStatus.ok', { text: 'Suitable' });
@@ -558,15 +585,16 @@ function columnEl(model, c) {
     head.addEventListener('wheel', e => {
         e.preventDefault();
         e.stopPropagation();
-        if (S.boxes.board) wheelScroll(S.boxes.board, e, true);
+        if (S.boxes.board && !pinned) wheelScroll(S.boxes.board, e, true);
     });
     node.appendChild(head);
     // body: the cards
     const body = makeScroll('kbColBody', {
         onScroll: (x, y) => { S.scroll.cols[c.id] = y; },
         onWheel: (box, e) => {
-            // sideways with Shift, or when this column does not scroll
-            if (!S.boxes.board) return false;
+            // sideways with Shift, or when this column does not scroll (the
+            // pinned trade centre only ever scrolls its own cards)
+            if (!S.boxes.board || pinned) return false;
             if (e.shiftKey || box.vp.scrollHeight <= box.vp.getBoundingClientRect().height + 1) {
                 wheelScroll(S.boxes.board, e, true);
                 return true;
@@ -627,8 +655,10 @@ function cardEl(model, c, x) {
     let change = null;
     if (S.plan.length) {
         const was = baseSeverity(model, a.id);
-        const now = x.severity && x.severity !== 'covered' ? x.severity : null;
-        const wasC = was && was !== 'covered' ? was : null;
+        // kept apart (covered, or held by a pair bond) is not a problem now
+        const problem = s => (s && s !== 'covered' && s !== 'held' ? s : null);
+        const now = problem(x.severity);
+        const wasC = problem(was);
         if (severityRank(now) < severityRank(wasC)) change = h('span.PZ2QoL_kbTag.fixed', { text: 'fixed' });
         else if (severityRank(now) > severityRank(wasC)) change = h('span.PZ2QoL_kbTag.worse', { text: now === 'risk' ? 'new risk' : 'new kin' });
     }
@@ -646,7 +676,7 @@ function cardEl(model, c, x) {
             text: `${wordFor(partner)} ${trunc(partner.name, 10)}${x.pairs.length > 1 ? ` +${x.pairs.length - 1}` : ''}`,
             title: x.pairs.map(p => {
                 const o = p.a.id === a.id ? p.b : p.a;
-                return `${wordFor(o)} ${o.name}`;
+                return `${wordFor(o)} ${o.name}${p.held ? ` (${holdReason(p)})` : ''}`;
             }).join(', '),
         });
     }
@@ -731,7 +761,7 @@ function clearHighlight() {
         setClass(card, 'relHot', false);
         setClass(card, 'dim', false);
         setClass(card, 'focus', false);
-        for (const s of ['risk', 'kin', 'future', 'covered', 'distant', 'apart']) setClass(card, 'rel_' + s, false);
+        for (const s of ['risk', 'kin', 'future', 'held', 'covered', 'distant', 'apart']) setClass(card, 'rel_' + s, false);
         setText(card.__rel, '');
     }
     for (const c of S.colEls.values()) {
@@ -848,10 +878,16 @@ function beginDrag(id, card, ev) {
     closeMenu();
 }
 
+// The column under the pointer. Strip columns count only inside the strip's
+// viewport: one scrolled out of view may lie under the pinned trade centre.
 function columnAt(x, y) {
+    const board = S.boxes.board;
+    const vr = board ? board.vp.getBoundingClientRect() : null;
     for (const [colId, c] of S.colEls) {
         const r = c.el.getBoundingClientRect();
-        if (x >= r.left && x <= r.right && y >= r.top && y <= r.bottom) return colId;
+        if (!(x >= r.left && x <= r.right && y >= r.top && y <= r.bottom)) continue;
+        if (vr && !c.el.classList.contains('pinned') && !(x >= vr.left && x <= vr.right)) continue;
+        return colId;
     }
     return null;
 }
@@ -1286,15 +1322,20 @@ function actionsEl(model) {
         restoreScroll(box, 0, S.scroll.actions || 0);
         return el;
     };
+    // the pause between moves: one slider kept across renders (a drag survives them)
+    if (!S.paceEl) S.paceEl = paceSlider('moves');
     if (run.running) {
-        const pct = run.total ? Math.round(run.done / run.total * 100) : 0;
-        el.appendChild(h('div.PZ2QoL_kbRunTitle', { text: `Moving ${Math.min(run.done + 1, run.total)} of ${run.total}` }));
+        // moved and skipped both count as handled
+        const handled = run.log.length;
+        const pct = run.total ? Math.round(handled / run.total * 100) : 0;
+        el.appendChild(h('div.PZ2QoL_kbRunTitle', { text: `Moving ${Math.min(handled + 1, run.total)} of ${run.total}` }));
         const last = run.log.length ? run.log[run.log.length - 1] : null;
         const between = !run.current || (last && last.text === run.current);
         el.appendChild(h('div.PZ2QoL_kbRunNow', { text: between ? (run.done ? 'Done one; a short pause before the next…' : 'Starting…') : run.current }));
         el.appendChild(h('div.PZ2QoL_kbProgress', null, h('div.PZ2QoL_kbProgressFill', { style: { width: `${pct}%` } })));
         el.appendChild(btn(run.stopping ? 'Stopping after this move…' : 'Stop', null, () => stopPlan(), { cls: run.stopping ? 'disabled.wide' : 'stop.wide' }));
-        msg.appendChild(h('div.PZ2QoL_kbRunNote', { text: 'One move at a time; each waits for the game to confirm it before the next.' }));
+        msg.appendChild(S.paceEl);
+        msg.appendChild(h('div.PZ2QoL_kbRunNote', { text: 'One move at a time; each waits for the game to confirm it before the next. A move the game refuses is skipped.' }));
         return finish();
     }
     const blocked = model ? planBlockedReason(model) : 'No kin data yet.';
@@ -1311,27 +1352,19 @@ function actionsEl(model) {
     el.appendChild(row);
     const exec = btn(`Execute plan (${S.plan.length} move${S.plan.length === 1 ? '' : 's'})`, null, execute, {
         cls: `primary.wide${!S.plan.length || blocked ? '.disabled' : ''}`,
-        title: 'Run the plan: one move at a time, each confirmed by the game; it stops at the first problem',
+        title: 'Run the plan: one move at a time, each confirmed by the game; a move the game refuses is skipped',
     });
     el.appendChild(exec);
+    // first in the scrolling area, right under Execute
+    msg.appendChild(S.paceEl);
     if (run.finished) {
         msg.appendChild(h(`div.PZ2QoL_kbRunResult.${run.error ? 'bad' : 'ok'}`, {
-            text: run.error ? `Last run stopped after ${run.done} of ${run.total}: ${run.error}` : `Last run: ${run.done} move${run.done === 1 ? '' : 's'} sent to the game.`,
+            text: run.error ? `Last run: ${run.done} of ${run.total} moved. ${run.error}` : `Last run: ${run.done} move${run.done === 1 ? '' : 's'} sent to the game.`,
         }));
     }
+    // Franchise runs like any zoo: the Execute click is the opt-in (2026-10-16)
     if (blocked && S.plan.length && model) {
-        const online = model.mode !== 'offline' && !getKinSettings().allowPlansOnline;
-        const head = model.mode === 'franchise' ? 'Franchise zoo: running a whole plan is off by default.' : 'Game mode not known: running a whole plan is off by default.';
-        msg.appendChild(h('div.PZ2QoL_kbBlocked', { text: online ? head + ' "Move now" still moves one animal per click.' : blocked, title: blocked }));
-        if (online) {
-            msg.appendChild(switchEl('Allow running plans in Franchise', false, () => setKinSettings({ allowPlansOnline: true }),
-                'Lets Execute run whole plans in a Franchise (online) zoo'));
-            msg.appendChild(h('div.PZ2QoL_kbWarn', { text: 'These are online actions: still one confirmed move at a time, stopping at the first problem.' }));
-        }
-    }
-    else if (model && model.mode !== 'offline' && getKinSettings().allowPlansOnline) {
-        msg.appendChild(switchEl('Allow running plans in Franchise', true, () => setKinSettings({ allowPlansOnline: false }),
-            'Turn off to allow single moves only'));
+        msg.appendChild(h('div.PZ2QoL_kbBlocked', { text: blocked, title: blocked }));
     }
     return finish();
 }
@@ -1390,31 +1423,192 @@ function closeProgramme() {
     renderAll();
 }
 
-// The optimiser's result for the current step (cached per step and model).
+// Recompute (Breeding programme, Thin out): the animals, the habitat checks
+// and the game's facts (room, group sizes, fertile ages) are read again and
+// the panel worked out afresh. The animals are re-read every few seconds
+// anyway; the game's facts are otherwise asked once, when the panel opens.
+// The player's choices in the panel stay.
+function recomputePanel() {
+    const p = S.prog || S.cull;
+    const model = getKinModel();
+    if (!p || !model || p.state === 'loading') return;
+    const isProg = p === S.prog;
+    const species = p.species;
+    p.state = 'loading';
+    if (isProg) {
+        // a search still running uses the old facts
+        if (p.job) p.job.cancelled = true;
+        p.job = null;
+        p.sig = null;
+        p.stale = null;
+    }
+    breadcrumb(isProg ? 'kin_board_programme_recompute' : 'kin_board_thin_out_recompute');
+    requestKinScan('board', { force: true });
+    renderAll();
+    const ids = [];
+    for (const a of model.animals.values()) if (a.species === species && !a.exhibit) ids.push(a.id);
+    const done = info => {
+        if ((isProg ? S.prog : S.cull) !== p) return;
+        p.info = info && typeof info === 'object' && !info.error ? info : null;
+        p.infoError = info && info.error ? String(info.error) : '';
+        p.state = 'ready';
+        p.results = new Map();
+        p.modelRef = null;
+        p.key = '';
+        notice(`${isProg ? 'Breeding programme' : 'Thin out'} recomputed with the zoo as it is now.`, 'ok');
+        queueRender();
+    };
+    requestDestinations(ids, { force: true }).then(d => {
+        if (d) S.dest = d;
+    }, () => {})
+        .then(() => requestSpeciesInfo(species, programmeHabitats(getKinModel() || model, species), { force: true }))
+        .then(done, e => {
+            reportError('mod', 'Species board: species facts failed', e, { silent: true });
+            done(null);
+        });
+}
+
+// The group make-up the player chose for a species ('auto': the game's).
+function ratioChoice(species) {
+    const all = getUserData(RATIO_STORE);
+    const v = all && typeof all === 'object' && !Array.isArray(all) ? all[species] : null;
+    return RATIO_CHOICES.includes(v) ? v : 'auto';
+}
+
+// Kept per zoo; replayed on top of the zoo's data if that is read later.
+function setRatioChoice(species, choice) {
+    updateUserData(RATIO_STORE, old => {
+        const all = Object.assign({}, old && typeof old === 'object' && !Array.isArray(old) ? old : {});
+        if (choice === 'auto') delete all[species];
+        else all[species] = choice;
+        return Object.keys(all).length ? all : undefined;
+    });
+}
+
+function cycleRatio(dir) {
+    const p = S.prog;
+    if (!p) return;
+    const i = RATIO_CHOICES.indexOf(ratioChoice(p.species));
+    const next = RATIO_CHOICES[(i + dir + RATIO_CHOICES.length) % RATIO_CHOICES.length];
+    setRatioChoice(p.species, next);
+    breadcrumb('kin_board_programme_ratio');
+    renderAll();
+}
+
+const ratioPart = v => (v === Infinity ? 'any' : String(v));
+
+// '1♂ : 3♀', '1♂ : any ♀', 'mixed'
+function makeupShort(rule) {
+    return ratioKey(rule) === 'mixed' ? 'mixed' : `${ratioPart(rule.m)}♂ : ${ratioPart(rule.f)}♀`;
+}
+
+// The make-up in words, for the panel's subtitle.
+function makeupWords(rule) {
+    const key = ratioKey(rule);
+    let w;
+    if (key === 'mixed') w = rule.source === 'none' ? 'Unknown: mixed groups' : 'Mixed groups';
+    else if (key === '1:*') w = 'Harem: one breeding male per habitat';
+    else if (key === '*:1') w = 'One breeding female per habitat';
+    else if (key === '1:1') w = 'Pairs: one partner each';
+    else w = `Groups of ${ratioPart(rule.m)} ♂ to ${ratioPart(rule.f)} ♀`;
+    const caps = [rule.maxMales != null ? `${rule.maxMales} ♂` : '', rule.maxFemales != null ? `${rule.maxFemales} ♀` : ''].filter(Boolean);
+    return caps.length ? `${w}, at most ${caps.join(' and ')} per habitat` : w;
+}
+
+function programmeKey(p) {
+    return `${p.step}|${p.useTrade !== false}|${ratioChoice(p.species)}`;
+}
+
+// What the programme depends on in the zoo: the species' animals (where they
+// are, whether they breed or move, their mates) and its habitat assignments.
+// A scan that changes nothing of it (another species, ages creeping up)
+// keeps the plan, so a big species is not searched again and again.
+function programmeSig(model, species) {
+    const rows = [];
+    for (const a of model.animals.values()) {
+        if (a.species !== species || a.exhibit) continue;
+        rows.push([a.id, a.hab || '', a.lt || '', a.moving ? 1 : 0, a.sex, a.juv ? 1 : 0, a.contra ? 1 : 0, a.infertile ? 1 : 0,
+            a.alive === false ? 0 : 1, (a.fert && a.fert.state) || '', (a.mates || []).join('+'), (a.par || []).join('+')].join(','));
+    }
+    rows.sort();
+    const assigned = [];
+    for (const [hab, set] of getAssignments(model)) if (set && set.has(species)) assigned.push(String(hab));
+    return rows.join(';') + '|' + assigned.sort().join(',');
+}
+
+// The optimiser's result for the current choices, cached per choices and
+// model. It is worked out in slices in the background (the page stays
+// responsive); meanwhile the last result for the same choices is shown, or
+// nothing (the panel shows the progress).
 function programmeResult() {
     const p = S.prog;
     const model = getKinModel();
     if (!p || !model || p.state !== 'ready') return null;
     if (p.modelRef !== model) {
         p.modelRef = model;
-        p.results = new Map();
+        const sig = programmeSig(model, p.species);
+        if (sig !== p.sig) {
+            p.sig = sig;
+            p.results = new Map();
+        }
     }
-    const key = `${p.step}|${p.useTrade !== false}`;
-    if (p.results.has(key)) return p.results.get(key);
-    let r = null;
-    try {
-        r = planProgramme(model, p.species, p.info || {}, destFor(model), {
-            assignments: getAssignments(model),
-            options: { moveCost: PROG_STEPS[p.step].cost, useTradeCentre: p.useTrade !== false },
-        });
+    const key = programmeKey(p);
+    if (p.results.has(key)) {
+        // a search for another setting is no longer wanted
+        if (p.job && p.job.key !== key) {
+            p.job.cancelled = true;
+            p.job = null;
+        }
+        return p.results.get(key);
+    }
+    startProgramme(p, model, key);
+    return p.stale && p.stale.key === key ? p.stale.r : null;
+}
+
+// Is the optimiser working on the panel's current setting?
+function programmeBusy(p) {
+    return !!(p && p.job && p.job.key === programmeKey(p));
+}
+
+function startProgramme(p, model, key) {
+    if (p.job && p.job.key === key && p.job.sig === p.sig) return;
+    if (p.job) p.job.cancelled = true;
+    const job = { key, sig: p.sig, progress: 0, cancelled: false };
+    p.job = job;
+    const live = () => !job.cancelled && S.prog === p;
+    breadcrumb('kin_board_programme_search');
+    planProgrammeAsync(model, p.species, p.info || {}, destFor(model), {
+        assignments: getAssignments(model),
+        options: Object.assign({ moveCost: PROG_STEPS[p.step].cost, useTradeCentre: p.useTrade !== false, ratio: ratioChoice(p.species) }, PROG_SEARCH),
+        onProgress: v => {
+            job.progress = v;
+            if (live()) renderProgrammeProgress(v);
+        },
+        isCancelled: () => !live(),
+    }).then(r => {
+        if (!live()) return;
+        p.job = null;
         p.error = null;
-    }
-    catch (e) {
+        if (p.sig === job.sig) p.results.set(key, r);
+        p.stale = { key, r };
+        queueRender();
+    }, e => {
+        if (!live()) return;
+        p.job = null;
         p.error = e;
+        if (p.sig === job.sig) p.results.set(key, null);
         reportError('ui', 'Species board: the breeding programme failed', e);
-    }
-    p.results.set(key, r);
-    return r;
+        queueRender();
+    });
+}
+
+// Only the progress bar and its text, between full renders.
+function renderProgrammeProgress(v) {
+    const root = S.root;
+    if (!root) return;
+    const pct = `${Math.round(Math.max(0, Math.min(1, v)) * 100)}%`;
+    for (const n of root.querySelectorAll('.PZ2QoL_kbProgBusyFill')) n.style.width = pct;
+    for (const n of root.querySelectorAll('.PZ2QoL_kbProgBusyPct')) setText(n, pct);
 }
 
 function placeOfHab(model, hab) {
@@ -1446,7 +1640,7 @@ function programmeReasonIn(model, a, to, groups, info) {
 function useProgramme() {
     const model = getKinModel();
     const r = programmeResult();
-    if (!model || !r) return;
+    if (!model || !r || programmeBusy(S.prog)) return;
     let plan = [];
     S.reasons.clear();
     for (const m of r.moves) {
@@ -1475,7 +1669,7 @@ function programmeWarnings(model, p, r) {
         return out;
     }
     if (!Array.isArray(info.conception) || !info.conception.length) out.push('No conception table from the game: the chance of young is estimated from the fertility genes.');
-    if (!info.mating) out.push('The mating system is not known: mixed groups are assumed.');
+    if (r && r.rule && r.rule.source === 'none') out.push(noMakeupText(info));
     if (r) {
         const hs = info.habitats || {};
         const noSpace = r.habitats.filter(hb => !(hs[hb] && hs[hb].available));
@@ -1485,6 +1679,14 @@ function programmeWarnings(model, p, r) {
         if (busy.length) out.push(`The game is still measuring ${busy.map(hb => placeOfHab(model, hb)).join(', ')}: its space may change.`);
     }
     return out;
+}
+
+// Why there is no make-up, with what the game did give (a solitary species
+// has only one-sex groups; an unread mating rule is shown as it came).
+// Only for source 'none': a mating rule the mod read (Polygyandry included)
+// is a make-up of its own. Text: kinprogramme.js unknownMakeupText (tested).
+function noMakeupText(info) {
+    return unknownMakeupText(info || {});
 }
 
 function statTile(key, label, before, after, better, fmt = v => String(v)) {
@@ -1502,30 +1704,34 @@ function statTile(key, label, before, after, better, fmt = v => String(v)) {
 function programmeEl(model) {
     const p = S.prog;
     const name = speciesName(p.species);
-    const wrap = h(`div.PZ2QoL_kbProg.state_${p.state}`);
     const cancel = btn('Cancel', null, closeProgramme, { title: 'Back to the board (Esc)' });
     if (p.state === 'loading') {
+        const wrap = h(`div.PZ2QoL_kbProg.state_${p.state}`);
         wrap.appendChild(h('div.PZ2QoL_kpEmpty', null,
             h('div.PZ2QoL_kpEmptyIcon.wait'),
             h('div.PZ2QoL_kpEmptyTitle', { text: 'Asking the game…' }),
-            h('div.PZ2QoL_kpEmptyText', { text: `${name}: group size, mating system, fertility ages, the chance of young and the space in each habitat.` }),
+            h('div.PZ2QoL_kpEmptyText', { text: `${name}: group size, mating system, group make-up, fertility ages, the chance of young and the space in each habitat.` }),
             h('div.PZ2QoL_kpEmptyActions', null, cancel)));
         return wrap;
     }
     const r = programmeResult();
-    if (!r) {
+    const busy = programmeBusy(p);
+    const wrap = h(`div.PZ2QoL_kbProg.state_${p.state}${busy ? '.busy' : ''}`);
+    if (!r && !busy) {
         wrap.appendChild(h('div.PZ2QoL_kpEmpty', null,
             h('div.PZ2QoL_kpEmptyTitle', { text: 'No programme' }),
             h('div.PZ2QoL_kpEmptyText', { text: p.error ? 'The optimiser failed for this species. The board is unchanged.' : `${name} has no animals that can breed and move.` }),
             h('div.PZ2QoL_kpEmptyActions', null, cancel)));
         return wrap;
     }
-    const system = r.system === 'mixed' && !(p.info && p.info.mating) ? 'Unknown: mixed groups' : (SYSTEM_WORDS[r.system] || SYSTEM_WORDS.mixed);
-    const toTrade = r.moves.filter(m => m.to === TRADE).length;
-    const fromTrade = r.fromTrade || 0;
+    const choice = ratioChoice(p.species);
+    const rule = r && r.rule ? r.rule : groupRule(p.info || {}, choice);
+    const nMoves = r ? r.moves.length : 0;
+    const toTrade = r ? r.moves.filter(m => m.to === TRADE).length : 0;
+    const fromTrade = r ? r.fromTrade || 0 : 0;
     const tradeBits = [fromTrade ? `${fromTrade} from the trade centre` : '', toTrade ? `${toTrade} to the trade centre` : ''].filter(Boolean).join(', ');
     // breeders waiting at the trade centre: use them or not
-    const tradeToggle = r.tradeWaiting > 0 ? h(`div.PZ2QoL_kbTradeUse${p.useTrade !== false ? '.on' : ''}`, {
+    const tradeToggle = r && r.tradeWaiting > 0 ? h(`div.PZ2QoL_kbTradeUse${p.useTrade !== false ? '.on' : ''}`, {
         'data-waiting': String(r.tradeWaiting),
         title: p.useTrade !== false
             ? `${r.tradeWaiting} breeder${r.tradeWaiting === 1 ? '' : 's'} of this species wait at the trade centre; the programme may bring them into a group. Click to leave them there.`
@@ -1535,6 +1741,21 @@ function programmeEl(model) {
             renderAll();
         }),
     }, h('span', { text: `${p.useTrade !== false ? '☑' : '☐'} Use the trade centre (${r.tradeWaiting} waiting)` })) : null;
+    // the group make-up: the game's (auto) or the player's choice
+    const auto = choice === 'auto';
+    const makeup = h(`div.PZ2QoL_kbRatio${auto ? '' : '.mine'}`, {
+        'data-ratio': choice,
+        'data-rule': ratioKey(rule),
+        'data-source': rule.source,
+        title: `Group make-up: how many females one breeding male breeds with (or the reverse). ${auto ? `Auto: from ${RATIO_SOURCE_WORDS[rule.source] || 'the game'}.` : 'Your choice for this species, kept for this zoo.'} `
+            + 'The arrows step through: auto, pairs (1:1), one male with 2 to 5 females, one male with any number (harem), 2 or 3 males with one female, any males with one female, mixed groups. '
+            + 'The programme fills each habitat towards this make-up from the trade centre and from other habitats, and moves the surplus on.',
+    },
+        h('div.PZ2QoL_kbRatioArrow.prev', { title: 'Previous make-up', onClick: guard('Programme make-up', () => cycleRatio(-1)) }, h('span', { text: '‹' })),
+        h('div.PZ2QoL_kbRatioText', null,
+            h('span.PZ2QoL_kbRatioLabel', { text: auto ? 'Make-up (auto)' : 'Make-up' }),
+            h('span.PZ2QoL_kbRatioValue', { text: makeupShort(rule) })),
+        h('div.PZ2QoL_kbRatioArrow.next', { title: 'Next make-up', onClick: guard('Programme make-up', () => cycleRatio(1)) }, h('span', { text: '›' })));
     // head: title, the slider, the buttons
     const steps = h('div.PZ2QoL_kbSteps', null,
         h('span.PZ2QoL_kbStepEnd', { text: 'Fewer moves' }),
@@ -1547,19 +1768,30 @@ function programmeEl(model) {
             }),
         }, h('div.PZ2QoL_kbStepDot'))),
         h('span.PZ2QoL_kbStepEnd', { text: 'Best genetics' }));
+    const subText = busy && !r ? `${makeupWords(rule)} · optimising…` : `${makeupWords(rule)} · ${nMoves} move${nMoves === 1 ? '' : 's'}${tradeBits ? ` (${tradeBits})` : ''}`;
     wrap.appendChild(h('div.PZ2QoL_kbProgHead', null,
         h('div.PZ2QoL_kbProgTitles', null,
             h('div.PZ2QoL_kbProgTitle', { text: `Breeding programme · ${trunc(name, 24)}` }),
-            h('div.PZ2QoL_kbProgSub', { text: `${system} · ${r.moves.length} move${r.moves.length === 1 ? '' : 's'}${tradeBits ? ` (${tradeBits})` : ''}` })),
+            h('div.PZ2QoL_kbProgSub', { text: subText, title: subText })),
         h('div.PZ2QoL_kpFlex'),
+        makeup,
         tradeToggle,
         steps,
-        btn(`Use this plan (${r.moves.length})`, null, useProgramme, { cls: `primary${r.moves.length ? '' : '.disabled'}`, title: 'Put these moves in the plan (it replaces the current plan)' }),
+        recomputeBtn(),
+        btn(`Use this plan (${nMoves})`, null, useProgramme, { cls: `primary${nMoves && !busy ? '' : '.disabled'}`, title: busy ? 'The optimiser is still working' : 'Put these moves in the plan (it replaces the current plan)' }),
         cancel));
+    if (busy) {
+        const pct = `${Math.round(Math.max(0, Math.min(1, p.job.progress || 0)) * 100)}%`;
+        wrap.appendChild(h('div.PZ2QoL_kbProgBusy', { title: 'The optimiser tries many layouts: every one for a few breeders, a guided search for more. The game keeps running meanwhile.' },
+            h('span.PZ2QoL_kbProgBusyText', { text: r ? 'Optimising again with the zoo as it is now…' : 'Optimising the groups…' }),
+            h('div.PZ2QoL_kbProgBusyBar', null, h('div.PZ2QoL_kbProgBusyFill', { style: { width: pct } })),
+            h('span.PZ2QoL_kbProgBusyPct', { text: pct })));
+    }
+    if (!r) return wrap;
     for (const w of programmeWarnings(model, p, r)) wrap.appendChild(h('div.PZ2QoL_kbProgWarn', { text: w }));
     // the numbers, before -> after
     const b = r.before, a = r.after;
-    wrap.appendChild(h('div.PZ2QoL_kbStats', { 'data-moves': String(r.moves.length), 'data-system': r.system },
+    wrap.appendChild(h('div.PZ2QoL_kbStats', { 'data-moves': String(r.moves.length), 'data-system': r.system, 'data-rule': ratioKey(rule), 'data-exact': r.exact ? '1' : '0' },
         statTile('pairs', 'Breeding pairs', b.breedingPairs, a.breedingPairs, 'up'),
         statTile('related', 'Related pairs together', b.relatedPairs, a.relatedPairs, 'down'),
         statTile('quality', 'Expected young', b.youngQuality, a.youngQuality, 'up'),
@@ -1586,7 +1818,7 @@ function groupEl(model, hab, g, r, moved) {
     const animals = g ? g.animals : [];
     const trade = hab === TRADE;
     const cap = r.capacity[hab];
-    const staying = g ? g.staying : 0;
+    const staying = g ? g.staying : (r.staying && r.staying[hab]) || 0;
     const adults = animals.length + staying;
     const over = !trade && cap != null && adults > cap;
     const node = h(`div.PZ2QoL_kbGroup${trade ? '.trade' : ''}${over ? '.over' : ''}${animals.length ? '' : '.none'}`, { 'data-hab': hab });
@@ -1597,6 +1829,19 @@ function groupEl(model, hab, g, r, moved) {
         text: trade ? 'Leftovers: no place in a breeding group'
             : `${adults} adult${adults === 1 ? '' : 's'}${cap != null ? ` · room for ${cap}` : ''}${over ? ' · over' : ''}`,
     }));
+    // the make-up this habitat's room asks for, and the places still open
+    const target = !trade && r.targets ? r.targets[hab] : null;
+    if (target) {
+        const males = animals.filter(a => a.sex === Sex.Male).length, females = animals.filter(a => a.sex === Sex.Female).length;
+        const open = Math.max(0, target.males - males) + Math.max(0, target.females - females);
+        node.appendChild(h(`div.PZ2QoL_kbGroupTarget${open ? '.open' : ''}`, {
+            'data-open': String(open),
+            text: `Make-up ${target.males} ♂ ${target.females} ♀ · ${open ? `${open} open` : 'full'}`,
+            title: open
+                ? `With its room this habitat could hold ${target.males} breeding ♂ and ${target.females} breeding ♀ under the make-up; ${open} place${open === 1 ? ' is' : 's are'} still open after this plan (no unrelated breeder of that sex was spare, or moving one was not worth it).`
+                : `Its breeders fill the make-up for its room (${target.males} ♂, ${target.females} ♀).`,
+        }));
+    }
     const line = a => {
         const from = model.animals.get(a.id);
         const home = from ? homeOf(from) : '';
@@ -1659,7 +1904,7 @@ function openCull() {
     if (S.cull && S.cull.species === S.species) return closeCull();
     S.prog = null;
     const species = S.species;
-    S.cull = { species, state: 'loading', info: null, infoError: '', fill: 'balanced', oldAlways: false, keepIds: new Set(), cullIds: new Set(), result: null, key: '' };
+    S.cull = Object.assign({ species, state: 'loading', info: null, infoError: '', keepIds: new Set(), cullIds: new Set(), result: null, key: '' }, cullPrefs);
     closeMenu();
     S.selected.clear();
     S.scroll.cull = 0;
@@ -1686,6 +1931,10 @@ function openCull() {
     });
 }
 
+function recomputeBtn() {
+    return btn('Recompute', 'Icon_CircleWithArrows', recomputePanel, { title: 'Read the animals, the habitat checks and the game\'s room and group sizes again, and work this out afresh' });
+}
+
 function closeCull() {
     S.cull = null;
     renderAll();
@@ -1701,12 +1950,13 @@ function cullResult() {
     const c = S.cull;
     const model = getKinModel();
     if (!c || !model || c.state !== 'ready') return null;
-    const key = [c.fill, c.oldAlways, Array.from(c.keepIds).sort().join(','), Array.from(c.cullIds).sort().join(',')].join('|');
+    const ratio = ratioChoice(c.species);
+    const key = [c.fill, c.oldAlways, c.genes, c.zeroFertility, c.young, ratio, Array.from(c.keepIds).sort().join(','), Array.from(c.cullIds).sort().join(',')].join('|');
     if (c.modelRef === model && c.key === key) return c.result;
     let r = null;
     try {
         r = cullPlan(model, c.species, c.info || {}, {
-            options: { fill: cullFill(c), oldAlways: c.oldAlways, keepIds: c.keepIds, cullIds: c.cullIds },
+            options: { fill: cullFill(c), oldAlways: c.oldAlways, genes: c.genes, zeroFertility: c.zeroFertility, young: c.young, keepIds: c.keepIds, cullIds: c.cullIds, ratio },
         });
         c.error = null;
         if (r) {
@@ -1789,18 +2039,29 @@ function cullEl(model) {
         return wrap;
     }
     const n = r.moves.length;
+    const choose = (k, v) => {
+        c[k] = v;
+        cullPrefs[k] = v;
+        renderAll();
+    };
     const fill = h('div.PZ2QoL_kbSeg', null, FILL_STEPS.map(st => h(`div.PZ2QoL_kbSegItem${st.id === c.fill ? '.on' : ''}`, {
         'data-fill': st.id,
-        title: `Keep up to ${Math.round(st.fill * 100)}% of each habitat's room${st.fill < 1 ? ' (the rest is room for young)' : ''}`,
-        onClick: guard('Fill', () => {
-            c.fill = st.id;
-            renderAll();
-        }),
+        title: st.fill ? `Keep up to ${Math.round(st.fill * 100)}% of each habitat's room${st.fill < 1 ? ' (the rest is room for young)' : ''}` : 'Keep only the breeding core of each habitat (1 male, 2 females)',
+        onClick: guard('Fill', () => choose('fill', st.id)),
     }, h('span', { text: st.label }))));
-    const old = switchEl('Also send too-old animals from habitats that are not full', c.oldAlways, () => {
-        c.oldAlways = !c.oldAlways;
-        renderAll();
-    }, 'Animals past breeding age leave even where there is room');
+    const genes = h('div.PZ2QoL_kbSeg.genes', null, GENE_STEPS.map(st => h(`div.PZ2QoL_kbSegItem${st.id === c.genes ? '.on' : ''}`, {
+        'data-genes': st.id,
+        title: st.id === 'off' ? st.tip : `${st.tip}: sent away from every habitat, full or not`,
+        onClick: guard('Poor genes', () => choose('genes', st.id)),
+    }, h('span', { text: st.label }))));
+    const sw = (k, label, title) => {
+        const el = switchEl(label, c[k], () => choose(k, !c[k]), title);
+        el.setAttribute('data-opt', k);
+        return el;
+    };
+    const zero = sw('zeroFertility', '0% fertility genes', 'Animals with a 0% fertility gene leave from every habitat, full or not (they pass it on to their young)');
+    const old = sw('oldAlways', 'Too old or infertile', 'Animals past breeding age or infertile leave even where there is room');
+    const young = sw('young', 'Young too', 'The gene rules also pick young animals (they carry the same genes)');
     const words = { polygyny: 'harem', polyandry: 'one breeding female per habitat', monogamy: 'pairs', mixed: 'mixed groups' };
     wrap.appendChild(h('div.PZ2QoL_kbProgHead', null,
         h('div.PZ2QoL_kbProgTitles', null,
@@ -1808,10 +2069,15 @@ function cullEl(model) {
             h('div.PZ2QoL_kbProgSub', { text: `${n} to the trade centre${r.atTrade ? ` · ${r.atTrade} already there` : ''} · ${words[r.system] || 'mixed groups'}` })),
         h('div.PZ2QoL_kpFlex'),
         fill,
+        recomputeBtn(),
         btn(`Send ${n} to the trade centre`, null, useCull, { cls: `primary${n ? '' : '.disabled'}`, title: 'Put these moves in the plan; Execute (or Move now) on the board sends them, one at a time' }),
         cancel));
-    wrap.appendChild(h('div.PZ2QoL_kbCullBar', null, old, h('div.PZ2QoL_kpFlex'),
+    wrap.appendChild(h('div.PZ2QoL_kbCullBar', null,
+        h('div.PZ2QoL_kbCullLabel', { text: 'Poor genes' }), genes, zero, old, young, h('div.PZ2QoL_kpFlex'),
         h('div.PZ2QoL_kbCullHint', { text: 'From the trade centre you can sell them (Animal Storage, Market lister), trade or release them.' })));
+    if (r.poorKept) {
+        wrap.appendChild(h('div.PZ2QoL_kbCullNote', { text: `${r.poorKept} with poor genes stay${r.poorKept === 1 ? 's' : ''}: pregnant, on the move, kept by you, or the last breeder of its sex. Run Thin out again later.` }));
+    }
     if (r.estimated) {
         wrap.appendChild(h('div.PZ2QoL_kbProgWarn', { text: `The game gave no room for these habitats: Thin out keeps ${Math.round(cullFill(c) * 100)}% of the current adults.` }));
     }
@@ -1825,6 +2091,7 @@ function cullEl(model) {
         statTile('adults', 'Adults', b.adults, a.adults, 'down'),
         statTile('gene', 'Average genes', b.gene, a.gene, 'up'),
         statTile('old', 'Too old to breed', b.old, a.old, 'down'),
+        statTile('zeroFert', '0% fertility genes', b.zeroFert, a.zeroFert, 'down'),
         h('div.PZ2QoL_kbStat.moves.wide', { 'data-key': 'moves' },
             h('div.PZ2QoL_kbStatLabel', { text: 'To the trade centre' }),
             h('div.PZ2QoL_kbStatValue', null, h('span.PZ2QoL_kbStatAfter', { text: String(n) }),
@@ -1849,7 +2116,7 @@ function cullRow(model, entry, leaving) {
         'data-id': a.id,
         'data-state': leaving ? 'cull' : 'keep',
         'data-why': leaving ? entry.reason : (entry.why || ''),
-        title: leaving ? `${a.name} leaves: ${entry.reason}. Click to keep it.` : `${a.name} stays${entry.why ? ` (${entry.why})` : ''}. Click to send it to the trade centre.`,
+        title: leaving ? `${a.name} leaves: ${entry.reason}. Click to keep it.` : `${a.name} stays${entry.why ? ` (${entry.why})` : ''}${entry.poor ? `, despite ${entry.poor}` : ''}. Click to send it to the trade centre.`,
         onClick: guard('Thin out', () => toggleCull(a.id, leaving)),
     },
     h('div.PZ2QoL_kbCullTop', null,
@@ -2059,7 +2326,7 @@ export function openSpeciesBoard(opts = {}) {
         const wasOpen = S.open;
         S.open = true;
         setClass(S.root, 'hidden', false);
-        placePanel(S.root);
+        placePanel(S.root, BOARD_SIZE);
         if (!wasOpen) subscribe();
         breadcrumb('kin_board_open');
         requestKinScan('board');
@@ -2119,7 +2386,7 @@ export function installSpeciesBoard() {
     }, true);
     window.addEventListener('resize', () => {
         if (!S.open) return;
-        placePanel(S.root);
+        placePanel(S.root, BOARD_SIZE);
         setTimeout(() => {
             fitColumns();
             refreshBars(S.boxes);

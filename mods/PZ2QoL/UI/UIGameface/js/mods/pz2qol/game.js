@@ -56,6 +56,8 @@ export function readAnimal(context) {
         name: get(context, 'name'),
         // genetics medal of the Rating column: 'none'|'bronze'|'silver'|'gold'
         medal: get(context, 'ratings'),
+        // the Appeal column, a formatted string; parse with appealOf() (pricing.js)
+        appeal: get(context, 'appeal'),
         key: childKey(context),
         genes: {
             size: gene(context, 'size'),

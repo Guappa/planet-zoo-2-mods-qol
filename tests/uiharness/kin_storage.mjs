@@ -36,6 +36,7 @@ export async function seedStorageKin(page) {
             DS.setValue(ctx, 'gender', f.sex);
             DS.setValue(ctx, 'maturity', f.juv ? 0 : 2);
             DS.setValue(ctx, 'isPregnant', false);
+            DS.setValue(ctx, 'isShoal', false); // Kin leaves shoals out
             DS.setValue(ctx, 'auctionTimerSeconds', -1);
             const id = String(DS.getValue(ctx, 'id'));
             out.push({ key: ctx[ctx.length - 1], id, name: f.name, guid: 's' + i });

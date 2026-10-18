@@ -72,13 +72,14 @@ export function speciesName(s) {
     return t || 'Unknown species';
 }
 
-// Places a big panel: min(96rem, 92vw) wide, 84% of the view high, centred.
-export function placePanel(root) {
+// Places a big panel: min(96rem, 92vw) wide (or as given), 84% of the view
+// high, centred.
+export function placePanel(root, { maxRem = 96, maxVw = 0.92 } = {}) {
     if (!root) return;
     const vw = window.innerWidth || 1920;
     const vh = window.innerHeight || 1080;
     const rem = remPx();
-    const w = Math.round(Math.min(96 * rem, vw * 0.92));
+    const w = Math.round(Math.min(maxRem * rem, vw * maxVw));
     const ht = Math.round(Math.min(vh * 0.84, vh - 2 * rem));
     root.style.width = `${w}px`;
     root.style.height = `${ht}px`;
@@ -89,9 +90,15 @@ export function placePanel(root) {
 // ----------------------------------------------------------------- widgets
 
 export function btn(guard, label, iconName, onClick, { cls = '', title = '', tint = 'brown' } = {}) {
-    return h(`div.PZ2QoL_kpBtn${cls ? '.' + cls : ''}`, { title: title || undefined, onClick: guard(label, onClick) },
+    const run = guard(label, onClick);
+    const node = h(`div.PZ2QoL_kpBtn${cls ? '.' + cls : ''}`, {
+        title: title || undefined,
+        // a greyed-out button does nothing (it is still in the DOM)
+        onClick: (...args) => (node.classList.contains('disabled') ? undefined : run(...args)),
+    },
         iconName ? icon(iconName, tint, 'sm') : null,
         h('span', { text: label }));
+    return node;
 }
 
 export function switchEl(guard, label, on, onClick, title) {

@@ -548,12 +548,15 @@ local tParkAnimals = {
 	[4] = { sName = "Bo \"Big\"", sSpecies = "Lion", nGender = 1, nAgeGroup = 0, bAlive = true, sLocation = "Savannah Habitat", bIsUsingContraceptive = true, bIsInfertile = true },
 	[5] = { sName = "Away", sSpecies = "Lion", nGender = 1, nAgeGroup = 1, bAlive = true, sLocation = nil },
 	[6] = { sName = "Gone", sSpecies = "Lion", nGender = 1, nAgeGroup = 1, bAlive = false },
+	-- bought, waiting at the trade centre: only in the trade-centre list
+	[7] = { sName = "Newbie", sSpecies = "Lion", nGender = 1, nAgeGroup = 1, bAlive = true, sLocation = "Trade Centre", nLocationType = 5 },
 }
-local tGuids = { [1] = 1001, [2] = 1002, [3] = 1003, [4] = 1004, [5] = 1005, [6] = 1006 }
+local tGuids = { [1] = 1001, [2] = 1002, [3] = 1003, [4] = 1004, [5] = 1005, [6] = 1006, [7] = 1007 }
 local tParentsOf = { [1001] = {}, [1002] = { 1001, 2000 }, [1003] = { 1001, 2000 }, [1004] = { "", 1001 }, [1005] = {}, [2000] = { 3000, 2001 }, [3000] = {} }
 local nParentCalls = 0
 local animalsAPI = {
 	Juvenile = 0,
+	CurrentLocationType_TradeCentre = 5,
 	EntityIDToAnimalGUID = function(self, e) return tGuids[e] or 0 end,
 	GetParents = function(self, g)
 		nParentCalls = nParentCalls + 1
@@ -594,11 +597,16 @@ local tParkAPIs = {
 	habitat = {
 		GetHabitats = function(self) return { 101, 102 } end,
 		IsHabitat = function(self, h) return true end,
+		GetHabitatIDFromEntityID = function(self, h) return h - 100 end,
 		GetAnimalsInHabitat = function(self, h) if h == 101 then return { 1, 2, 3, 4, 6 } end return {} end,
 	},
 	animalsDataHelpers = {
 		AnimalListType_Habitat = 1,
-		GetAllAnimalEntities = function(self, n) return { 1, 2, 3, 4, 5, 6, 99 } end,
+		AnimalListType_HabitatInTradeCenterWithEntities = 2,
+		GetAllAnimalEntities = function(self, n)
+			if n == 2 then return { 7 } end
+			return { 1, 2, 3, 4, 5, 6, 99 }
+		end,
 	},
 	CameraModeManager = { RequestMode = function(self, s, t) record("Camera", s, t.targetEntityID, t.bLocate) end },
 	transform = { HasTransform = function(self, e) return e ~= 5 end },
@@ -684,6 +692,7 @@ if tSnap then
 	check(byId["4"] and byId["4"].juv == true and byId["4"].contra == true, "juvenile and contraception flags")
 	check(byId["2"] and byId["2"].hab == "101" and byId["5"] and byId["5"].hab == "", "habitat membership; outside animals kept for lineage")
 	check(byId["6"] == nil, "dead animals left out")
+	check(byId["7"] and byId["7"].lt == "trade" and byId["7"].hab == "", "animals waiting at the trade centre are in the snapshot, marked trade")
 	check(byId["2"] and byId["2"].mates and byId["2"].mates[1] == "3", "current mates")
 	check(byId["2"] and byId["2"].genes and byId["2"].genes.F == "AAAAAABBBBBB", "alleles as strings")
 	check(byId["3"] and byId["3"].name == "Zo\195\171", "non-ASCII names survive")
@@ -696,6 +705,11 @@ if tSnap then
 	local tHabNames = {}
 	for _, h in ipairs(tSnap.habitats) do tHabNames[h.id] = h.name end
 	check(tHabNames["101"] == "Savannah Habitat" and tHabNames["xe:900"] == "Reptile House", "habitat names from the animals' locations")
+	-- every habitat, the empty one too, with the game's habitat id: entity ids
+	-- change when the zoo loads, so the page matches saved assignments by these
+	local tHabs = {}
+	for _, h in ipairs(tSnap.habs or {}) do tHabs[h.id] = h end
+	check(tHabs["101"] and tHabs["101"].hid == "1" and tHabs["102"] and tHabs["102"].hid == "2", "every habitat with its habitat id (" .. #(tSnap.habs or {}) .. ")")
 end
 -- unchanged: no resend
 tCalls = {}
@@ -712,7 +726,7 @@ scan(oHUD, "chunks")
 local tSmall = kinChunks(oHUD)
 check(#tSmall > 3 and tSmall[1][4] == #tSmall, "split into " .. #tSmall .. " chunks")
 local tSnap2 = snapshotFrom(tSmall)
-check(tSnap2 and #tSnap2.animals == 7, "chunks reassemble")
+check(tSnap2 and #tSnap2.animals == 8, "chunks reassemble")
 Kin.nChunkSize = 12000
 
 Kin.nPerFrame = 2
@@ -730,6 +744,73 @@ end
 check(nFrames >= 3 and nFrames < 10, "spread over frames (" .. nFrames .. ")")
 check(#kinChunks(oHUD) >= 1, "sent when done")
 Kin.nPerFrame = 40
+
+do
+-- pair bonds: the game's monogamy check for each bonded adult against the
+-- other adults of its species in its habitat (docs/PLAN-pair-bonds.md)
+check(tSnap and tSnap.bondsOk == false, "no GetMatingMonogamyIcon: bondsOk false")
+local fnMateData = animalsAPI.GetMateData
+animalsAPI.GetMateData = function(self, e)
+	if e == 1 then return { bIsBeta = false, bIsMonogamous = true, tMateData = {} } end
+	if e == 2 then return { bIsBeta = false, bIsMonogamous = true, tMateData = { { nID = 3, sName = "Zoe" } } } end
+	if e == 3 then return { bIsBeta = false, bIsMonogamous = true, tMateData = { { nID = 2, sName = "Kito" } } } end
+	return nil
+end
+animalsAPI.GetMatingMonogamyIcon = function(self, e, nOther, nType)
+	record("MonoIcon", e, nOther, nType)
+	if (e == 2 and nOther == 3) or (e == 3 and nOther == 2) then return "ring" end
+	if e == 2 or e == 3 then return "IconLock" end
+	return ""
+end
+animalsAPI.GetCurrentMournTimeForUI = function(self, e) return "", 0 end
+animalsAPI.GetAssignedHabitatEntityID = function(self, e) if e == 1 or e == 2 or e == 3 then return 101 end return nil end
+animalsAPI.IsInDeathState = function(self, e) return false end
+local function bondScan(sReason)
+	tCalls = {}
+	scan(oHUD, sReason)
+	local t = snapshotFrom(kinChunks(oHUD))
+	local by = {}
+	for _, a in ipairs(t and t.animals or {}) do by[a.id] = a end
+	return t, by
+end
+local tB, byB = bondScan("bonds")
+check(tB and tB.bondsOk == true, "bond pass answered: bondsOk")
+check(byB["2"] and byB["2"].bond and byB["2"].bond.mate == "3" and byB["2"].bond.ring == true, "bonded mate and the game's ring")
+check(byB["2"] and byB["2"].bond and byB["2"].bond.here == true, "mate assigned to the same habitat and alive: here")
+check(byB["3"] and byB["3"].bond and #byB["3"].bond.lock == 1 and byB["3"].bond.lock[1] == "1", "locked against the other male, not its mate (" .. tostring(byB["3"] and byB["3"].bond and #byB["3"].bond.lock) .. ")")
+check(byB["2"] and byB["2"].bond and #byB["2"].bond.lock == 0, "the juvenile and the mate are not checked")
+check(byB["1"] and byB["1"].bond == nil and byB["4"] and byB["4"].bond == nil, "no mate or juvenile: no bond")
+check(byB["2"] and byB["2"].mates and byB["2"].mates[1] == "3", "mates unchanged")
+local bTypes, bSelf = true, true
+for _, c in ipairs(calls("MonoIcon")) do
+	if c.tArgs[3] ~= 0 then bTypes = false end
+	if c.tArgs[1] ~= 2 and c.tArgs[1] ~= 3 then bSelf = false end
+end
+check(#calls("MonoIcon") == 3 and bTypes and bSelf, "only bonded adults asked (2 ring checks, Zoe vs Ama), with entity id type 0 (" .. #calls("MonoIcon") .. " calls)")
+-- spread over frames
+Kin.nBondPerFrame = 1
+local tB2, byB2 = bondScan("bonds slow")
+check(Kin.tJob == nil, "budgeted bond pass finishes")
+Kin.nBondPerFrame = 200
+-- a failing check: no bond data at all (nothing held, nothing looks broken)
+animalsAPI.GetMatingMonogamyIcon = function() error("gone") end
+local tF, byF = bondScan("bonds fail")
+check(tF and tF.bondsOk == false and byF["2"] and byF["2"].bond == nil, "every check failed: bondsOk false, bonds dropped")
+-- an error inside the pass itself costs only the bond data, never the scan
+animalsAPI.GetMatingMonogamyIcon = function() return "" end
+bondScan("bonds again") -- a different snapshot first (an unchanged one is not resent)
+local fnSaved = Kin._BondStep
+Kin._BondStep = function() error("boom") end
+local tE, byE = bondScan("bonds error")
+check(tE and tE.bondsOk == false and #tE.animals > 0, "bond pass error: scan still sent, bondsOk false")
+Kin._BondStep = fnSaved
+animalsAPI.GetMatingMonogamyIcon = nil
+animalsAPI.GetCurrentMournTimeForUI = nil
+animalsAPI.GetAssignedHabitatEntityID = nil
+animalsAPI.IsInDeathState = nil
+animalsAPI.GetMateData = fnMateData
+bondScan("bonds off")
+end
 
 -- actions
 tCalls = {}
@@ -800,6 +881,9 @@ animalsAPI.GetAnimalTransportData = function(self, e) return { bHasTransportJob 
 animalsAPI.GetAgeQuarterForUI = function(self, e) return e == 2 and 3 or 2 end
 animalsAPI.GetSpeciesFertilityBounds = function(self, sp) return 3, 15 end
 animalsAPI.GetSpeciesLongevity = function(self, sp) return 16, 20 end
+animalsAPI.IsSpeciesABoid = function(self, sp) return false end
+-- the geckos stand in for a colony species (butterflies, bees...)
+exhibitsAPI.IsColonySpecies = function(self, sp) return sp == "Gecko", false, false end
 animalsAPI.GetSpecies = function(self, e) return tParkAnimals[e] and tParkAnimals[e].sSpecies end
 animalsAPI.IsAlive = function(self, e) return e ~= 6 end
 animalsAPI.IsEscaped = function(self, e) return false end
@@ -853,6 +937,7 @@ if tBoard then
 	for _, a in ipairs(tBoard.animals) do byId[a.id] = a end
 	check(byId["2"].lt == "habitat" and byId["5"].lt == "trade", "location kinds: habitat, trade centre")
 	check(tBoard.speciesFacts and tBoard.speciesFacts.Lion and tBoard.speciesFacts.Lion.maturity == 3 and tBoard.speciesFacts.Lion.infertility == 15 and tBoard.speciesFacts.Lion.life == 20, "species fertility ages and lifespan in the snapshot")
+	check(not tBoard.speciesFacts.Lion.collective and tBoard.speciesFacts.Gecko and tBoard.speciesFacts.Gecko.collective == true, "colony species flagged collective, others not")
 	check(byId["2"].ageQ == 3 and byId["3"].ageQ == 2, "the game's age group per animal")
 	check(byId["2"].moving == false, "not on the move")
 	check(tBoard.mode == "offline", "game mode: offline (got " .. tostring(tBoard.mode) .. ")")
@@ -872,6 +957,7 @@ if tDest then
 	check(d and d["103"].ok == false and string.find(d["103"].reason, "does not allow", 1, true), "wrong habitat type refused with a reason")
 	check(d and d["102"].ok == false and string.find(d["102"].reason, "gate", 1, true), "aquarium with the gate above water refused")
 	check(#tDest.habitats == 4 and tDest.tradeCentre.id == "555", "habitat names and the trade centre")
+	check(tDest.habitats[1].hid ~= nil, "destinations carry the game's habitat id")
 end
 check(moveCalls("IsValid") == 4, "one IsValidHabitatForAnimalsGUID per habitat for the species (" .. moveCalls("IsValid") .. ")")
 
@@ -1005,6 +1091,23 @@ tParkAPIs.habitat.GetHabitatSpeciesOverallNavAreaData = function(self, h, sp)
 	return false, { nLandArea = 900, nWaterArea = 50 }
 end
 tParkAPIs.habitat.GetNumberOfAdultsOfGivenSpecies = function(self, h, sp) return 3 end
+-- group make-up: the game's social groups (wild-territory API; an unknown
+-- type keeps its symbol, an entry without counts is skipped) and the most
+-- adults per sex, found one level deep in the sociality data
+tParkAPIs.wildterritory = {
+	SocialGroupType_MixedGroup = 1, SocialGroupType_MixedGroupLarge = 2, SocialGroupType_MaleBachelor = 3,
+	SocialGroupType_FemaleBachelor = 4, SocialGroupType_MaleSolitary = 5, SocialGroupType_FemaleSolitary = 6,
+	SocialGroupType_BreedingPartners = 7,
+	GetTerritorySocialGroupsForSpecies = function(self, sp)
+		return {
+			{ nSocialGroupType = 1, sNameSymbol = "MixedGroup", nMale = 1, nFemale = 3 },
+			{ nSocialGroupType = 7, sNameSymbol = "BreedingPartners", nMale = 1, nFemale = 1 },
+			{ nSocialGroupType = 2, sNameSymbol = "MixedGroupLarge" },
+			{ nSocialGroupType = 99, sNameSymbol = "Herd", nMale = 2, nFemale = 6 },
+		}
+	end,
+}
+animalsAPI.GetSpeciesSocialityData = function(self, sp) return { tGroup = { nMaxMales = 1, nMaxFemales = 5 } } end
 tCalls = {}
 fireUI(oHUD, "PZ2QoL_KinSpecies", "s1", "Lion", "101,102")
 local tSpCall = calls("Trigger")[1]
@@ -1018,58 +1121,327 @@ if tSp then
 	check(#tProbCalls == 49 and tProbCalls[1][1] == 1 and tProbCalls[1][6] == 0.1, "the game's own probability, at full welfare")
 	check(tSp.habitats["101"].available.land == 900 and tSp.habitats["101"].required.land == 300 and tSp.habitats["101"].adults == 3, "habitat space and adults")
 	check(tSp.habitats["102"].calculating == true and tSp.habitats["102"].available == nil, "space still being calculated")
+	check(type(tSp.groups) == "table" and #tSp.groups == 3, "social groups: the ones with counts (" .. tostring(tSp.groups and #tSp.groups) .. ")")
+	check(tSp.groups and tSp.groups[1].kind == "mixed" and tSp.groups[1].m == 1 and tSp.groups[1].f == 3, "social groups: the mixed group's make-up")
+	check(tSp.groups and tSp.groups[2].kind == "pair" and tSp.groups[2].m == 1 and tSp.groups[2].f == 1, "social groups: breeding partners")
+	check(tSp.groups and tSp.groups[3] and tSp.groups[3].kind == "Herd" and tSp.groups[3].f == 6, "social groups: an unknown type keeps its symbol")
+	check(tSp.sexMax and tSp.sexMax.male == 1 and tSp.sexMax.female == 5, "most adults per sex, one level deep")
+end
+-- no wild-territory API and the sociality call fails: both left out, the
+-- rest still answered
+do
+	tParkAPIs.wildterritory = nil
+	animalsAPI.GetSpeciesSocialityData = function(self, sp) error("bad argument #1") end
+	tCalls = {}
+	fireUI(oHUD, "PZ2QoL_KinSpecies", "s2", "Lion", "101")
+	local c = calls("Trigger")[1]
+	check(c and c.tArgs[1] == "PZ2QoL_KinSpeciesResult" and c.tArgs[2] == "s2", "species facts answered without group data")
+	local t = c and jsonDecode(c.tArgs[3])
+	check(t and t.species == "Lion" and t.social and t.social.max == 9 and t.habitats["101"] ~= nil, "species facts intact without group data")
+	check(t and t.groups == nil and t.sexMax == nil, "no group data: groups and sexMax left out")
+	check(t and t.mating == "polygyny" and t.matingRaw == nil, "a rule the mod read sends no raw value")
+	animalsAPI.GetSpeciesSocialityData = nil
+end
+-- the mating rule: enum fields, text, Polygyandry, and what is not understood
+do
+	local KinM = package.loaded["pz2qol.kin"]
+	local function sys(rule, tExtra)
+		local a = { Monogamy = 0, Polygyny = 1, Polyandre = 2, Polygyandry = 3 }
+		for k, v in pairs(tExtra or {}) do a[k] = v end
+		a.GetMonogamyRule = function(self, sp) return rule end
+		return KinM:_MatingSystem(a, "Tiger_Sumatran")
+	end
+	local s, r = sys(3)
+	check(s == "mixed" and r == nil, "Polygyandry is read as mixed (both sexes several mates), no raw value")
+	s, r = sys(2)
+	check(s == "polyandry" and r == nil, "Polyandre is read as polyandry")
+	s, r = sys("Promiscuous")
+	check(s == "mixed" and r == nil, "the Zoopedia word Promiscuous is read as mixed")
+	s, r = sys("MonogamyRule_Polygyandry")
+	check(s == "mixed", "Polygyandry as text is not taken for polygyny or polyandry (" .. tostring(s) .. ")")
+	s, r = sys("Polygynous")
+	check(s == "polygyny", "Polygynous as text")
+	s, r = sys(9)
+	check(s == nil and r == "9", "an unknown number: no system, sent raw (" .. tostring(r) .. ")")
+	s, r = sys({ nRule = 4 })
+	check(s == nil and r == "{nRule=4}", "a table is sent as its fields (" .. tostring(r) .. ")")
+	s, r = sys(nil)
+	check(s == nil and r == nil, "no rule: nothing sent")
+	-- the enum fields missing from the API: a number can't be read
+	s, r = sys(1, { Monogamy = false, Polygyny = false, Polyandre = false, Polygyandry = false })
+	check(s == nil and r == "1", "enum fields missing: unread, sent raw")
 end
 
--- the player's data file (habitat assignments): one file in the mod folder
-local tFiles = {}
-local tWrites = {}
-api.debug.ReadStringFromFile = function(sPath)
-	if tFiles[sPath] == nil then return false, nil end
-	return true, tFiles[sPath]
-end
-api.debug.WriteStringToFile = function(sText, sPath)
-	tWrites[#tWrites + 1] = sPath
-	if string.find(sPath, "/", 1, true) then return false end -- only the first path form works here
-	tFiles[sPath] = sText
-	return true
-end
+-- the player's data (habitat assignments): kept on this device in the
+-- game's player save (tData.PZ2QoL.Assign, one entry per zoo), in every
+-- zoo, Franchise included; found on the park tick
 local Kin = package.loaded["pz2qol.kin"]
-Kin.sStorePath = nil
+local PlayerStore = package.loaded["pz2qol.playerstore"]
+check(PlayerStore ~= nil and Core.PlayerStore == PlayerStore, "the player store registers itself on Core")
+PlayerStore.bCleaned = false
+local nClock = 1000
+local fnTimerWas11 = api.time.GetPerformanceTimer
+api.time.GetPerformanceTimer = function() return nClock end
+-- the game's MainPlayer GetData/SetData (database.mainplayer.lua)
+local function findData(t, k, ...)
+	if k == nil then return t end
+	if t[k] == nil then return nil end
+	return findData(t[k], ...)
+end
+local function applyData(v, t, k, k2, ...)
+	if k2 == nil then
+		t[k] = v
+	else
+		if t[k] == nil then t[k] = {} end
+		applyData(v, t[k], k2, ...)
+	end
+end
+local tPData = { PZ2QoL = { Probe = '{"run":5}', Big = string.rep("x", 12000) }, bEulaAccepted = true, Career = { n = 3 } }
+local tPlayerObj = { tData = tPData }
+tPlayerObj.GetData = function(self, ...) return findData(self.tData, ...) end
+tPlayerObj.SetData = function(self, v, ...) applyData(v, self.tData, ...) end
+local nPlayerKey = 0 -- no player profile yet
+local tGdbWas = package.loaded["database.gamedatabase"]
+package.loaded["database.gamedatabase"] = {
+	GetPlayerKey = function(o) return o == "owner" and nPlayerKey or 0 end,
+	GetPlayer = function(n) return n == 7 and tPlayerObj or nil end,
+}
+local apiPlayerWas, apiSaveWas = api.player, api.save
+api.player = { GetGameOwner = function() return "owner" end }
+local nMainSaves = 0
+api.save = { RequestSaveMainPlayer = function() nMainSaves = nMainSaves + 1 end }
+local function assignArea() return tPData.PZ2QoL and tPData.PZ2QoL.Assign end
+
+local tClients = {}
+local tSaveCalls = {}
+tParkAPIs.worldserialisation = {
+	RegisterWorldSerialisationClient = function(self, sName, nVer, fnSave, fnLoad, fnCanLoad)
+		tSaveCalls[#tSaveCalls + 1] = "register:" .. sName
+		tClients[sName] = { nVer = nVer, fnSave = fnSave, fnLoad = fnLoad, fnCanLoad = fnCanLoad }
+	end,
+	UnregisterWorldSerialisationClient = function(self, sName)
+		tSaveCalls[#tSaveCalls + 1] = "unregister:" .. sName
+		tClients[sName] = nil
+	end,
+}
+local sZooGuid = nil
+tParkAPIs.franchise.GetPlanetHubGuid = function(self) return "hub-1111" end
+tParkAPIs.franchise.GetCurrentZooGUID = function(self) return sZooGuid end
+oHM:Shutdown()
+local function storeCalls(sEvent)
+	local t = {}
+	for _, c in ipairs(calls("Trigger")) do
+		if c.tArgs[1] == sEvent then t[#t + 1] = c end
+	end
+	return t
+end
+local function resetsTo(oView)
+	local n = 0
+	for _, c in ipairs(storeCalls("PZ2QoL_StoreReset")) do
+		if c.oView == oView then n = n + 1 end
+	end
+	return n
+end
+local function load(sReq)
+	tCalls = {}
+	fireUI(oHUD, "PZ2QoL_StoreLoad", sReq)
+	local tData = storeCalls("PZ2QoL_StoreData")
+	local sJoined = ""
+	for _, c in ipairs(tData) do sJoined = sJoined .. tostring(c.tArgs[6]) end
+	return tData, sJoined
+end
+local function save(sReq, sText)
+	tCalls = {}
+	fireUI(oHUD, "PZ2QoL_StoreSave", sReq, sText)
+	local c = storeCalls("PZ2QoL_StoreSaved")[1]
+	return c and c.tArgs[2] == sReq and c.tArgs[3]
+end
+local function tick(nSeconds)
+	nClock = nClock + (nSeconds or 0)
+	oHM:Advance()
+end
+
+-- an offline park starts; nothing is known before its first tick
 tCalls = {}
-fireUI(oHUD, "PZ2QoL_StoreLoad", "L1")
-local tData = calls("Trigger")
-check(#tData == 1 and tData[1].tArgs[1] == "PZ2QoL_StoreData" and tData[1].tArgs[2] == "L1" and tData[1].tArgs[3] == true and tData[1].tArgs[6] == "{}", "no file yet: created, answered with {}")
-local sPath = next(tFiles)
-check(sPath ~= nil and string.find(sPath, "PZ2QoL", 1, true) and string.find(sPath, "userdata.json", 1, true), "the file is in the mod folder (" .. tostring(sPath) .. ")")
+oHM = setmetatable({ whiteWorldUIAPI = { VM_InbreedingRisk = 9 }, tWorldAPIs = tParkAPIs }, { __index = HeatMapManager })
+oHM:Init()
+check(#calls("HMInit") == 1, "the manager's own Init still runs")
+check(#storeCalls("PZ2QoL_StoreReset") >= 1, "the views are told to read the store again")
+check(tClients["PZ2QoL"] ~= nil, "offline park: the old park-save client is registered (to read only)")
+local tData = load("L0")
+check(#tData == 1 and tData[1].tArgs[3] == false and tData[1].tArgs[6] == "wait", "before the first tick: answered false, reason wait")
+-- no player profile yet: wait, then report it
+tick(0)
+check(Kin.sZooKey == nil and Kin.sStoreOff == "wait", "no player yet: still waiting")
 tCalls = {}
+tick(25)
+check(Kin.sStoreOff == "noplayer" and resetsTo(oHUD) == 1, "no player for a while: noplayer, the views are told")
+tData = load("L1")
+check(#tData == 1 and tData[1].tArgs[3] == false and tData[1].tArgs[6] == "noplayer", "no player: answered false, reason noplayer")
+check(save("S0", '{"a":1}') == false, "no player: nothing kept")
+-- the profile arrives: the zoo's key is found and the views read again
+nPlayerKey = 7
+tCalls = {}
+tick(0.5)
+check(Kin.sZooKey == nil, "retries at most once a second")
+tick(1)
+check(type(Kin.sZooKey) == "string" and Kin.sZooKey:match("^o_hub%-1111_LemurValley_%x%x%x%x%x%x%x%x$") ~= nil, "offline zoo key from the hub and the park's name (" .. tostring(Kin.sZooKey) .. ")")
+check(resetsTo(oHUD) == 1, "the views are told the store is there")
+check(tPData.PZ2QoL.Probe == nil and tPData.PZ2QoL.Big == nil and tPData.bEulaAccepted == true and tPData.Career.n == 3, "the probe's leftovers removed, nothing else touched")
+check(nMainSaves == 1, "the cleanup is saved once")
+local tData2, sJoined = load("L2")
+check(#tData2 == 1 and tData2[1].tArgs[3] == true and sJoined == "", "nothing kept yet: answered with no data")
+-- the page saves: kept in the player's table in <= 4000-character strings
 local sBig = '{"kinAssign":{"Lemur Valley":{"101":{"name":"Lemur Woods","species":["RingTailedLemur"]}}},"pad":"' .. string.rep("x", 30000) .. '"}'
-fireUI(oHUD, "PZ2QoL_StoreSave", "S1", sBig)
-local tSaved = calls("Trigger")[1]
-check(tSaved and tSaved.tArgs[1] == "PZ2QoL_StoreSaved" and tSaved.tArgs[3] == true and tFiles[sPath] == sBig, "saved and verified")
--- a restart: the path is found again from the existing file
-Kin.sStorePath = nil
-tWrites = {}
+check(save("S1", sBig) == true, "kept in the player store")
+local tEntry = assignArea()[Kin.sZooKey]
+local bPartsOk = tEntry ~= nil and tEntry.N == tostring(math.ceil(#sBig / 4000))
+local tJoin = {}
+for i = 1, tonumber(tEntry and tEntry.N or 0) do
+	local s = tEntry["P" .. i]
+	bPartsOk = bPartsOk and type(s) == "string" and #s <= 4000
+	tJoin[#tJoin + 1] = s or ""
+end
+check(bPartsOk and table.concat(tJoin) == sBig and type(tEntry.S) == "string", "stored as ASCII strings of at most 4000 characters")
+-- written to disk a few seconds after the last change, not on every click
+check(nMainSaves == 1, "no save request straight away")
+tick(1)
+check(save("S1b", sBig) == true and nMainSaves == 1, "a second change pushes the request back")
+tick(3)
+check(nMainSaves == 1, "not yet 4 s after the last change")
+tick(1.5)
+check(nMainSaves == 2, "the game is asked to save the player once")
+tick(10)
+check(nMainSaves == 2, "and only once")
+check(save("S2", '{"a":"caf\195\169"}') == false and load("L3") and select(2, load("L3")) == sBig, "non-ASCII text refused, the data kept")
+check(save("S3", "not json") == false and select(2, load("L4")) == sBig, "anything but a JSON object refused")
+check(save("S3b", "{" .. string.rep(" ", 70000) .. "}") == false, "more than one zoo may hold refused")
+local tData5, sJoined5 = load("L5")
+check(#tData5 == 3 and tData5[1].tArgs[5] == 3 and sJoined5 == sBig, "read back in 12 KB event chunks")
+-- the old client never writes to the park save
+local tParkSave = {}
+tClients["PZ2QoL"].fnSave(tParkSave)
+check(next(tParkSave) == nil, "nothing is written to the park save")
+check(tClients["PZ2QoL"].fnCanLoad(1) == true, "old version 1 saves load")
+-- leaving the park
+local sOfflineKey = Kin.sZooKey
+oHM:Shutdown()
+check(tClients["PZ2QoL"] == nil and Kin.sZooKey == nil, "park end: the reader unregistered, the key forgotten")
+tData = load("L6")
+check(#tData == 1 and tData[1].tArgs[3] == false and tData[1].tArgs[6] == "nopark", "no park: answered false, reason nopark")
+-- the game restarted (the player save is all that is left): the same park reads it back
+Kin.sZooKey = nil
+oHM = setmetatable({ whiteWorldUIAPI = { VM_InbreedingRisk = 9 }, tWorldAPIs = tParkAPIs }, { __index = HeatMapManager })
+oHM:Init()
+tick(0)
+check(Kin.sZooKey == sOfflineKey and select(2, load("L7")) == sBig, "the same park reads its data back")
+oHM:Shutdown()
+
+-- a Franchise zoo: keyed by planet hub and zoo GUIDs, kept the same way
+local fnHubType = tParkAPIs.franchise.GetPlanetHubType
+tParkAPIs.franchise.GetPlanetHubType = function(self) return 3 end
+tSaveCalls = {}
+sZooGuid = nil
+oHM = setmetatable({ whiteWorldUIAPI = { VM_InbreedingRisk = 9 }, tWorldAPIs = tParkAPIs }, { __index = HeatMapManager })
+oHM:Init()
+check(#tSaveCalls == 0 and tClients["PZ2QoL"] == nil, "Franchise zoo: nothing registered with the park save")
+tick(0)
+check(Kin.sZooKey == nil and Kin.sStoreOff == "wait", "Franchise zoo without its GUID yet: waits")
+sZooGuid = "abcd-0001"
 tCalls = {}
-fireUI(oHUD, "PZ2QoL_StoreLoad", "L2")
-tData = calls("Trigger")
-local sJoined = ""
-for _, c in ipairs(tData) do sJoined = sJoined .. c.tArgs[6] end
-check(#tData == 3 and tData[1].tArgs[5] == 3 and sJoined == sBig and #tWrites == 0, "read back in chunks after a restart, nothing written")
+tick(1)
+check(Kin.sZooKey == "f_hub-1111_abcd-0001", "Franchise zoo key (" .. tostring(Kin.sZooKey) .. ")")
+check(resetsTo(oHUD) == 1, "Franchise: the views read again")
+tData, sJoined = load("L8")
+check(#tData == 1 and tData[1].tArgs[3] == true and sJoined == "", "Franchise zoo: its own (empty) data, not the offline park's")
+local sFr = '{"kinAssign":{"Savanna Hub":{"201":{"name":"Plains","species":["Lion"]}}}}'
+check(save("S4", sFr) == true, "Franchise: kept on this device")
+check(assignArea()["f_hub-1111_abcd-0001"] ~= nil and assignArea()[sOfflineKey] ~= nil, "one entry per zoo")
+oHM:Shutdown()
+-- another Franchise zoo on the same hub
+sZooGuid = "abcd-0002"
+oHM = setmetatable({ whiteWorldUIAPI = { VM_InbreedingRisk = 9 }, tWorldAPIs = tParkAPIs }, { __index = HeatMapManager })
+oHM:Init()
+tick(0)
+check(Kin.sZooKey == "f_hub-1111_abcd-0002" and select(2, load("L9")) == "", "a second Franchise zoo starts empty")
+oHM:Shutdown()
+sZooGuid = "abcd-0001"
+oHM = setmetatable({ whiteWorldUIAPI = { VM_InbreedingRisk = 9 }, tWorldAPIs = tParkAPIs }, { __index = HeatMapManager })
+oHM:Init()
+tick(0)
+check(select(2, load("L10")) == sFr, "the first Franchise zoo reads its own data back")
+oHM:Shutdown()
+sZooGuid = nil
+tParkAPIs.franchise.GetPlanetHubType = fnHubType
+
+-- the game mode cannot be read: waits, then keys the park by name
+tParkAPIs.franchise.GetPlanetHubType = function(self) error("no hub type") end
+oHM = setmetatable({ whiteWorldUIAPI = { VM_InbreedingRisk = 9 }, tWorldAPIs = tParkAPIs }, { __index = HeatMapManager })
+oHM:Init()
+check(tClients["PZ2QoL"] == nil, "unknown mode: nothing registered with the park save")
+tick(0)
+check(Kin.sZooKey == nil and Kin.sStoreOff == "wait", "unknown mode: waits")
+tick(11)
+check(Kin.sZooKey == sOfflineKey, "unknown mode for 10 s: keyed by the park's name")
+oHM:Shutdown()
+tParkAPIs.franchise.GetPlanetHubType = fnHubType
+
+-- an old build's data in an offline park save moves to the player store
+local fnParkWas = tParkAPIs.park.GetParkName
+tParkAPIs.park.GetParkName = function(self) return "Old Park" end
+oHM = setmetatable({ whiteWorldUIAPI = { VM_InbreedingRisk = 9 }, tWorldAPIs = tParkAPIs }, { __index = HeatMapManager })
+oHM:Init()
+local sOld = '{"kinAssign":{"Old Park":{"301":{"name":"Pen","species":["Zebra"]}}}}'
+check(tClients["PZ2QoL"].fnLoad({ sData = sOld }, 1) == true, "the old save's data is read")
+check(tClients["PZ2QoL"].fnLoad({ sData = 42 }, 1) == true, "a bad old value never breaks the load")
+tick(0)
+check(select(2, load("L11")) == sOld, "moved to the player store once the zoo is known")
+check(save("S5", '{"kinAssign":{}}') == true, "changed afterwards")
+check(tClients["PZ2QoL"].fnLoad({ sData = sOld }, 1) == true and select(2, load("L12")) == '{"kinAssign":{}}', "the old data never overwrites newer data")
+check(save("S6", "{}") == true and assignArea()[Kin.sZooKey] == nil, "empty data removes the zoo's entry")
+oHM:Shutdown()
+tParkAPIs.park.GetParkName = fnParkWas
+
+-- the game's register call fails: the park still runs, the store still works
+tParkAPIs.worldserialisation.RegisterWorldSerialisationClient = function() error("ID already registered") end
+oHM = setmetatable({ whiteWorldUIAPI = { VM_InbreedingRisk = 9 }, tWorldAPIs = tParkAPIs }, { __index = HeatMapManager })
 tCalls = {}
-fireUI(oHUD, "PZ2QoL_StoreSave", "S2", '{"a":"caf\195\169"}')
-check(calls("Trigger")[1].tArgs[3] == false and tFiles[sPath] == sBig, "non-ASCII text refused, the file kept")
-tCalls = {}
-fireUI(oHUD, "PZ2QoL_StoreSave", "S3", "not json")
-check(calls("Trigger")[1].tArgs[3] == false and tFiles[sPath] == sBig, "anything but a JSON object refused")
--- no file functions in this game build: a clear no
-local fnRead = api.debug.ReadStringFromFile
-api.debug.ReadStringFromFile = nil
-Kin.sStorePath = nil
-tCalls = {}
-fireUI(oHUD, "PZ2QoL_StoreLoad", "L3")
-check(calls("Trigger")[1].tArgs[3] == false, "no file access: answered false (the UI keeps the data for the session)")
-api.debug.ReadStringFromFile = fnRead
-Kin.sStorePath = nil
+oHM:Init()
+tick(0)
+check(#calls("HMInit") == 1 and Kin.sZooKey == sOfflineKey, "a failed register never breaks the park start or the store")
+oHM:Shutdown()
+tParkAPIs.worldserialisation = nil
+
+-- the cap: 64 KB over all zoos, the zoos written longest ago go first
+local nSeqSaves = nMainSaves
+local s25 = '{"p":"' .. string.rep("y", 25000) .. '"}'
+check(PlayerStore:Write("o_x_a", s25, nClock) and PlayerStore:Write("o_x_b", s25, nClock), "two large zoos fit")
+check(assignArea()["o_x_a"] ~= nil and assignArea()["o_x_b"] ~= nil, "both kept")
+check(PlayerStore:Write("o_x_c", s25, nClock) == true, "a third is kept")
+local tA = assignArea()
+check(tA["o_x_a"] == nil and tA["o_x_b"] ~= nil and tA["o_x_c"] ~= nil, "the oldest zoo is dropped past the cap")
+local nTotal = 0
+for k, e in pairs(tA) do for _, v in pairs(e) do if type(v) == "string" then nTotal = nTotal + #v end end end
+check(nTotal <= PlayerStore.nCap, "total under the cap (" .. nTotal .. ")")
+local bBig, sWhyBig = PlayerStore:Write("o_x_d", '{"p":"' .. string.rep("z", 70000) .. '"}', nClock)
+check(bBig == false and sWhyBig == "toobig" and assignArea()["o_x_b"] ~= nil, "one zoo larger than the cap is refused, nothing dropped")
+check(PlayerStore:Write("bad key!", "{}", nClock) == false, "only short ASCII keys")
+-- something else under the mod's key is replaced, never anything outside it
+tPData.PZ2QoL = "junk"
+check(PlayerStore:Write("o_x_e", '{"a":1}', nClock) == true and type(tPData.PZ2QoL) == "table" and tPData.bEulaAccepted == true, "a broken PZ2QoL entry is replaced")
+-- the player's calls failing never break anything
+tPlayerObj.GetData = function() error("boom") end
+tPlayerObj.SetData = function() error("boom") end
+local sR = PlayerStore:Read("o_x_e")
+local bW, sW = PlayerStore:Write("o_x_e", '{"a":2}', nClock)
+check(sR == "" and bW == false and sW == "failed", "failing player calls: read empty, write refused")
+tPlayerObj.GetData = function(self, ...) return findData(self.tData, ...) end
+tPlayerObj.SetData = function(self, v, ...) applyData(v, self.tData, ...) end
+PlayerStore:Forget()
+
+package.loaded["database.gamedatabase"] = tGdbWas
+api.player, api.save = apiPlayerWas, apiSaveWas
+api.time.GetPerformanceTimer = fnTimerWas11
 
 api.world.GetWorldAPIs = fnSavedWorld
 
@@ -1096,6 +1468,258 @@ check(not bPatched, "manager not patched before it is loaded")
 local oEnv = setmetatable({}, { __index = Environment })
 local tMgr = oEnv:_LoadManagerModule("Managers.TestManager")
 check(bPatched and tMgr.Advance() == "patched:original", "manager patched as the environment loads it")
+
+-----------------------------------------------------------------------
+-- 13. Guards: the game's Move screen with a stale selection
+-----------------------------------------------------------------------
+-- ModeHelper (loaded before the mod) requires its modes with its own require
+-- copy, so the Move mode reaches the guard through the SetModes sweep.
+local tMoveModeRaw = {}
+tMoveModeRaw.SetupAnimalMovementContext = function(self)
+	local tSpeciesCounts = {}
+	if not self.bFailedToVerify then
+		for _, guid in pairs(self.tSelectedAnimals) do
+			local sSpecies = self.animalsAPI:GetSpeciesFromGUID(guid)
+			tSpeciesCounts[sSpecies] = (tSpeciesCounts[sSpecies] or 0) + 1 -- game: errors on nil
+		end
+	end
+	self.tCounts = tSpeciesCounts
+end
+local ModeHelper = { SetModes = function(self, tModes) self.tModes = tModes end }
+package.loaded["gamehelpers.modehelper"] = ModeHelper
+Core.tPatched["gamehelpers.modehelper"] = nil
+Core:_ApplyPatches("gamehelpers.modehelper", ModeHelper)
+check(package.loaded["editors.animal.animalmovementeditmode"] == nil, "move mode not loaded yet")
+-- the engine's require copy: loads without passing the hook
+package.preload["editors.animal.animalmovementeditmode"] = function() return tMoveModeRaw end
+local oHelper = setmetatable({}, { __index = ModeHelper })
+oHelper:SetModes({ AnimalMovementMode = "Editors.Animal.AnimalMovementEditMode" })
+check(oHelper.tModes ~= nil, "SetModes still runs the game's original")
+local MoveMode = package.loaded["editors.animal.animalmovementeditmode"]
+check(MoveMode == tMoveModeRaw, "move mode loaded by the sweep")
+
+local tSpeciesByGUID = { a = "Lion", b = "Lion" }
+local tMoveAnimals = { GetSpeciesFromGUID = function(self, guid) return tSpeciesByGUID[guid] end }
+local function newMove(tGUIDs)
+	return setmetatable({ animalsAPI = tMoveAnimals, tSelectedAnimals = tGUIDs }, { __index = MoveMode })
+end
+local nReportsBefore = #package.loaded["pz2qol.errors"].tEntries
+local oMove = newMove({ "a", "b" })
+local bMoveOk = pcall(oMove.SetupAnimalMovementContext, oMove)
+check(bMoveOk and oMove.tCounts.Lion == 2 and not oMove.bFailedToVerify, "known selection: the game's own count, untouched")
+oMove = newMove({ "a", "gone" })
+bMoveOk = pcall(oMove.SetupAnimalMovementContext, oMove)
+check(bMoveOk, "stale selection no longer crashes")
+check(oMove.bFailedToVerify == true, "stale selection goes the game's own failed-verification way")
+local tReports = package.loaded["pz2qol.errors"].tEntries
+check(#tReports == nReportsBefore + 1 and tReports[#tReports].sTitle == "Move cancelled to prevent a crash", "player told why the move was cancelled")
+oHelper:SetModes({ AnimalMovementMode = "Editors.Animal.AnimalMovementEditMode" })
+oMove = newMove({ "a" })
+pcall(oMove.SetupAnimalMovementContext, oMove)
+check(oMove.tCounts.Lion == 1, "guard applied once, not stacked by a second sweep")
+
+-----------------------------------------------------------------------
+-- 14. SaveTrace: autosave chain breadcrumbs (debug builds only)
+-----------------------------------------------------------------------
+local SaveTrace = package.loaded["pz2qol.savetrace"]
+check(SaveTrace ~= nil and package.loaded["managers.parkloadsavemanager"] == nil, "save trace idle without a debug build")
+local tSaveMarks = {}
+local fnMark, fnMarkNumber, bTraceWas = Core.Mark, Core.MarkNumber, Core.bTrace
+Core.bTrace = true
+Core.Mark = function(self, s) tSaveMarks[#tSaveMarks + 1] = s end
+Core.MarkNumber = function(self, s, n) tSaveMarks[#tSaveMarks + 1] = s .. "=" .. tostring(n) end
+local tArmed = {}
+api.save = {
+	SetAutosave = function(cToken, tInfo) tArmed[#tArmed + 1] = tInfo.interval; return true end,
+	GetNumAutosaveSlotsForType = function() return 3 end,
+}
+local PLSM = {}
+PLSM.SelectAppropriateAutosaveSlot = function(self) self:OnAutosaveComplete() end
+PLSM.OnAutosaveComplete = function(self, tDetails)
+	if not self.autosaveCoroutine then
+		self.autosaveCoroutine = coroutine.create(function() self:_SelectAppropriateAutosaveSlot(tDetails) end)
+	end
+end
+PLSM._SelectAppropriateAutosaveSlot = function(self)
+	local nSlots = api.save.GetNumAutosaveSlotsForType("zooauto")
+	coroutine.yield()
+	api.save.SetAutosave("token", { interval = self.nAutoSaveInterval })
+	return nSlots
+end
+PLSM.ClearAutosaveSlot = function(self) end
+SaveTrace:Init(Core)
+package.loaded["managers.parkloadsavemanager"] = PLSM
+Core:ApplyLoadedPatches()
+local function hasMark(s)
+	for _, m in ipairs(tSaveMarks) do if m == s then return true end end
+	return false
+end
+local oPLSM = setmetatable({ nAutoSaveInterval = 120 }, { __index = PLSM })
+oPLSM:SelectAppropriateAutosaveSlot()
+check(hasMark("save_patched") and hasMark("save_arm") and hasMark("save_interval=120"), "arming marked with the interval")
+coroutine.resume(oPLSM.autosaveCoroutine)
+check(hasMark("save_select_begin") and hasMark("save_slots=3") and not hasMark("save_select_end"), "select marked across its yield")
+local bResumed = coroutine.resume(oPLSM.autosaveCoroutine)
+check(bResumed and hasMark("save_select_end") and hasMark("save_api_set") and tArmed[1] == 120, "next autosave armed through the original")
+oPLSM:OnAutosaveComplete({})
+check(hasMark("save_cb") and hasMark("save_cb_busy"), "a callback while the old coroutine lives is marked busy")
+oPLSM:OnAutosaveComplete({ exception = "disk" })
+check(hasMark("save_cb_error"), "failed autosave marked")
+Core.Mark, Core.MarkNumber, Core.bTrace = fnMark, fnMarkNumber, bTraceWas
+
+-----------------------------------------------------------------------
+-- 15. Autosave: the mod's own clock, carried across hub trips
+-----------------------------------------------------------------------
+local Autosave = package.loaded["pz2qol.autosave"]
+check(Autosave ~= nil and Autosave.bAvailable == false and Autosave.nMinutes == 0, "no RequestAutosave in the API: the game's own behaviour")
+local nClock = 1000
+local fnTimerWas = api.time.GetPerformanceTimer
+api.time.GetPerformanceTimer = function() return nClock end -- seconds (the mock's PerformanceTimeToMilliseconds multiplies by 1000)
+local tAsCalls = { request = 0, reset = 0 }
+local vRequestResult = true
+api.player = { GetGameOwner = function() return "owner" end }
+api.save = {
+	ID_Zoo = 1, ID_ZooAutosave = 2,
+	GetIdentForSaveID = function(n) return n == 1 and "zoo" or "zooauto" end,
+	RequestAutosave = function(oPlayer, sIdent) tAsCalls.request = tAsCalls.request + 1; tAsCalls.sIdent = sIdent; return vRequestResult end,
+	ResetAutosaveTimer = function() tAsCalls.reset = tAsCalls.reset + 1 end,
+	SetAutosave = function() return true end,
+	SetNewAutosave = function() return true end,
+	UnsetAutosave = function() end,
+	RequestSave = function() return true end,
+}
+local PLSM2 = { OnAutosaveComplete = function(self, tDetails) self.nCallbacks = (self.nCallbacks or 0) + 1 end }
+local HMM = { Advance = function() return "advanced" end }
+Autosave:Init(Core)
+check(Autosave.bAvailable and Autosave.nMinutes == 5, "available, every 5 minutes by default")
+package.loaded["managers.parkloadsavemanager"] = PLSM2
+package.loaded["managers.heatmapmanager"] = HMM
+Core.tPatched["managers.parkloadsavemanager"] = nil
+Core.tPatched["managers.heatmapmanager"] = nil
+Core:ApplyLoadedPatches()
+local oAsView = setmetatable({}, { __index = ViewWrapper })
+oAsView.view = "asview"
+Autosave:Attach(oAsView)
+local function frames(n)
+	for _ = 1, n do
+		nClock = nClock + 1
+		HMM.Advance({})
+	end
+end
+local oMgr2 = setmetatable({}, { __index = PLSM2 })
+
+check(Autosave:ClampMinutes(1) == 2 and Autosave:ClampMinutes(0) == 0 and Autosave:ClampMinutes(500) == 60 and Autosave:ClampMinutes(3.4) == 3 and Autosave:ClampMinutes("x") == 0, "interval: off or 2..60 minutes")
+fireUI(oAsView, "PZ2QoL_AutosaveSet", 1)
+check(Autosave.nMinutes == 2, "the UI cannot go below 2 minutes")
+fireUI(oAsView, "PZ2QoL_AutosaveSet", 5)
+
+-- park opens: the game arms its autosave
+frames(10)
+check(tAsCalls.request == 0, "no request before the game arms an autosave")
+api.save.SetNewAutosave("owner", "zooauto", {})
+check(Autosave.bArmed, "armed by SetNewAutosave")
+Autosave.nElapsed = 0
+frames(295)
+check(tAsCalls.request == 0, "nothing before 5 minutes in the park")
+frames(10)
+check(tAsCalls.request == 1 and tAsCalls.sIdent == "zooauto", "autosave requested with the game's own call after 5 minutes")
+frames(30)
+check(tAsCalls.request == 1, "one request at a time")
+oMgr2:OnAutosaveComplete({ save = "slot" })
+check(oMgr2.nCallbacks == 1, "the game's callback still runs")
+check(Autosave.nElapsed == 0 and Autosave.sLastKind == "mod" and tAsCalls.reset == 1, "our save: clock back to 0, the game's timer reset")
+check(not Autosave.bArmed, "waits for the game to arm the next slot")
+api.save.SetAutosave("token", {})
+
+-- a hub trip: the game cancels its autosave; our clock keeps what it had
+frames(200)
+local nBefore = Autosave.nElapsed
+api.save.UnsetAutosave("owner", "zooauto")
+nClock = nClock + 600 -- ten minutes in the hub, no park frames
+frames(1)
+check(Autosave.nElapsed - nBefore <= 2, "time in the hub does not count")
+api.save.SetAutosave("token", {})
+frames(20)
+check(tAsCalls.request == 1, "clock carried over, not yet due")
+frames(100)
+check(tAsCalls.request == 2, "due save made after the trip instead of starting again")
+oMgr2:OnAutosaveComplete({})
+api.save.SetAutosave("token", {})
+
+-- the game's own autosave and manual saves also reset the clock
+frames(100)
+oMgr2:OnAutosaveComplete({})
+check(Autosave.nElapsed == 0 and Autosave.sLastKind == "game", "the game's own autosave counts")
+api.save.SetAutosave("token", {})
+frames(100)
+api.save.RequestSave("owner", { type = "player" })
+check(Autosave.nElapsed >= 100, "a player-profile save is not a zoo save")
+api.save.RequestSave("token", { type = "zoo" })
+check(Autosave.nElapsed == 0 and Autosave.sLastKind == "manual", "a manual zoo save counts")
+
+-- failures: shown once, retried after a minute
+local nReportsAs = #package.loaded["pz2qol.errors"].tEntries
+vRequestResult = false
+Autosave.nElapsed = 300
+frames(1)
+check(tAsCalls.request == 3 and Autosave.sLastError ~= "", "refused request recorded")
+frames(30)
+check(tAsCalls.request == 3, "no retry within a minute")
+frames(31)
+check(tAsCalls.request == 4, "retried after a minute")
+local tAsReports = package.loaded["pz2qol.errors"].tEntries
+check(#tAsReports == nReportsAs + 2 and tAsReports[#tAsReports - 1].bShow and not tAsReports[#tAsReports].bShow, "the same failure is shown once, then only logged")
+vRequestResult = true
+
+-- off: never requests; Save now still works
+fireUI(oAsView, "PZ2QoL_AutosaveSet", 0)
+Autosave.nElapsed = 5000
+frames(120)
+check(tAsCalls.request == 4, "off: no autosave requests")
+fireUI(oAsView, "PZ2QoL_AutosaveNow")
+check(tAsCalls.request == 5 and Autosave.bPendingManual, "Save now asks the game at once")
+oMgr2:OnAutosaveComplete({})
+
+-- state for the page
+local tAsState = nil
+for i = #tCalls, 1, -1 do
+	local c = tCalls[i]
+	if c.sName == "Trigger" and c.tArgs[1] == "PZ2QoL_AutosaveState" then tAsState = c.tArgs[2] break end
+end
+check(type(tAsState) == "string" and tAsState:find('"minutes":0', 1, true) and tAsState:find('"lastKind":"mod"', 1, true), "state sent to the page as JSON")
+api.time.GetPerformanceTimer = fnTimerWas
+
+-----------------------------------------------------------------------
+-- 16. PlayerStore: the 2026-10-16 probe's leftovers removed once, from the hub
+-----------------------------------------------------------------------
+local PlayerStore16 = package.loaded["pz2qol.playerstore"]
+check(package.loaded["pz2qol.playerprobe"] == nil, "the debug probe is gone")
+local tPlayerData = { PZ2QoL = { Probe = '{"run":4}', Big = string.rep("x", 12000) }, Other = 1 }
+local tFakePlayer = {
+	GetData = function(self, a, b) if b == nil then return tPlayerData[a] end return tPlayerData[a] and tPlayerData[a][b] end,
+	SetData = function(self, v, a, b) tPlayerData[a] = tPlayerData[a] or {}; tPlayerData[a][b] = v end,
+}
+local nKey16 = 0
+package.loaded["database.gamedatabase"] = { GetPlayerKey = function() return nKey16 end, GetPlayer = function(n) return n == 1 and tFakePlayer or nil end }
+local nSaveMain = 0
+api.save.RequestSaveMainPlayer = function() nSaveMain = nSaveMain + 1 end
+PlayerStore16.bCleaned = false
+PlayerStore16:Cleanup()
+check(not PlayerStore16.bCleaned and tPlayerData.PZ2QoL.Big ~= nil and nSaveMain == 0, "no player yet: tried again later")
+nKey16 = 1
+PlayerStore16:Cleanup()
+check(tPlayerData.PZ2QoL.Probe == nil and tPlayerData.PZ2QoL.Big == nil and tPlayerData.Other == 1, "Probe and Big removed, nothing else touched")
+check(nSaveMain == 1, "the cleanup is saved")
+tPlayerData.PZ2QoL.Probe = "again"
+PlayerStore16:Cleanup()
+check(nSaveMain == 1 and tPlayerData.PZ2QoL.Probe == "again", "once per session")
+PlayerStore16.bCleaned = false
+PlayerStore16:Cleanup()
+tPlayerData.PZ2QoL = { Assign = {} }
+PlayerStore16.bCleaned = false
+local nBefore16 = nSaveMain
+PlayerStore16:Cleanup()
+check(nSaveMain == nBefore16, "nothing to clean: no save request")
 
 print(string.format("%d passed, %d failed", nPassed, nFailed))
 os.exit(nFailed == 0 and 0 or 1)

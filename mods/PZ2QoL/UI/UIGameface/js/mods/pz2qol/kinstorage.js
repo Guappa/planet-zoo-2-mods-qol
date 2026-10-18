@@ -40,7 +40,8 @@ export function speciesKey(raw) {
 
 export function storageRowOf(ctx) {
     const id = get(ctx, 'id');
-    if (id == null || id === '') return null;
+    // shoals and colonies breed as one group: Kin leaves them out
+    if (id == null || id === '' || get(ctx, 'isShoal')) return null;
     return {
         id: String(id),
         name: locationName(get(ctx, 'name')) || '?',

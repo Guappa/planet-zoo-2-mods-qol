@@ -6,7 +6,10 @@
 // space), PZ2QoL_KinDestinations and PZ2QoL_KinMove. Walks: Breeding
 // programme -> preview numbers -> the moves slider -> Use this plan ->
 // Execute (the existing one-move-at-a-time path) -> a species the game does
-// not describe (estimates, with a warning).
+// not describe (estimates, with a warning). The optimiser runs in slices in
+// the background, so every step waits for the panel to leave its busy state.
+// Also: the group make-up arrows (auto -> 1:1 -> back), the per-habitat
+// target line, and that the choice is kept in the player store.
 import { seedZooKin } from './kin_fixture.mjs';
 import { layoutFacts, layoutProblems } from './kin_board.mjs';
 
@@ -35,6 +38,9 @@ const stats = page => page.evaluate(() => {
     }
     return out;
 });
+
+// the panel with numbers that are not being worked out again
+const ready = (page, timeout = 8000) => page.waitForSelector('.PZ2QoL_kbProg:not(.busy) .PZ2QoL_kbStats', { timeout });
 
 async function seedProgramme(page) {
     await page.evaluate(async () => {
@@ -161,7 +167,7 @@ export async function hud(page, ctx) {
         await page.waitForTimeout(150);
         facts.loading = await page.locator('.PZ2QoL_kbProg.state_loading').count();
         await ctx.shot(page, 'kp_prog_1_asking');
-        await page.waitForSelector('.PZ2QoL_kbStats', { timeout: 5000 });
+        await ready(page);
         await page.waitForTimeout(300);
         await ctx.shot(page, 'kp_prog_2_preview');
         facts.asked = await page.evaluate(() => window.__kpg.species.slice());
@@ -193,7 +199,8 @@ export async function hud(page, ctx) {
         facts.byStep = {};
         for (const step of [0, 1, 3, 2]) {
             await click(page.locator(`.PZ2QoL_kbStep[data-step="${step}"]`));
-            await page.waitForTimeout(250);
+            await page.waitForTimeout(100);
+            await ready(page);
             const st = await stats(page);
             facts.byStep[step] = st ? { moves: st.moves, pairs: st.pairs[1], related: st.related[1], quality: st.quality[1] } : null;
             if (step === 0) await ctx.shot(page, 'kp_prog_3_fewest_moves');
@@ -202,6 +209,57 @@ export async function hud(page, ctx) {
         if (new Set(m).size < 2) problems.push(`the slider never changes the moves: ${JSON.stringify(facts.byStep)}`);
         if (!(facts.byStep[0].moves <= facts.byStep[3].moves)) problems.push('"Fewer moves" plans more moves than "Best genetics"');
         for (const [k, v] of Object.entries(facts.byStep)) if (v && v.related !== 0) problems.push(`step ${k} keeps ${v.related} related pairs`);
+
+        // 2b. Recompute: the game is asked again, the slider choice stays
+        const askedBefore = await page.evaluate(() => window.__kpg.species.length);
+        await click(page.locator('.PZ2QoL_kbProg .PZ2QoL_kpBtn', { hasText: 'Recompute' }));
+        await page.waitForTimeout(150);
+        facts.recomputeLoading = await page.locator('.PZ2QoL_kbProg.state_loading').count();
+        await ready(page);
+        await page.waitForTimeout(300);
+        facts.recomputeAsked = (await page.evaluate(() => window.__kpg.species.length)) - askedBefore;
+        facts.recomputeStep = await page.locator('.PZ2QoL_kbStep.on').getAttribute('data-step');
+        await ctx.shot(page, 'kp_prog_3b_recomputed');
+        if (facts.recomputeLoading !== 1) problems.push('Recompute: no "Asking the game" state');
+        if (facts.recomputeAsked !== 1) problems.push(`Recompute: the game's facts asked ${facts.recomputeAsked} times, expected 1`);
+        if (facts.recomputeStep !== '2') problems.push(`Recompute: the slider moved to ${facts.recomputeStep}`);
+
+        // 2c. the group make-up: auto from the mating system, the arrows, the target line
+        const makeup = () => page.evaluate(() => {
+            const n = document.querySelector('.PZ2QoL_kbRatio');
+            const st = document.querySelector('.PZ2QoL_kbStats');
+            return n ? {
+                ratio: n.getAttribute('data-ratio'), rule: n.getAttribute('data-rule'), source: n.getAttribute('data-source'),
+                mine: n.classList.contains('mine'), text: n.innerText.replace(/\s+/g, ' ').trim(),
+                statsRule: st && st.getAttribute('data-rule'), sub: (document.querySelector('.PZ2QoL_kbProgSub') || {}).innerText || '',
+                targets: [...document.querySelectorAll('.PZ2QoL_kbGroupTarget')].map(t => t.innerText),
+            } : null;
+        });
+        facts.makeupAuto = await makeup();
+        if (!facts.makeupAuto) problems.push('no group make-up control');
+        else {
+            if (facts.makeupAuto.ratio !== 'auto' || facts.makeupAuto.rule !== '1:*' || facts.makeupAuto.source !== 'mating') problems.push(`make-up auto: ${JSON.stringify(facts.makeupAuto)}`);
+            if (!facts.makeupAuto.targets.length || !facts.makeupAuto.targets.every(t => /Make-up \d+ ♂ \d+ ♀/.test(t))) problems.push(`target lines: ${JSON.stringify(facts.makeupAuto.targets)}`);
+        }
+        await click(page.locator('.PZ2QoL_kbRatioArrow.next'));
+        await page.waitForTimeout(100);
+        await ready(page);
+        facts.makeupPairs = await makeup();
+        facts.makeupStored = await page.evaluate(async () => (await import('/js/mods/pz2qol/userstore.js')).getUserData('kinRatio'));
+        await ctx.shot(page, 'kp_prog_3c_makeup_pairs');
+        if (!facts.makeupPairs || facts.makeupPairs.ratio !== '1:1' || !facts.makeupPairs.mine || facts.makeupPairs.statsRule !== '1:1' || !/Pairs/.test(facts.makeupPairs.sub)) problems.push(`make-up 1:1: ${JSON.stringify(facts.makeupPairs)}`);
+        if (!facts.makeupStored || facts.makeupStored.Gazelle !== '1:1') problems.push(`make-up not kept: ${JSON.stringify(facts.makeupStored)}`);
+        facts.layoutMakeup = await layoutFacts(page);
+        layoutProblems('make-up', facts.layoutMakeup, problems);
+        await click(page.locator('.PZ2QoL_kbRatioArrow.prev'));
+        await page.waitForTimeout(100);
+        await ready(page);
+        facts.makeupBack = await makeup();
+        facts.makeupStoredBack = await page.evaluate(async () => (await import('/js/mods/pz2qol/userstore.js')).getUserData('kinRatio'));
+        if (!facts.makeupBack || facts.makeupBack.ratio !== 'auto' || facts.makeupBack.rule !== '1:*') problems.push(`make-up back to auto: ${JSON.stringify(facts.makeupBack)}`);
+        if (facts.makeupStoredBack && facts.makeupStoredBack.Gazelle) problems.push(`auto still stored: ${JSON.stringify(facts.makeupStoredBack)}`);
+        const back = await stats(page);
+        if (!back || back.moves !== facts.byStep[2].moves) problems.push(`back to auto gives ${back && back.moves} moves, expected ${facts.byStep[2].moves}`);
 
         // 3. Use this plan: the plan, its reasons, the board again
         const chosen = facts.byStep[2].moves;
@@ -240,7 +298,7 @@ export async function hud(page, ctx) {
         await click(page.locator('.PZ2QoL_kbSpecies[data-species="Lion"]'));
         await page.waitForTimeout(300);
         await click(progBtn);
-        await page.waitForSelector('.PZ2QoL_kbStats', { timeout: 12000 });
+        await ready(page, 12000);
         await page.waitForTimeout(200);
         facts.noAnswer = { warnings: await page.locator('.PZ2QoL_kbProgWarn').allInnerTexts(), sub: await page.locator('.PZ2QoL_kbProgSub').innerText(), stats: await stats(page) };
         await ctx.shot(page, 'kp_prog_6_no_answer');

@@ -44,6 +44,32 @@ Win64\ovldata\<Pack>\
 
 - Use cobra-tools to extract `GameMain`/`Content0` `Main.ovl`, then decompile the Lua with luadec.
   Extract the UI OVL and unpack its `.ppuipkg` with `tools/ppuipkg_unpack.py`.
+- One command does all of it: `kit/PZ2ModdingKit/tools/pz2_unpack.py` (the public Modding Kit,
+  see below). Facts it relies on, all **proven** on 1.0.5 (2026-10-16):
+  - `ovl_tool_cmd.py extract` does **not** decompile: it writes `*.lua.bin` (the config's
+    `lua_decompile` isn't set in the CLI). Run `luadec.exe <file>.lua.bin` yourself (with `-s` as a
+    fallback). `--type .lua` / `--type .ppuipkg` limits an extract to one type (seconds instead of
+    a full extract).
+  - 1.0.5 counts: 1,117 scripts (GameMain 245, Content0 872). 461 are clean, 631 have
+    `DECOMPILER ERROR` blocks, and 25 fail outright ("memory allocation error: block too big",
+    e.g. the `peep*.lua` files).
+  - The game UI package is in **`GameMain\Content\UserInterfaceEssentials.ovl`** (a 252 MB
+    `.ppuipkg` XML, 1,852 files). The `Content0\UI\UserInterfaceImages*.ovl` hold the icons.
+  - Pass `-o <dir>` to `ovl_tool_cmd.py extract`, or it writes next to the OVL (inside the game
+    folder). A copy of cobra-tools sits in an old scratchpad:
+    `...\Temp\claude\C--Github-Planet-Zoo-2-Mods\a5756abe-49da-4666-a235-008cb1e4b99f\scratchpad\ext\cobra-tools\`.
+  - `kit/PZ2ModdingKit/tools/lua_funcmap.py <file>.lua.bin <line>` automates the
+    crash-line-to-function mapping (see debugging.md).
+
+## Public Modding Kit (`kit/PZ2ModdingKit`)
+
+- A Nexus resource for other modders: guide, unpack/build tools, the `MyMod` template (PZ2QoL's
+  Core require/manager/mode hooks, trimmed), crashsum, lua_funcmap, and the tracer as C source
+  only. It holds no Frontier files.
+- Zip it with `python tools/build_modkit.py <version>`, which writes
+  `dist/PZ2ModdingKit-<version>.zip` and refuses any file type other than md/txt/py/c/lua. The
+  Nexus page text and images are in `dist/modkit/`.
+- The template is checked by a build round trip and a Lua mock, not yet in game.
 - Keep extracted game code **out of the repo** (scratchpad only). Never commit or ship it.
 - Useful files:
   - `game.gamescript.lua`: overlay load and unload, shutdown.
@@ -64,7 +90,11 @@ python tools/build_pz2qol.py --cobra-tools <cobra-tools dir> --python <venv pyth
 - `--debug-trace` compiles `tools/trace/pz2_trace.c` with MSVC (`vcvars64.bat`) and adds
   `dbg\cp_<name>.dll`, one per line of `tools/trace/checkpoints.txt`.
 - Release zip: `Win64/ovldata/PZ2QoL/...` with forward-slash paths, plus `README.txt`, in `dist/`
-  (gitignored).
+  (gitignored), named `PZ2QoL-<version>.zip`. The build script does **not** zip: build without
+  `--debug-trace` (to `--out <dir>`), write a `README.txt` (staged in `dist/stage-<version>/`), and
+  zip with Python's `zipfile` (arcnames `Win64/ovldata/PZ2QoL/<rel>`). Bump the version in
+  `js/mods/pz2qol/main.js` (`VERSION`) and `pz2qol.core.lua` (`Core.sVersion`); the Manifest's
+  `<Version>1</Version>` is the pack format, not the mod version. Nexus page text lives in `dist/`.
 
 ## Pitfalls
 
@@ -79,10 +109,24 @@ python tools/build_pz2qol.py --cobra-tools <cobra-tools dir> --python <venv pyth
   (`find . -name "%SystemDrive%" -prune -exec rm -rf {} +`); `.gitignore` already lists them.
 - Some repo files have CRLF line endings, so exact-text edits from scripts can miss. Normalise or
   rewrite the file.
+- **Two waiting installers race (2026-10-17).** Two sessions each had `install_pz2qol.py --wait`
+  queued for `Y:`. When the game closed, both copied at once and the older build won: every file
+  differed from the other build afterwards, and its hash check failed after 3 passes. Before
+  queuing an install, ask the conductor who owns `Y:` installs. If an install fails with every file
+  differing, find whose build is there by comparing `Main.ovl`'s sha1 with the other sessions'
+  build folders.
+- **The game can start in the middle of an install (2026-10-17).** `--wait` saw the game closed and
+  began copying; the developer relaunched 40 s later. `Main.ovl` and the UI OVL (copied first, in
+  sorted order) were in place before boot, but the game then held the `dbg` DLLs and the install
+  stopped with `PermissionError` on one of them. Check what landed (`cmp` each file against the
+  build, and the OVLs' mtimes against `cp_boot` in the trace); only the trace DLLs were stale, which
+  are rebuilt copies of the same marks. Tell the developer before an install starts, and reinstall
+  with `--wait` after the next close.
 - **Copying to the second PC's `Y:` drive can silently come up short.** A plain `rm -rf` + `cp -r`
   over the network share once left `UI\PZ2QoLUI.ovl` and most `dbg` DLLs missing while reporting
   success. After any install there, compare every file by hash (sha1) against the build and
   recopy the ones that differ (2026-10-15). `tools/install_pz2qol.py <build>/PZ2QoL <game> --wait`
-  does exactly that (and saves the old `dbg/trace.log`). Both install paths keep the player's
-  `userdata.json` in the pack folder; never delete it when updating.
+  does exactly that (and saves the old `dbg/trace.log`). Both install paths still keep a
+  `userdata.json` in the pack folder (from the old file store; PZ2QoL keeps its data in park saves
+  now, so the mod never writes one).
 

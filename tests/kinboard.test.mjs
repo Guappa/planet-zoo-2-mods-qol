@@ -3,7 +3,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { buildKinModel, Sex } from '../mods/PZ2QoL/UI/UIGameface/js/mods/pz2qol/kincore.js';
 import {
-    TRADE, boardColumns, breedingPairs, canMove, normalizeAssignments, assignedHabitatsOf, habitatAllowedFor, moveText, planImpact, planProblems, prunePlan, setMove, simulatePlan, speciesList, suggestPlan,
+    TRADE, boardColumns, breedingPairs, canMove, normalizeAssignments, assignedHabitatsOf, habitatAllowedFor, moveText,
+    habitatPrints, resolveAssignments, rekeyAssignments, assignmentsFromSection, planImpact, planProblems, prunePlan, setMove, simulatePlan, speciesList, suggestPlan,
 } from '../mods/PZ2QoL/UI/UIGameface/js/mods/pz2qol/kinboardcore.js';
 
 const M = Sex.Male, F = Sex.Female;
@@ -47,6 +48,12 @@ test('species list: problems first, with counts', () => {
     assert.deepEqual(list[0].habitats.sort(), ['1', '3']);
     assert.equal(list[0].away, 2);
     assert.equal(list[1].species, 'Tiger');
+});
+
+test('species list: no shoals or colonies', () => {
+    const snap = zoo();
+    snap.speciesFacts = { Tiger: { collective: true } };
+    assert.deepEqual(speciesList(buildKinModel(snap)).map(s => s.species), ['Lion']);
 });
 
 test('simulation and impact: moving the sister fixes both risks', () => {
@@ -238,4 +245,92 @@ test('breeding pairs count only fertile, unrelated adults', () => {
     assert.equal(breedingPairs(m, '1', 'Lion').pairs, 0);
     // Plains: u (female) and m (male), unrelated
     assert.equal(breedingPairs(m, '3', 'Lion').pairs, 1);
+});
+
+// ----------------------------------------- saved assignments across a reload
+// Habitat entity ids are handed out afresh when a zoo loads. Saved
+// assignments must follow their habitat (name, residents, the game's habitat
+// id), never a stale entity id: that made ghost columns on the Species board.
+
+const P = (id, name, guids = [], hid = null) => ({ id, name, names: new Set([name.toLowerCase()]), hid, guids });
+
+test('saved assignments: the habitats got new entity ids, assignments follow them', () => {
+    const saved = {
+        '101': { species: ['Lion'], name: 'Savannah', guids: ['g1', 'g2'], hid: '7', seen: 'old.1' },
+        '102': { species: ['Zebra'], name: 'Plains', guids: [], hid: '8', seen: 'old.1' },
+    };
+    // after the reload: Savannah is 512, Plains 513, and 101 is now another habitat
+    const now = [P('512', 'Savannah', ['g1', 'g2'], '7'), P('513', 'Plains', [], '8'), P('101', 'Pond', [], '9')];
+    const got = assignmentsFromSection(saved, now, 'new.1');
+    assert.deepEqual(Array.from(got.keys()).sort(), ['512', '513']);
+    assert.ok(!got.has('101') && !got.has('102'), 'no stale id, no ghost');
+    assert.deepEqual(Array.from(got.get('512')), ['Lion']);
+});
+
+test('saved assignments: a stale id alone is never enough', () => {
+    const saved = { '101': { species: ['Lion'], name: 'Old Name' } };
+    const got = assignmentsFromSection(saved, [P('101', 'Something Else')], 'new.1');
+    assert.equal(got.size, 0);
+});
+
+test('saved assignments: found by residents after a rename, by name when empty', () => {
+    const saved = {
+        '1': { species: ['Lion'], name: 'Lion Den', guids: ['g1', 'g2', 'g3'] },
+        '2': { species: ['Zebra'], name: 'Zebra Field', guids: [] },
+    };
+    const now = [P('40', 'Big Cats', ['g2', 'g3']), P('41', 'Zebra Field'), P('42', 'Lion Pen', ['g9'])];
+    const res = resolveAssignments(saved, now, 'new.1');
+    assert.equal(res.byHab.get('40'), '1');
+    assert.equal(res.byHab.get('41'), '2');
+    assert.deepEqual(res.orphans, []);
+});
+
+test('saved assignments: two habitats with the same name are told apart by the game habitat id', () => {
+    const saved = {
+        '1': { species: ['Lion'], name: 'Habitat', hid: '20' },
+        '2': { species: ['Zebra'], name: 'Habitat', hid: '21' },
+    };
+    const now = [P('90', 'Habitat', [], '21'), P('91', 'Habitat', [], '20')];
+    const got = assignmentsFromSection(saved, now, 'new.1');
+    assert.deepEqual(Array.from(got.get('91')), ['Lion']);
+    assert.deepEqual(Array.from(got.get('90')), ['Zebra']);
+});
+
+test('saved assignments: an id the player clicked in this load wins over names', () => {
+    const saved = { '5': { species: ['Lion'], name: 'Pen', seen: 'this.1' } };
+    const now = [P('5', 'Pen B'), P('6', 'Pen')];
+    assert.deepEqual(Array.from(assignmentsFromSection(saved, now, 'this.1').keys()), ['5']);
+    // in a later load the same id means nothing
+    assert.deepEqual(Array.from(assignmentsFromSection(saved, now, 'next.1').keys()), ['6']);
+});
+
+test("saved assignments: re-keyed to today's ids; a habitat not found is kept a few loads, then dropped", () => {
+    const saved = {
+        '101': { species: ['Lion'], name: 'Savannah', guids: ['g1'] },
+        '102': { species: ['Zebra'], name: 'Gone' },
+    };
+    const now = [P('512', 'Savannah', ['g1', 'g4'], '7'), P('102', 'Pond')];
+    let s = rekeyAssignments(saved, now, 'L.1');
+    assert.deepEqual(s['512'], { species: ['Lion'], name: 'Savannah', hid: '7', guids: ['g1', 'g4'] });
+    const orphanKey = Object.keys(s).find(k => s[k].name === 'Gone');
+    assert.notEqual(orphanKey, '102', 'the orphan does not take an id that is a real habitat now');
+    assert.equal(s[orphanKey].miss, 1);
+    assert.deepEqual(rekeyAssignments(s, now, 'L.1'), s, 'the same load: nothing changes (no save loop)');
+    s = rekeyAssignments(s, now, 'L.2');
+    assert.equal(Object.values(s).find(e => e.name === 'Gone').miss, 2);
+    s = rekeyAssignments(s, now, 'L.3');
+    assert.deepEqual(Object.keys(s), ['512'], 'dropped after three loads without its habitat');
+    // no habitat list (not scanned yet): nothing is touched
+    assert.deepEqual(rekeyAssignments(saved, [], 'L.4'), saved);
+});
+
+test('habitat prints: every habitat from the scan, empty ones too, with residents', () => {
+    const m = buildKinModel({
+        habitats: [{ id: '1', name: 'Savannah Habitat' }],
+        habs: [{ id: '1', name: 'Savannah', hid: '70' }, { id: '2', name: 'Empty Pen', hid: '71' }],
+        animals: [an('a', M, ['', '']), an('b', F, ['', ''])],
+    });
+    const prints = habitatPrints(m);
+    assert.deepEqual(prints.map(p => [p.id, p.name, p.hid, p.guids]), [['1', 'Savannah', '70', ['ga', 'gb']], ['2', 'Empty Pen', '71', []]]);
+    assert.ok(prints[0].names.has('savannah habitat'), "both of the game's names for it");
 });

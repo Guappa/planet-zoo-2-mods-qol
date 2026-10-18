@@ -204,7 +204,7 @@ test('comparables prefer listings with the same medal, sex and age group', () =>
     assert.match(fem.reason, /^4 Silver adult females/);
 });
 
-test('too few of the medal: adjacent medals scaled by the observed price ratio', () => {
+test('too few of the medal: other medals scaled by the observed price ratio', () => {
     // one gold lion; silver lions; the gold/silver ratio comes from tigers (3000/2000)
     const book = [
         listing('g0', { medal: 'gold', price: 1600, score: 70 }),
@@ -213,16 +213,18 @@ test('too few of the medal: adjacent medals scaled by the observed price ratio',
         ...[2000, 2000].map((p, i) => listing('ts' + i, { species: 'Tiger', medal: 'silver', price: p })),
     ];
     const c = comparables(animal({ medal: 'gold' }), book);
-    assert.equal(c.medalMode, 'adjacent');
+    assert.equal(c.medalMode, 'scaled');
     assert.equal(c.sameCount, 1);
+    assert.equal(c.guessed, false);
     assert.equal(c.factors.silver.source, 'all species');
     assert.ok(Math.abs(c.factors.silver.factor - 1.5) < 1e-9);
     const scaled = c.list.find(l => l.id == 's0');
     assert.equal(scaled.price, 1500);
     assert.equal(scaled.rawPrice, 1000);
     const r = recommendPrice(animal({ medal: 'gold', genes: g(70) }), book, {});
-    assert.match(r.reason, /^1 Gold adult males \+ 3 Silver scaled to Gold: median 1,500 CC/);
-    assert.match(r.reason, /Silver ×1\.50 \(all species\)/);
+    assert.match(r.reason, /^Only 1 Gold listed among adult males; with 3 Silver at median 1,000 CC ×1\.50 \(ratio from all species\): median 1,500 CC/);
+    // learned ratio, 4 comparables: medium at best
+    assert.equal(r.confidence, 'medium');
     // a higher medal scales down: a silver animal among gold lions
     const down = comparables(animal({ medal: 'silver' }), [
         listing('x', { medal: 'silver', price: 1000 }),
@@ -230,27 +232,136 @@ test('too few of the medal: adjacent medals scaled by the observed price ratio',
         listing('y', { medal: 'silver', price: 1000 }),
     ]);
     // same group has 2 silver and 2 gold: the ratio comes from it
-    assert.equal(down.medalMode, 'adjacent');
+    assert.equal(down.medalMode, 'scaled');
     assert.equal(down.factors.gold.source, 'this sex and age group');
     assert.ok(Math.abs(down.factors.gold.factor - 1 / 1.6) < 1e-9);
 });
 
 test('a better medal is never priced lower than the worse one', async () => {
-    const { medalStepRatio } = await import('../mods/PZ2QoL/UI/UIGameface/js/mods/pz2qol/pricing.js');
+    const { medalStepRatio, medalRatio } = await import('../mods/PZ2QoL/UI/UIGameface/js/mods/pz2qol/pricing.js');
     const list = [listing('a', { medal: 'gold', price: 500 }), listing('b', { medal: 'gold', price: 500 }),
         listing('c', { medal: 'silver', price: 900 }), listing('d', { medal: 'silver', price: 900 })];
     assert.equal(medalStepRatio('gold', [{ list, source: 'x' }], list).ratio, 1);
     assert.equal(medalStepRatio('none', [{ list, source: 'x' }], list), null);
+    assert.equal(medalRatio('silver', 'gold', [{ list, source: 'x' }], list).ratio, 1);
+    assert.equal(medalRatio('gold', 'platinum', [], []), null);
+    assert.equal(medalRatio('gold', 'gold', [], []).ratio, 1);
 });
 
-test('no ratio known: falls back to the gene-score tiers and says why', () => {
-    const book = [listing('g0', { medal: 'gold', price: 1600 }), ...[1000, 1000, 1000].map((p, i) => listing('s' + i, { medal: 'silver', price: p }))];
+// The developer's case: a Gold animal and no Gold listings at all.
+test('no gold listed and no ratio in the book: default medal ladder, low confidence, says so', async () => {
+    const { DEFAULT_MEDAL_VALUE, medalRatio } = await import('../mods/PZ2QoL/UI/UIGameface/js/mods/pz2qol/pricing.js');
+    assert.equal(DEFAULT_MEDAL_VALUE.gold / DEFAULT_MEDAL_VALUE.bronze, 3);
+    assert.equal(DEFAULT_MEDAL_VALUE.silver / DEFAULT_MEDAL_VALUE.bronze, 1.6);
+    const silver = [380, 400, 420, 400].map((p, i) => listing('s' + i, { medal: 'silver', price: p }));
+    const c = comparables(animal({ medal: 'gold' }), silver);
+    assert.equal(c.medalMode, 'scaled');
+    assert.equal(c.sameCount, 0);
+    assert.equal(c.guessed, true);
+    assert.ok(Math.abs(c.factors.silver.factor - 3 / 1.6) < 1e-9);
+    assert.equal(c.factors.silver.source, 'default guess');
+    const r = recommendPrice(animal({ medal: 'gold' }), silver, {});
+    // 400 x 1.875 = 750, -3% = 727.5 -> 730; the old code priced it like the silver ones (~390)
+    assert.equal(r.price, 730);
+    assert.equal(r.confidence, 'low');
+    assert.match(r.reason, /^No Gold listed among adult males; 4 Silver at median 400 CC ×1\.88 \(guessed ratio\): median 750 CC/);
+    // only bronze listed: two default steps, 3x
+    const bronze = [200, 200, 200].map((p, i) => listing('b' + i, { medal: 'bronze', price: p }));
+    const fromBronze = recommendPrice(animal({ medal: 'gold' }), bronze, {});
+    assert.equal(fromBronze.comps.factors.bronze.factor, 3);
+    assert.equal(fromBronze.price, 580);
+    // nearest medal first: with silver and bronze listed, gold uses silver only
+    const both = comparables(animal({ medal: 'gold' }), silver.concat(bronze));
+    assert.deepEqual(Object.keys(both.factors), ['silver']);
+    // a learned step beats the default; the missing step stays a guess
+    const tigers = [...[1000, 1000].map((p, i) => listing('tb' + i, { species: 'Tiger', medal: 'bronze', price: p })),
+        ...[1200, 1200].map((p, i) => listing('ts' + i, { species: 'Tiger', medal: 'silver', price: p }))];
+    const chained = medalRatio('bronze', 'gold', [], tigers);
+    assert.ok(Math.abs(chained.ratio - 1.2 * 1.875) < 1e-9);
+    assert.equal(chained.source, 'all species + default guess');
+    assert.equal(chained.guessed, true);
+});
+
+test('few of the medal in this sex: same medal of any sex comes before scaling', () => {
+    const book = [
+        ...[2000, 2100, 2200].map((p, i) => listing('gf' + i, { medal: 'gold', gender: Gender.Female, price: p })),
+        ...[800, 800, 800, 800].map((p, i) => listing('sm' + i, { medal: 'silver', price: p })),
+    ];
     const c = comparables(animal({ medal: 'gold' }), book);
-    assert.equal(c.medalMode, undefined);
-    assert.equal(c.tier, 1);
-    assert.equal(c.list.length, 4);
+    assert.equal(c.medalMode, 'same');
+    assert.equal(c.tier, 2);
     const r = recommendPrice(animal({ medal: 'gold' }), book, {});
-    assert.match(r.reason, /only 1 Gold listing, so all medals compared by gene score/);
+    assert.match(r.reason, /^3 Gold adult animals: median 2,100 CC/);
+});
+
+test('appeal adjusts the price within a medal', async () => {
+    const { appealAdjustment } = await import('../mods/PZ2QoL/UI/UIGameface/js/mods/pz2qol/pricing.js');
+    // five gold lions, price rising with appeal (5,000 -> 1,000 CC ... 9,000 -> 1,400 CC)
+    const gold = [5000, 6000, 7000, 8000, 9000].map((a, i) => listing('g' + i, { medal: 'gold', appeal: `[SEPERATED_INT_VALUE:Value={${a}}]`, price: 1000 + 100 * i }));
+    const high = recommendPrice(animal({ medal: 'gold', appeal: '8,500' }), gold, {});
+    assert.equal(high.method, 'appeal');
+    assert.equal(high.appealAdj.how, 'fit');
+    // fit 1,350 at appeal 8,500, -3% = 1,309.5 -> 1,310
+    assert.equal(high.price, 1310);
+    assert.match(high.reason, /appeal 8,500 vs median 7,000 of 5 Gold: \+13%/);
+    const low = recommendPrice(animal({ medal: 'gold', appeal: 5500 }), gold, {});
+    assert.ok(low.price < high.price);
+    // without the animal's appeal: the gene-score path as before
+    assert.notEqual(recommendPrice(animal({ medal: 'gold' }), gold, {}).method, 'appeal');
+    // two listings: half the relative difference, capped at +33%
+    const two = gold.slice(0, 2);
+    const adj = appealAdjustment(animal({ appeal: 6600 }), two);
+    assert.equal(adj.how, 'ratio');
+    assert.ok(Math.abs(adj.factor - 1.1) < 1e-9);
+    assert.ok(Math.abs(appealAdjustment(animal({ appeal: 60000 }), two).factor - 4 / 3) < 1e-9);
+    // scaled listings of another medal never set the appeal baseline
+    const scaled = two.map(l => Object.assign({}, l, { medalFactor: 1.5 }));
+    assert.equal(appealAdjustment(animal({ appeal: 6600 }), scaled), null);
+});
+
+test('parseAppeal reads the formats the game uses', async () => {
+    const { parseAppeal, appealOf } = await import('../mods/PZ2QoL/UI/UIGameface/js/mods/pz2qol/pricing.js');
+    assert.equal(parseAppeal('[SEPERATED_INT_VALUE:Value={12345}]'), 12345);
+    assert.equal(parseAppeal('[AnimalList_AppealValue:Value=(1234)]'), 1234);
+    assert.equal(parseAppeal('12,345'), 12345);
+    assert.equal(parseAppeal('12.345'), 12345);
+    assert.equal(parseAppeal(800), 800);
+    assert.equal(parseAppeal(''), undefined);
+    assert.equal(parseAppeal('[SEPERATED_INT_VALUE:Value={0}]'), undefined);
+    assert.equal(parseAppeal(undefined), undefined);
+    assert.equal(appealOf({ appeal: '2,000' }), 2000);
+});
+
+test("the game's limits always win and the reason says so", () => {
+    const gold = [3000, 3100, 3200].map((p, i) => listing('g' + i, { medal: 'gold', price: p }));
+    const capped = recommendPrice(animal({ medal: 'gold' }), gold, { max: 2500 });
+    assert.equal(capped.price, 2500);
+    assert.match(capped.reason, /capped at the game's maximum 2,500 CC/);
+    const raised = recommendPrice(animal({ medal: 'gold' }), gold, { min: 4000 });
+    assert.equal(raised.price, 4000);
+    assert.match(raised.reason, /raised to the game's minimum 4,000 CC/);
+    // an extrapolated gold price is capped too
+    const silver = [3000, 3000, 3000].map((p, i) => listing('s' + i, { medal: 'silver', price: p }));
+    assert.equal(recommendPrice(animal({ medal: 'gold' }), silver, { min: 10, max: 5000 }).price, 5000);
+});
+
+test('confidence: same medal can be high, scaled at most medium, guessed at most low', () => {
+    const many = n => Array.from({ length: n }, (_, i) => listing('x' + i, { medal: 'silver', price: 1000 + i }));
+    assert.equal(recommendPrice(animal({ medal: 'silver' }), many(6), {}).confidence, 'high');
+    assert.equal(recommendPrice(animal({ medal: 'silver' }), many(3), {}).confidence, 'medium');
+    // 8 silver, gold animal, no ratio anywhere: guessed
+    assert.equal(recommendPrice(animal({ medal: 'gold' }), many(8), {}).confidence, 'low');
+    // 8 silver + 2 gold in the group: ratio learned, 10 comparables, still medium
+    const learned = many(8).concat([2000, 2000].map((p, i) => listing('g' + i, { medal: 'gold', price: p })));
+    assert.equal(recommendPrice(animal({ medal: 'gold' }), learned, {}).confidence, 'medium');
+    // fewer than 3 in all: low
+    assert.equal(recommendPrice(animal({ medal: 'silver' }), many(2), {}).confidence, 'low');
+});
+
+test('mergeListings keeps a known appeal when a later read has none', () => {
+    let book = mergeListings([], [listing('a', { appeal: 4000 })], 1000);
+    book = mergeListings(book, [listing('a', { price: 1100 })], 2000);
+    assert.equal(book[0].appeal, 4000);
 });
 
 test('without medal data the price is the same as before', () => {

@@ -17,7 +17,7 @@
 // handles the wheel itself), so the scroll areas here do the same, with
 // their own thumbs.
 import {
-    SEVERITY_INFO, Sex, canLocate, explainRelation, habitatSummary, mateCandidates, offspringScore, percent, predictOffspring, relationWord,
+    SEVERITY_INFO, Sex, canLocate, explainRelation, habitatSummary, holdReason, mateCandidates, offspringScore, percent, predictOffspring, relationWord,
 } from '/js/mods/pz2qol/kincore.js';
 import {
     COUNTED, buildMatrix, countWord, kinshipFraction, mateSections, overviewGroups, plannerHabitats, resolveState,
@@ -173,7 +173,7 @@ function buildLegend() {
     const l = S.el.legend;
     clear(l);
     const item = (cls, label, tip) => h('div.PZ2QoL_kpLegendItem', { title: tip || undefined }, h(`div.PZ2QoL_kpSwatch.${cls}`), h('span', { text: label }));
-    for (const s of ['risk', 'kin', 'future', 'covered', 'distant']) l.appendChild(item('sev_' + s, SEVERITY_INFO[s].label, SEVERITY_INFO[s].tip));
+    for (const s of ['risk', 'kin', 'future', 'held', 'covered', 'distant']) l.appendChild(item('sev_' + s, SEVERITY_INFO[s].label, SEVERITY_INFO[s].tip));
     l.appendChild(item('sev_none', 'Unrelated', 'No shared ancestor the game records'));
     l.appendChild(h('div.PZ2QoL_kpLegendItem', { title: 'They are mates now' }, h('div.PZ2QoL_kpMated.legend', null, icon('Icon_Heart', 'white', 'xs')), h('span', { text: 'Mates now' })));
     l.appendChild(h('div.PZ2QoL_kpLegendItem', { title: "Expected young: the mean of the four genes the game predicts for their offspring" },
@@ -275,6 +275,8 @@ function renderPopover(settings) {
     p.appendChild(h('div.PZ2QoL_kpPopHead', { text: 'Show' }));
     p.appendChild(switchEl('Covered pairs', settings.showCovered, () => setKinSettings({ showCovered: !getKinSettings().showCovered }),
         'Related pairs kept apart by contraception or infertility'));
+    p.appendChild(switchEl('Pair bonds count as protection', settings.bondHolds !== false, () => setKinSettings({ bondHolds: getKinSettings().bondHolds === false }),
+        'A related pair the game will not let breed because one of them is bonded to another mate (monogamy) shows as Bonded elsewhere, not as a risk. It becomes a risk again when the bond ends.'));
     p.appendChild(h('div.PZ2QoL_kpPopHead', { text: 'Close kin from' }));
     const seg = h('div.PZ2QoL_kpSeg', null, THRESHOLDS.map(t => h(`div.PZ2QoL_kpSegItem${Math.abs(settings.closeKinship - t.value) < 1e-9 ? '.on' : ''}`, {
         title: t.tip,
@@ -620,7 +622,8 @@ function cellEl(cell) {
     if (cell.mated) kids.push(h('div.PZ2QoL_kpMated', { title: 'Mates now' }, icon('Icon_Heart', 'white', 'xs')));
     const info = SEVERITY_INFO[sev];
     const tip = `${cell.a.name} × ${cell.b.name}: ${cell.word || 'unrelated'}${cell.kinship > 0 ? ` (${percent(cell.kinship)} kinship)` : ''}`
-        + `${info ? ' · ' + info.label : ''}${cell.score != null ? ` · expected young ${cell.score}/100` : ''}${cell.mated ? ' · mates now' : ''}`;
+        + `${info ? ' · ' + info.label : ''}${cell.score != null ? ` · expected young ${cell.score}/100` : ''}${cell.mated ? ' · mates now' : ''}`
+        + (cell.pair && cell.pair.held ? ` · ${holdReason(cell.pair)}` : '');
     return h(`div.PZ2QoL_kpCell.sev_${sev}${cell.mated ? '.mated' : ''}${cell.word ? '' : '.noword'}`, { title: tip }, kids);
 }
 
@@ -736,7 +739,7 @@ function helpEl(model, settings) {
             factTile(String(mated), mated === 1 ? 'related pair mates now' : 'related pairs mate now', mated ? 'kin' : 'ok')));
     }
     kids.push(h('div.PZ2QoL_kpDetText', { text: 'Kin compares every male and female of the same species that share a habitat, using the parents the game records.' }));
-    for (const s of ['risk', 'kin', 'future', 'covered']) {
+    for (const s of ['risk', 'kin', 'future', 'held', 'covered']) {
         kids.push(h('div.PZ2QoL_kpHelpRow', null, severityTag(s), h('div.PZ2QoL_kpHelpText', { text: SEVERITY_INFO[s].tip })));
     }
     kids.push(h('div.PZ2QoL_kpSubhead', { text: 'Tips' }));
@@ -818,6 +821,7 @@ function pairDetail(model, settings) {
     kids.push(h(`div.PZ2QoL_kpNote.tier_${tier}`, { text: tierNote(tier, model.closeKinship) }));
     const notes = [];
     if (mated) notes.push(`${a.name} and ${b.name} are mates now.`);
+    if (pair && pair.held) notes.push(`${holdReason(pair)}.`);
     for (const x of [a, b]) {
         const st = x.fert && x.fert.state;
         if (x.contra) notes.push(`${x.name} is on contraception, so this pair cannot breed.`);
@@ -868,6 +872,8 @@ function mateFinder(model, settings) {
         h('div.PZ2QoL_kpSelfName', { text: `${sexSymbol(self.sex)} ${self.name}` }),
         h('div.PZ2QoL_kpDuoLine', { text: animalLine(model, self) })));
     kids.push(h('div.PZ2QoL_kpActRow', null, contraButton(self), locateButton(self)));
+    const bondNote = bondedNote(model, self);
+    if (bondNote) kids.push(h('div.PZ2QoL_kpDetText', { text: bondNote }));
     const cands = mateCandidates(model, self.id, { includeJuveniles: S.mateYoung });
     const want = self.sex === Sex.Male ? 'females' : self.sex === Sex.Female ? 'males' : 'partners';
     kids.push(h('div.PZ2QoL_kpMateHead', null,
@@ -903,6 +909,16 @@ function mateFinder(model, settings) {
         }) }, h('span', { text: `Show all ${cands.length}` })));
     }
     return detCard('mates', kids);
+}
+
+// A monogamous animal bonded to a mate that lives with it: the game pairs
+// it with no one else (the same test as the 'held' pairs).
+function bondedNote(model, self) {
+    const b = self.bond;
+    if (!b || model.bondHolds === false || !(model.snapshot && model.snapshot.bondsOk)) return '';
+    const mate = model.animals.get(b.mate);
+    if (!mate || !mate.alive || !self.hab || mate.hab !== self.hab) return '';
+    return `${self.name} is bonded to ${mate.name} (monogamy): the game pairs ${self.name} with no one else while ${mate.name} is there.`;
 }
 
 function mateRow(model, self, cand, rank) {

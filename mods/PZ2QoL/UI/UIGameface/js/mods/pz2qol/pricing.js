@@ -2,7 +2,7 @@
 // imports, so they run under Node tests.
 //
 // A "listing" is { id, species, gender, maturity, isShoal, isExhibit, score,
-// medal, price, isCC, source: 'market' | 'history', seenAt }. Its id is listingKey(),
+// medal, appeal, price, isCC, source: 'market' | 'history', seenAt }. Its id is listingKey(),
 // not the game's row id: market and history rows reuse the same row ids on
 // every page (they are screen slots), so keying by them kept only one page.
 import { Gender, geneScore, Maturity } from './scores.js';
@@ -39,6 +39,24 @@ export function medalLabel(m) {
     return MEDAL_LABEL[m] || '';
 }
 
+// The Appeal column (row field `appeal`) is a formatted string, not a number:
+// the game's schema generator gives "[SEPERATED_INT_VALUE:Value={12345}]",
+// the exe has "[AnimalList_AppealValue:Value=(...)]", and a plain "12,345"
+// is possible. undefined when missing or not positive.
+export function parseAppeal(v) {
+    if (typeof v === 'number') return isFinite(v) && v > 0 ? v : undefined;
+    if (typeof v !== 'string' || !v) return undefined;
+    const tok = v.match(/Value=[({]\s*([^)}]*)[)}]/);
+    // inside a token the value is raw (maybe a decimal point); a plain display
+    // string only has digits and thousands separators (',' '.' or a space)
+    const n = tok ? Number(tok[1].replace(/[^\d.-]/g, '')) : Number(v.replace(/[^\d]/g, '') || NaN);
+    return isFinite(n) && n > 0 ? n : undefined;
+}
+
+export function appealOf(a) {
+    return a ? parseAppeal(a.appeal) : undefined;
+}
+
 // "1,240": thousands separators without toLocaleString (unsure in Gameface).
 function fmt(n) {
     return String(Math.round(n)).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
@@ -51,22 +69,27 @@ export function nicePrice(p) {
     return Math.max(step, Math.round(p / step) * step);
 }
 
-// Theil-Sen fit of price against gene score: robust to a few odd listings.
-export function fitPriceVsScore(points) {
-    const pts = points.filter(p => p.score != null && p.price > 0);
+// Theil-Sen fit of price against x (pairs at least minGap apart): robust to a
+// few odd listings. The slope is never negative: more never sells for less.
+function fitPrice(points, xOf, minGap) {
+    const pts = points.filter(p => xOf(p) != null && p.price > 0);
     if (pts.length < 4) return null;
     const slopes = [];
     for (let i = 0; i < pts.length; i++) {
         for (let j = i + 1; j < pts.length; j++) {
-            const ds = pts[j].score - pts[i].score;
-            if (Math.abs(ds) >= 3) slopes.push((pts[j].price - pts[i].price) / ds);
+            const dx = xOf(pts[j]) - xOf(pts[i]);
+            if (Math.abs(dx) >= minGap) slopes.push((pts[j].price - pts[i].price) / dx);
         }
     }
     if (slopes.length < 3) return null;
-    // Better genes should never make an animal cheaper.
     const slope = Math.max(0, median(slopes));
-    const intercept = median(pts.map(p => p.price - slope * p.score));
-    return { slope, intercept, predict: s => intercept + slope * s };
+    const intercept = median(pts.map(p => p.price - slope * xOf(p)));
+    return { slope, intercept, predict: x => intercept + slope * x };
+}
+
+// Price against gene score.
+export function fitPriceVsScore(points) {
+    return fitPrice(points, p => p.score, 3);
 }
 
 // Stable id for a market or history row, built from what the row shows.
@@ -81,26 +104,37 @@ export function listingKey(a) {
         a.price, a.isCC ? 1 : 0].join('|');
 }
 
+// Fewest comparables to price from a group alone.
+const MIN_COMPS = 3;
+
+// Guessed price of each medal relative to Bronze, used only for a medal step
+// the price book has no ratio for. Guesses, not measured: Silver about 1.6x
+// and Gold about 3x Bronze (the medal is the animal's appeal state, the most
+// visible quality signal in the market list), Unranked a little under Bronze.
+export const DEFAULT_MEDAL_VALUE = Object.freeze({ none: 0.8, bronze: 1, silver: 1.6, gold: 3 });
+const DEFAULT_SOURCE = 'default guess';
+
+// Median price of medal `hi` over medal `lo` in one list, when both have 2+.
+const MIN_PER_MEDAL = 2;
+function observedRatio(list, lo, hi) {
+    const hiP = list.filter(l => medalOf(l) == hi).map(l => l.price);
+    const loP = list.filter(l => medalOf(l) == lo).map(l => l.price);
+    if (hiP.length < MIN_PER_MEDAL || loP.length < MIN_PER_MEDAL) return null;
+    const r = median(hiP) / median(loP);
+    return isFinite(r) && r > 0 ? r : null;
+}
+const clampRatio = (r, steps = 1) => Math.max(1, Math.min(4 ** steps, r));
+
 // How much more the next medal up sells for: the median price of medal
 // `upper` over the median of the medal below it. Taken from the narrowest
 // group with 2+ listings of both medals (same sex and age group, then the
 // species), else the median of that ratio over every species in the book.
 // Clamped to 1..4: a better medal is never cheaper. null when unknown.
-const MIN_PER_MEDAL = 2;
-function stepRatioIn(list, upper) {
-    const lower = MEDALS[MEDAL_RANK[upper] - 1];
-    const hi = list.filter(l => medalOf(l) == upper).map(l => l.price);
-    const lo = list.filter(l => medalOf(l) == lower).map(l => l.price);
-    if (hi.length < MIN_PER_MEDAL || lo.length < MIN_PER_MEDAL) return null;
-    const r = median(hi) / median(lo);
-    return isFinite(r) && r > 0 ? r : null;
-}
-const clampRatio = r => Math.max(1, Math.min(4, r));
-
 export function medalStepRatio(upper, groups, allListings) {
     if (!(MEDAL_RANK[upper] > 0)) return null;
+    const lower = MEDALS[MEDAL_RANK[upper] - 1];
     for (const g of groups) {
-        const r = stepRatioIn(g.list, upper);
+        const r = observedRatio(g.list, lower, upper);
         if (r != null) return { ratio: clampRatio(r), source: g.source };
     }
     const bySpecies = new Map();
@@ -111,23 +145,60 @@ export function medalStepRatio(upper, groups, allListings) {
     }
     const ratios = [];
     for (const list of bySpecies.values()) {
-        const r = stepRatioIn(list, upper);
+        const r = observedRatio(list, lower, upper);
         if (r != null) ratios.push(r);
     }
     return ratios.length ? { ratio: clampRatio(median(ratios)), source: 'all species' } : null;
 }
 
-// The listings that are comparable to `animal`, best tier first.
-//   Medal tiers, only when the animal's medal and some listings' medals are
-//   known, within the same sex and age group:
-//     same medal (3+ listings);
-//     same medal plus the adjacent medals, their prices scaled by the
-//     observed medal price ratio (3+ in all).
-//   Otherwise, as before medals were recorded:
-//     tier 1: same gender and life stage
-//     tier 2: same gender
-//     tier 3: any gender
-// Scaled entries are copies with the scaled `price` and the listed `rawPrice`.
+// Price factor from medal `from` to medal `to` (to/from; below 1 going down).
+//   1. observed directly between the two medals in the groups (this sex and
+//      age group, then this species);
+//   2. else chained step by step (Bronze→Silver→Gold), each step from the
+//      groups, then all species, then DEFAULT_MEDAL_VALUE (guessed: true).
+// { ratio, source, guessed } or null for an unknown medal.
+export function medalRatio(from, to, groups, allListings) {
+    const a = MEDAL_RANK[from];
+    const b = MEDAL_RANK[to];
+    if (a == undefined || b == undefined) return null;
+    if (a == b) return { ratio: 1, source: 'same medal', guessed: false };
+    const lo = Math.min(a, b);
+    const hi = Math.max(a, b);
+    let up = null;
+    for (const g of groups) {
+        const r = observedRatio(g.list, MEDALS[lo], MEDALS[hi]);
+        if (r != null) {
+            up = { ratio: clampRatio(r, hi - lo), source: g.source, guessed: false };
+            break;
+        }
+    }
+    if (!up) {
+        let ratio = 1;
+        const sources = [];
+        for (let k = lo + 1; k <= hi; k++) {
+            const step = medalStepRatio(MEDALS[k], groups, allListings)
+                || { ratio: DEFAULT_MEDAL_VALUE[MEDALS[k]] / DEFAULT_MEDAL_VALUE[MEDALS[k - 1]], source: DEFAULT_SOURCE };
+            ratio *= step.ratio;
+            if (!sources.includes(step.source)) sources.push(step.source);
+        }
+        up = { ratio, source: sources.join(' + '), guessed: sources.includes(DEFAULT_SOURCE) };
+    }
+    return b > a ? up : Object.assign({}, up, { ratio: 1 / up.ratio });
+}
+
+// The listings that are comparable to `animal`, best first. Always the same
+// species, CC, shoal or not, and never the animal's own listing.
+//   When the animal's medal and some listings' medals are known:
+//     1. 3+ listings of the same medal: same sex and age group, then same age
+//        group (any sex), then the whole species (medalMode 'same');
+//     2. else the narrowest of those groups with 3+ medal listings in all:
+//        the same medal plus the nearest other medals, their prices scaled by
+//        medalRatio() (medalMode 'scaled'); the whole species with fewer than
+//        3 when no group has 3.
+//   Otherwise (no medals recorded), as before medals were known:
+//     tier 1: same gender and life stage; tier 2: same gender; tier 3: any.
+// Scaled entries are copies with the scaled `price`, the listed `rawPrice`
+// and `medalFactor`.
 export function comparables(animal, listings) {
     const stage = lifeStage(animal.maturity);
     // A storage animal that is already listed shows up on the market too.
@@ -136,46 +207,83 @@ export function comparables(animal, listings) {
         && l.id != animal.id && l.id != ownKey && !!l.isShoal == !!animal.isShoal);
     const group = base.filter(l => l.gender == animal.gender && lifeStage(l.maturity) == stage);
     const medal = medalOf(animal);
-    let medalNote = null;
-    if (medal != undefined && group.some(l => medalOf(l) != undefined)) {
-        const same = group.filter(l => medalOf(l) == medal);
-        if (same.length >= 3) {
-            return { tier: 1, label: 'same medal, sex and age group', medal, medalMode: 'same', sameCount: same.length, list: same };
+    if (medal != undefined && base.some(l => medalOf(l) != undefined)) {
+        const pools = [
+            { tier: 1, scope: 'same sex and age group', list: group },
+            { tier: 2, scope: 'same age group, any sex', list: base.filter(l => lifeStage(l.maturity) == stage) },
+            { tier: 3, scope: 'any sex or age', list: base },
+        ];
+        for (const p of pools) {
+            const same = p.list.filter(l => medalOf(l) == medal);
+            if (same.length >= MIN_COMPS) {
+                return { tier: p.tier, label: `same medal, ${p.scope}`, medal, medalMode: 'same', sameCount: same.length, list: same };
+            }
         }
-        const rank = MEDAL_RANK[medal];
-        const groups = [{ list: group, source: 'this sex and age group' }, { list: base, source: 'this species' }];
-        const adjusted = [];
-        const factors = {};
-        for (const other of [MEDALS[rank - 1], MEDALS[rank + 1]]) {
-            if (!other) continue;
-            const list = group.filter(l => medalOf(l) == other);
-            if (!list.length) continue;
-            // the step between the two medals; a lower medal's price goes up by it
-            const lower = MEDAL_RANK[other] < rank;
-            const step = medalStepRatio(lower ? medal : other, groups, listings);
-            if (!step) continue;
-            const f = lower ? step.ratio : 1 / step.ratio;
-            factors[other] = { factor: f, source: step.source, count: list.length };
-            for (const l of list) adjusted.push(Object.assign({}, l, { price: l.price * f, rawPrice: l.price, medalFactor: f }));
-        }
-        if (adjusted.length && same.length + adjusted.length >= 3) {
-            return { tier: 1, label: 'same sex and age group, adjacent medals scaled', medal, medalMode: 'adjacent', sameCount: same.length, factors, list: same.concat(adjusted) };
-        }
-        medalNote = { medal, sameCount: same.length };
+        const ratioGroups = [{ list: group, source: 'this sex and age group' }, { list: base, source: 'this species' }];
+        const rated = l => medalOf(l) != undefined;
+        const pool = pools.find(p => p.list.filter(rated).length >= MIN_COMPS) || pools[2];
+        return Object.assign(scaledComparables(animal, medal, pool, ratioGroups, listings), { tier: pool.tier });
     }
     const tiers = [
         { tier: 1, label: 'same sex and age group', list: group },
         { tier: 2, label: 'same sex', list: base.filter(l => l.gender == animal.gender) },
         { tier: 3, label: 'any sex', list: base },
     ];
-    const pick = tiers.find(t => t.list.length >= 3) || tiers.find(t => t.list.length > 0) || { tier: 0, label: 'no market data', list: [] };
-    return medalNote ? Object.assign({}, pick, { medalNote }) : pick;
+    return tiers.find(t => t.list.length >= MIN_COMPS) || tiers.find(t => t.list.length > 0) || { tier: 0, label: 'no market data', list: [] };
 }
 
-// "Silver adult females", "Gold juvenile males", "adult animals"
-function groupName(animal, medal) {
-    const sex = animal.gender == Gender.Male ? 'males' : animal.gender == Gender.Female ? 'females' : 'animals';
-    return [medal != undefined ? medalLabel(medal) : '', lifeStage(animal.maturity), sex].filter(Boolean).join(' ');
+// Too few listings of the animal's own medal: add the nearest other medals
+// (one rank away first, then two, ...) until there are 3, scaling their
+// prices to the animal's medal.
+function scaledComparables(animal, medal, pool, ratioGroups, allListings) {
+    const rank = MEDAL_RANK[medal];
+    const same = pool.list.filter(l => medalOf(l) == medal);
+    const scaled = [];
+    const factors = {};
+    for (let d = 1; d < MEDALS.length && same.length + scaled.length < MIN_COMPS; d++) {
+        for (const other of [MEDALS[rank - d], MEDALS[rank + d]]) {
+            if (!other) continue;
+            const list = pool.list.filter(l => medalOf(l) == other);
+            if (!list.length) continue;
+            const r = medalRatio(other, medal, ratioGroups, allListings);
+            factors[other] = { factor: r.ratio, source: r.source, guessed: r.guessed, count: list.length, median: median(list.map(l => l.price)) };
+            for (const l of list) scaled.push(Object.assign({}, l, { price: l.price * r.ratio, rawPrice: l.price, medalFactor: r.ratio }));
+        }
+    }
+    return {
+        label: `${medalLabel(medal)} from other medals, ${pool.scope}`,
+        medal,
+        medalMode: 'scaled',
+        sameCount: same.length,
+        factors,
+        guessed: Object.values(factors).some(f => f.guessed),
+        scope: pool.tier,
+        list: same.concat(scaled),
+    };
+}
+
+// Within one medal, more Appeal sells for more. Compares the animal's appeal
+// with the unscaled comparables that show one (its own medal when medals are
+// known): a Theil-Sen fit of price on appeal with 4+ of them, else half the
+// relative difference to their median appeal (guess). Factor 0.75..1.33.
+export function appealAdjustment(animal, list) {
+    const mine = appealOf(animal);
+    if (mine == undefined) return null;
+    const pts = list.filter(l => l.medalFactor == undefined && appealOf(l) != undefined && l.price > 0);
+    if (pts.length < 2) return null;
+    const medAppeal = median(pts.map(appealOf));
+    const medPrice = median(pts.map(l => l.price));
+    const fit = fitPrice(pts, appealOf, Math.max(1, medAppeal * 0.03));
+    let factor = fit && medPrice > 0 ? fit.predict(mine) / medPrice : 1 + 0.5 * (mine / medAppeal - 1);
+    factor = Math.max(0.75, Math.min(4 / 3, factor));
+    return { factor, appeal: mine, medianAppeal: medAppeal, count: pts.length, how: fit ? 'fit' : 'ratio' };
+}
+
+// "Silver adult females", "Gold adult animals", "adult animals". scope: 1
+// same sex and age group, 2 same age group, 3 any sex or age.
+function groupName(animal, medal, scope = 1) {
+    const sex = scope > 1 ? 'animals' : animal.gender == Gender.Male ? 'males' : animal.gender == Gender.Female ? 'females' : 'animals';
+    return [medal != undefined ? medalLabel(medal) : '', scope > 2 ? '' : lifeStage(animal.maturity), sex].filter(Boolean).join(' ');
 }
 
 function groupSummary(list) {
@@ -209,6 +317,7 @@ export function speciesMarketSummary(species, listings) {
             .map(([m, list]) => [m, Object.assign(groupSummary(list), {
                 males: list.filter(l => l.gender == Gender.Male).length,
                 females: list.filter(l => l.gender == Gender.Female).length,
+                medianAppeal: median(list.map(appealOf)),
             })])),
     };
 }
@@ -227,10 +336,16 @@ export function offsetLabel(offset) {
 }
 
 // Recommends a CC price.
-//   animal: plain animal (scores.js shape) with id/species/gender/maturity/genes
+//   animal: plain animal (scores.js shape) with id/species/gender/maturity/genes,
+//           and medal/appeal when the row shows them
 //   listings: price book entries
 //   game: { defaultPrice, min, max } from the game's trade listing data
 //   opts: overrides for PRICING_DEFAULTS, e.g. { offset: -0.1 }
+// The market price is the median of the comparables (scaled to the animal's
+// medal when needed), adjusted for appeal within the medal when appeal is
+// known, else for gene score, kept within 25% of what the comparables span,
+// blended with the game's value while data is thin, then the player's
+// offset, rounding, and the game's min/max.
 export function recommendPrice(animal, listings, game = {}, options = {}) {
     const opts = Object.assign({}, PRICING_DEFAULTS, options);
     const score = geneScore(animal);
@@ -241,9 +356,15 @@ export function recommendPrice(animal, listings, game = {}, options = {}) {
     const medScore = median(list.map(l => l.score));
     let marketPrice = null;
     let method = 'none';
+    let appealAdj = null;
     if (list.length > 0) {
-        const fit = score != null ? fitPriceVsScore(list) : null;
-        if (fit) {
+        appealAdj = appealAdjustment(animal, list);
+        const fit = !appealAdj && score != null ? fitPriceVsScore(list) : null;
+        if (appealAdj) {
+            marketPrice = med * appealAdj.factor;
+            method = 'appeal';
+        }
+        else if (fit) {
             marketPrice = fit.predict(score);
             method = 'fit';
         }
@@ -270,43 +391,27 @@ export function recommendPrice(animal, listings, game = {}, options = {}) {
     else {
         price = marketPrice ?? gameValue;
     }
-    const confidence = list.length >= opts.fullConfidenceAt && comp.tier <= 2 ? 'high'
-        : list.length >= 3 ? 'medium'
-            : list.length > 0 ? 'low' : 'none';
+    const confidence = confidenceOf(comp, opts.fullConfidenceAt);
     if (price == null) {
         return { price: null, confidence: 'none', reason: 'No market data and no game value', comps: comp, score, gameValue };
     }
     // the price before the player's offset, for display
     let basePrice = nicePrice(price);
     const offset = isFinite(opts.offset) ? opts.offset : 0;
-    price = nicePrice(price * (1 + offset));
+    const unclamped = nicePrice(price * (1 + offset));
+    // the game's own limits always win
     const clamp = p => {
         if (game.min != null) p = Math.max(game.min, p);
         if (game.max != null) p = Math.min(game.max, p);
         return p;
     };
     basePrice = clamp(basePrice);
-    price = clamp(price);
-    const parts = [];
-    const at = `median ${fmt(med)} CC at gene ${medScore ?? '–'}`;
-    if (comp.medalMode == 'same') {
-        parts.push(`${list.length} ${groupName(animal, comp.medal)}: ${at}`);
-    }
-    else if (comp.medalMode == 'adjacent') {
-        const f = Object.entries(comp.factors);
-        const others = f.map(([m, x]) => `${x.count} ${medalLabel(m)}`).join(' + ');
-        parts.push(`${comp.sameCount} ${groupName(animal, comp.medal)} + ${others} scaled to ${medalLabel(comp.medal)}: ${at}`);
-        parts.push(`medal price ratio ${f.map(([m, x]) => `${medalLabel(m)} ×${x.factor.toFixed(2)} (${x.source})`).join(', ')}`);
-    }
-    else if (list.length) {
-        parts.push(`${list.length} listings (${comp.label}), ${at}`);
-    }
-    if (comp.medalNote) {
-        parts.push(`only ${comp.medalNote.sameCount} ${medalLabel(comp.medalNote.medal)} ${comp.medalNote.sameCount == 1 ? 'listing' : 'listings'}, so all medals compared by gene score`);
-    }
-    if (method == 'fit') parts.push('price fitted to gene score');
+    price = clamp(unclamped);
+    const parts = reasonParts(animal, comp, { med, medScore, method, appealAdj });
     if (gameValue != null) parts.push(`game value ${gameValue} CC (weight ${Math.round((1 - weight) * 100)}%)`);
     if (offset) parts.push(`your offset ${offsetLabel(offset)} (${basePrice} CC before it)`);
+    if (price < unclamped) parts.push(`capped at the game's maximum ${fmt(game.max)} CC`);
+    if (price > unclamped) parts.push(`raised to the game's minimum ${fmt(game.min)} CC`);
     return {
         price,
         basePrice,
@@ -316,10 +421,57 @@ export function recommendPrice(animal, listings, game = {}, options = {}) {
         reason: parts.join('; ') || 'game value only',
         comps: comp,
         medal: medalOf(animal),
+        appeal: appealOf(animal),
+        appealAdj,
         score,
         gameValue,
         marketPrice: marketPrice != null ? Math.round(marketPrice) : null,
     };
+}
+
+const CONF_ORDER = ['none', 'low', 'medium', 'high'];
+
+// high: 6+ comparables of the animal's own medal (or, without medals, sex)
+// medium: 3+; low: fewer. Prices scaled from other medals are at most
+// medium, and at most low when a step ratio was a default guess.
+function confidenceOf(comp, fullAt) {
+    const n = comp.list.length;
+    let c = n >= fullAt && comp.tier <= 2 ? 'high' : n >= MIN_COMPS ? 'medium' : n > 0 ? 'low' : 'none';
+    if (comp.medalMode == 'scaled') {
+        const cap = comp.guessed ? 'low' : 'medium';
+        if (CONF_ORDER.indexOf(c) > CONF_ORDER.indexOf(cap)) c = cap;
+    }
+    return c;
+}
+
+// The text the lister shows under the price: what was compared and how.
+function reasonParts(animal, comp, { med, medScore, method, appealAdj }) {
+    const parts = [];
+    const list = comp.list;
+    const at = `median ${fmt(med)} CC at gene ${medScore ?? '–'}`;
+    if (comp.medalMode == 'same') {
+        parts.push(`${list.length} ${groupName(animal, comp.medal, comp.tier)}: ${at}`);
+    }
+    else if (comp.medalMode == 'scaled') {
+        // "No Gold listed among adult males; 4 Silver at median 400 CC ×1.88 (guessed ratio): median 750 CC at gene 60"
+        const mine = medalLabel(comp.medal);
+        const among = groupName(animal, undefined, comp.scope);
+        const head = comp.sameCount ? `Only ${comp.sameCount} ${mine} listed among ${among}` : `No ${mine} listed among ${among}`;
+        const ratioFrom = x => x.source == DEFAULT_SOURCE ? 'guessed ratio' : x.guessed ? `ratio partly guessed` : `ratio from ${x.source}`;
+        const from = Object.entries(comp.factors).map(([m, x]) =>
+            `${x.count} ${medalLabel(m)} at median ${fmt(x.median)} CC ×${x.factor.toFixed(2)} (${ratioFrom(x)})`).join(' + ');
+        parts.push(`${head}; ${comp.sameCount ? 'with ' : ''}${from}: ${at}`);
+    }
+    else if (list.length) {
+        parts.push(`${list.length} listings (${comp.label}), ${at}`);
+    }
+    if (method == 'appeal') {
+        const pct = Math.round((appealAdj.factor - 1) * 100);
+        const of = comp.medal != undefined ? ` ${medalLabel(comp.medal)}` : '';
+        parts.push(`appeal ${fmt(appealAdj.appeal)} vs median ${fmt(appealAdj.medianAppeal)} of ${appealAdj.count}${of}: ${pct >= 0 ? '+' : '−'}${Math.abs(pct)}%`);
+    }
+    if (method == 'fit') parts.push('price fitted to gene score');
+    return parts;
 }
 
 // Price book maintenance: newest observation per listing id wins; entries
@@ -334,8 +486,9 @@ export function mergeListings(book, observed, now, maxAgeMs = 12 * 3600 * 1000) 
         const k = l.source + ':' + l.id;
         const prev = byId.get(k);
         const next = Object.assign({}, l, { seenAt: now });
-        // a row read before the game filled its medal keeps the known one
+        // a row read before the game filled its medal or appeal keeps the known one
         if (next.medal == undefined && prev && prev.medal != undefined) next.medal = prev.medal;
+        if (next.appeal == undefined && prev && prev.appeal != undefined) next.appeal = prev.appeal;
         byId.set(k, next);
     }
     return Array.from(byId.values());

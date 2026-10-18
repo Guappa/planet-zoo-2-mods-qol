@@ -4,9 +4,16 @@
 //
 // Per habitat: a target number of adults = the habitat's room for the
 // species (social maximum and space, as the breeding programme measures
-// it) x a fill level (lean 70% / balanced 85% / full 100%; the room left
-// is for the young). Habitats over their target give up their least
-// valuable animals until they fit.
+// it) x a fill level (core only / strict 55% / lean 70% / balanced 85% /
+// full 100%; the room left is for the young). Habitats over their target
+// give up their least valuable animals until they fit.
+//
+// Gene rules go first and apply whether a habitat is full or not, to clear
+// poor genes out of the gene pool: a 0% fertility gene (on by default), and
+// a "poor genes" level (weakest: under 35 or a 0% immunity gene; below the
+// species average; best only: the best quarter of each sex stays). They
+// also overrule the breeding core; only the player's keeps, pregnant
+// females, animals on the move and the last breeder of a sex stay.
 //
 // Keep value (higher = keep):
 //   genes        the animal's own gene score (the game's grades, 0..1)
@@ -14,36 +21,96 @@
 //                years 0.3, young or fertile 1
 //   relatives    each related animal in the same habitat lowers it (its
 //                young there would be inbred)
-//   role         alpha and bonded animals a little higher; in a harem, the
-//                2nd, 3rd... fertile male lower
-// Juveniles are only sent away by hand. Never sent away: pregnant females,
+//   role         alpha and bonded animals a little higher; a fertile male
+//                beyond what the group make-up allows for the habitat's
+//                females (the breeding programme's rule: a harem keeps one,
+//                1:3 keeps one per three females) lower
+// Juveniles are only sent away by hand, or by the gene rules with `young`.
+// Never sent away: pregnant females,
 // animals on the move, the best fertile
 // male and the best fertile females of each habitat (a breeding core), and
 // the species' best genes overall (`keepBest` per sex).
 import { ownGrades, fertilityText, Sex } from './kincore.js';
 import { TRADE } from './kinboardcore.js';
-import { habitatCapacity, estimateSpacePerAdult } from './kinprogramme.js';
+import { habitatCapacity, estimateSpacePerAdult, groupRule, ratioKey } from './kinprogramme.js';
 
 export const FILL_STEPS = Object.freeze([
+    { id: 'core', label: 'Core only', fill: 0 },
+    { id: 'strict', label: 'Strict', fill: 0.55 },
     { id: 'lean', label: 'Lean', fill: 0.7 },
     { id: 'balanced', label: 'Balanced', fill: 0.85 },
     { id: 'full', label: 'Full', fill: 1 },
 ]);
 
+// Poor genes: sent away from every habitat, full or not (levels add up)
+export const GENE_STEPS = Object.freeze([
+    { id: 'off', label: 'Off', tip: 'Genes only count where a habitat is over its room' },
+    { id: 'weak', label: 'Weakest', tip: 'Gene score under 35, or a 0% immunity gene' },
+    { id: 'below', label: 'Below average', tip: 'Gene score below the species average (and the weakest)' },
+    { id: 'best', label: 'Best only', tip: 'Only the best quarter of each sex stays' },
+]);
+export const WEAK_GENE = 0.35;
+
 export const CULL_DEFAULTS = Object.freeze({
     fill: 0.85,
     oldAlways: false,       // send too-old animals away even from habitats that are not full
+    zeroFertility: true,    // a 0% fertility gene: sent away from every habitat
+    genes: 'off',           // GENE_STEPS id
+    young: false,           // the gene rules also pick juveniles
     keepBest: 1,            // per sex, the species' best genes are never sent away
     coreMales: 1,           // fertile males kept per habitat
     coreFemales: 2,         // fertile females kept per habitat
     keepIds: null,          // Set: the player said keep
     cullIds: null,          // Set: the player said send away
+    ratio: 'auto',          // the group make-up (the breeding programme's RATIO_CHOICES)
 });
+
+// Breeding males a habitat keeps under the make-up: one per f females
+// (at least one) for 1:f, one for a harem; the game's most per sex caps it.
+export function maleRoom(rule, fertileFemales) {
+    let n = rule && rule.m === 1 && rule.f > 1 ? Math.max(1, Math.ceil(fertileFemales / rule.f)) : Infinity;
+    if (rule && rule.maxMales != null) n = Math.min(n, rule.maxMales);
+    return n;
+}
 
 export function geneScore(a) {
     const g = ownGrades(a && a.genes);
     const vals = Object.values(g).filter(v => typeof v === 'number');
     return vals.length ? vals.reduce((s, v) => s + v, 0) / vals.length : null;
+}
+
+// The animal's fertility gene grade (0..1), or null.
+export function fertilityGene(a) {
+    const g = ownGrades(a && a.genes).fertility;
+    return typeof g === 'number' ? g : null;
+}
+
+const pct = v => Math.round(v * 100);
+
+// Species-wide gene rules: a => reason or null.
+function geneRules(adults, opts) {
+    const level = Math.max(0, GENE_STEPS.findIndex(x => x.id === opts.genes));
+    const known = adults.map(a => geneScore(a)).filter(v => v != null);
+    const avg = known.length ? known.reduce((s, v) => s + v, 0) / known.length : null;
+    // best only: the gene score of the last animal in each sex's best quarter
+    const cut = new Map();
+    for (const sex of [Sex.Male, Sex.Female, Sex.Unisex]) {
+        const v = adults.filter(a => a.sex === sex).map(a => geneScore(a)).filter(x => x != null).sort((x, y) => y - x);
+        if (v.length) cut.set(sex, v[Math.max(0, Math.ceil(v.length / 4) - 1)]);
+    }
+    return a => {
+        if (a.juv && !opts.young) return null;
+        const g = ownGrades(a.genes);
+        if (opts.zeroFertility && g.fertility === 0) return '0% fertility genes';
+        if (level < 1) return null;
+        if (g.immunity === 0) return '0% immunity genes';
+        const gs = geneScore(a);
+        if (gs == null) return null;
+        if (gs < WEAK_GENE - 1e-9) return `poor genes (${pct(gs)})`;
+        if (level >= 2 && avg != null && gs < avg - 1e-9) return `genes below the species average (${pct(gs)}; average ${pct(avg)})`;
+        if (level >= 3 && cut.has(a.sex) && gs < cut.get(a.sex) - 1e-9) return `not in the best quarter of genes (${pct(gs)}; needs ${pct(cut.get(a.sex))})`;
+        return null;
+    };
 }
 
 function fertilityValue(a) {
@@ -65,23 +132,31 @@ function related(model, a, b) {
     return !!rel && (rel.game || rel.kinship >= model.closeKinship - 1e-9);
 }
 
-// { value, gene, fert, relatives, parts }
-export function keepValue(model, a, group, { system = 'mixed', maleRank = 0 } = {}) {
+// { value, gene, fert, relatives, parts }. males: breeding males the
+// habitat keeps (maleRoom); without it a polygynous species keeps one.
+export function keepValue(model, a, group, { system = 'mixed', maleRank = 0, males } = {}) {
+    if (males == null) males = system === 'polygyny' ? 1 : Infinity;
     const gene = geneScore(a);
     const fert = fertilityValue(a);
     const relatives = group.filter(b => b !== a && related(model, a, b)).length;
     let value = 0.55 * (gene == null ? 0.5 : gene) + 0.35 * fert - 0.06 * relatives;
     if (a.alpha) value += 0.08;
     if ((a.mates || []).some(id => group.some(b => b.id === id))) value += 0.05;
-    if (system === 'polygyny' && a.sex === Sex.Male && breedsNow(a) && maleRank > 0) value -= 0.2;
+    if (a.sex === Sex.Male && breedsNow(a) && maleRank >= males) value -= 0.2;
     return { value, gene, fert, relatives };
 }
 
-function cullReason(a, k, group, system, maleRank) {
+function extraMaleWhy(rule, males) {
+    const key = ratioKey(rule);
+    if (key === '1:*' || males === 1 && rule.maxMales === 1) return 'an extra male (harem: one breeding male per habitat)';
+    return `an extra male (${key.replace(':', ' ♂ : ')} ♀: room for ${males} breeding male${males === 1 ? '' : 's'} here)`;
+}
+
+function cullReason(a, k, group, rule, maleRank, males) {
     const st = a.fert && a.fert.state;
     if (st === 'old') return 'too old to breed';
     if (st === 'sterile' || (!st && a.infertile && !a.juv)) return 'infertile';
-    if (system === 'polygyny' && a.sex === Sex.Male && maleRank > 0 && breedsNow(a)) return 'an extra male (harem: one breeding male per habitat)';
+    if (a.sex === Sex.Male && maleRank >= males && breedsNow(a)) return extraMaleWhy(rule, males);
     if (st === 'ending') return fertilityText(a);
     const best = Math.max(...group.map(b => geneScore(b) ?? 0));
     if (k.relatives >= 2) return `related to ${k.relatives} in this habitat`;
@@ -96,18 +171,32 @@ export function cullPlan(model, species, info = {}, { options = {} } = {}) {
     if (!model || !species) return null;
     const keepIds = opts.keepIds instanceof Set ? opts.keepIds : new Set(opts.keepIds || []);
     const cullIds = opts.cullIds instanceof Set ? opts.cullIds : new Set(opts.cullIds || []);
-    const system = info.mating || 'mixed';
+    const rule = groupRule(info, opts.ratio);
+    const system = rule.system;
     const infoX = Object.assign({}, info);
     if (!infoX.spacePerAdult) infoX.spacePerAdult = estimateSpacePerAdult(info);
     const all = Array.from(model.animals.values()).filter(a => a.species === species && !a.exhibit && a.alive !== false);
     const inHabitats = all.filter(a => a.hab);
     const atTrade = all.filter(a => !a.hab && a.lt === 'trade').length;
-    // the species' best genes, per sex: never sent away
+    const poorWhy = geneRules(inHabitats.filter(a => !a.juv), opts);
+    const poor = new Map();
+    for (const a of inHabitats) {
+        const w = poorWhy(a);
+        if (w) poor.set(a.id, w);
+    }
+    // the species' best genes, per sex: never sent away. Poor genes don't
+    // count, unless every breeder of that sex has them (then the best of
+    // them stays, so the species can still breed)
     const protectedBest = new Set();
+    const lastOfSex = new Set();
     for (const sex of [Sex.Male, Sex.Female, Sex.Unisex]) {
-        inHabitats.filter(a => a.sex === sex && !a.juv && fertilityValue(a) > 0)
-            .sort((x, y) => (geneScore(y) ?? 0) - (geneScore(x) ?? 0))
-            .slice(0, opts.keepBest).forEach(a => protectedBest.add(a.id));
+        const breeders = inHabitats.filter(a => a.sex === sex && !a.juv && fertilityValue(a) > 0)
+            .sort((x, y) => (geneScore(y) ?? 0) - (geneScore(x) ?? 0));
+        const good = breeders.filter(a => !poor.has(a.id));
+        (good.length ? good : breeders).slice(0, opts.keepBest).forEach(a => {
+            protectedBest.add(a.id);
+            if (poor.has(a.id)) lastOfSex.add(a.id);
+        });
     }
     const byHab = new Map();
     for (const a of inHabitats) {
@@ -122,27 +211,34 @@ export function cullPlan(model, species, info = {}, { options = {} } = {}) {
         const room = Number.isFinite(r) ? r : null;
         const capacity = room != null ? room : adults.length;
         const target = Math.max(opts.coreMales + opts.coreFemales, Math.floor(capacity * opts.fill + 1e-9));
-        // harem: rank the fertile males by genes
+        // the fertile males ranked by genes; the make-up says how many stay breeding
         const fertileMales = group.filter(a => a.sex === Sex.Male && breedsNow(a)).sort((x, y) => (geneScore(y) ?? 0) - (geneScore(x) ?? 0));
         const maleRankOf = a => fertileMales.indexOf(a);
-        const scored = group.map(a => ({ a, k: keepValue(model, a, group, { system, maleRank: Math.max(0, maleRankOf(a)) }) }));
+        const males = maleRoom(rule, group.filter(a => a.sex === Sex.Female && breedsNow(a)).length);
+        const scored = group.map(a => ({ a, k: keepValue(model, a, group, { system, maleRank: Math.max(0, maleRankOf(a)), males }) }));
         // the breeding core: the best fertile male(s), then the best fertile
         // females not related to them (keep value, so relatives rank lower)
         const valueOf = new Map(scored.map(x => [x.a.id, x.k.value]));
         const byValue = list => list.slice().sort((x, y) => valueOf.get(y.id) - valueOf.get(x.id));
         const core = new Set();
-        const coreMales = fertileMales.slice(0, opts.coreMales);
+        const coreMales = fertileMales.filter(a => !poor.has(a.id)).slice(0, opts.coreMales);
         coreMales.forEach(a => core.add(a.id));
-        const females = group.filter(a => a.sex === Sex.Female && breedsNow(a));
+        const females = group.filter(a => a.sex === Sex.Female && breedsNow(a) && !poor.has(a.id));
         const unrelatedFirst = byValue(females).sort((x, y) => coreMales.some(m => related(model, m, x)) - coreMales.some(m => related(model, m, y)));
         unrelatedFirst.slice(0, opts.coreFemales).forEach(a => core.add(a.id));
-        byValue(group.filter(a => a.sex === Sex.Unisex && breedsNow(a))).slice(0, opts.coreMales + opts.coreFemales).forEach(a => core.add(a.id));
+        byValue(group.filter(a => a.sex === Sex.Unisex && breedsNow(a) && !poor.has(a.id))).slice(0, opts.coreMales + opts.coreFemales).forEach(a => core.add(a.id));
         const fixed = a => keepIds.has(a.id) || a.preg || a.moving || core.has(a.id) || protectedBest.has(a.id);
         const why = new Map();
         // the player's choices first
         for (const { a } of scored) if (cullIds.has(a.id) && !a.moving) why.set(a.id, 'your choice');
         // the player's sends come on top: they do not make room for another to stay
         let over = adults.length - target;
+        // poor genes go from every habitat, full or not; they make room
+        for (const { a } of scored) {
+            if (fixed(a) || why.has(a.id) || !poor.has(a.id)) continue;
+            why.set(a.id, poor.get(a.id));
+            if (!a.juv) over--;
+        }
         const candidates = scored.filter(x => !fixed(x.a) && !why.has(x.a.id)).sort((x, y) => x.k.value - y.k.value);
         for (const x of candidates) {
             const oldOne = fertilityValue(x.a) === 0 && !x.a.juv;
@@ -150,14 +246,16 @@ export function cullPlan(model, species, info = {}, { options = {} } = {}) {
             // left by the fill level is for the young
             if (x.a.juv) continue;
             if (over > 0 || (opts.oldAlways && oldOne)) {
-                why.set(x.a.id, cullReason(x.a, x.k, group, system, Math.max(0, maleRankOf(x.a))));
+                why.set(x.a.id, cullReason(x.a, x.k, group, rule, Math.max(0, maleRankOf(x.a)), males));
                 if (!x.a.juv) over--;
             }
         }
         const cull = scored.filter(x => why.has(x.a.id)).map(x => ({ id: x.a.id, reason: why.get(x.a.id), value: x.k.value, gene: x.k.gene }));
         const keep = scored.filter(x => !why.has(x.a.id)).map(x => ({
             id: x.a.id, value: x.k.value, gene: x.k.gene,
-            why: keepIds.has(x.a.id) ? 'your choice' : x.a.preg ? 'pregnant' : x.a.moving ? 'on the move' : core.has(x.a.id) ? 'breeding core' : protectedBest.has(x.a.id) ? 'best genes of the species' : '',
+            why: keepIds.has(x.a.id) ? 'your choice' : x.a.preg ? 'pregnant' : x.a.moving ? 'on the move' : core.has(x.a.id) ? 'breeding core'
+                : lastOfSex.has(x.a.id) ? 'last breeder of its sex' : protectedBest.has(x.a.id) ? 'best genes of the species' : '',
+            poor: poor.get(x.a.id) || '',
         }));
         habitats.push({ hab, adults: adults.length, juveniles: group.length - adults.length, capacity, room: room != null, target, keep, cull,
             keptAdults: keep.filter(x => !model.animals.get(x.id).juv).length });
@@ -171,10 +269,17 @@ export function cullPlan(model, species, info = {}, { options = {} } = {}) {
     const culled = new Set(moves.map(m => m.id));
     const kept = inHabitats.filter(a => !culled.has(a.id));
     const gone = inHabitats.filter(a => culled.has(a.id));
+    const sum = list => ({
+        animals: list.length, adults: list.filter(a => !a.juv).length, gene: avg(list),
+        old: list.filter(a => fertilityValue(a) === 0 && !a.juv).length,
+        zeroFert: list.filter(a => fertilityGene(a) === 0).length,
+    });
     return {
-        species, system, fill: opts.fill, moves, habitats, atTrade,
-        before: { animals: inHabitats.length, adults: inHabitats.filter(a => !a.juv).length, gene: avg(inHabitats), old: inHabitats.filter(a => fertilityValue(a) === 0 && !a.juv).length },
-        after: { animals: kept.length, adults: kept.filter(a => !a.juv).length, gene: avg(kept), old: kept.filter(a => fertilityValue(a) === 0 && !a.juv).length },
+        species, system, rule, fill: opts.fill, moves, habitats, atTrade,
+        // poor genes that stay (pregnant, kept, on the move, last breeder)
+        poorKept: inHabitats.filter(a => poor.has(a.id) && !culled.has(a.id)).length,
+        before: sum(inHabitats),
+        after: sum(kept),
         removedGene: avg(gone),
         estimated: !info.social && !(info.habitats && Object.keys(info.habitats).length),
     };

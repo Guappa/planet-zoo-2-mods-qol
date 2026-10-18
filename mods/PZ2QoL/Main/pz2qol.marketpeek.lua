@@ -91,6 +91,11 @@ MarketPeek.Start = function(self, speciesUID)
 	if self.oStorageMode == nil then
 		return self:_Send("failed", "Animal Storage is not open on the game side.")
 	end
+	-- one server action at a time: never during a listing run
+	local Lister = global.package.loaded["pz2qol.lister"]
+	if type(Lister) == "table" and Lister.tRun ~= nil then
+		return self:_Send("busy", "A listing run is going; check prices when it is done.")
+	end
 	if speciesUID == nil then
 		return self:_Send("failed", "No species id was sent.")
 	end

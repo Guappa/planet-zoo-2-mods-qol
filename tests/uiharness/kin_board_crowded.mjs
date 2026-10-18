@@ -55,6 +55,8 @@ export async function hud(page, ctx) {
             vpHeight: Math.round(vr.height), scrollHeight: vp.scrollHeight, scrollTop: vp.scrollTop,
             center: [Math.round(vr.left + vr.width / 2), Math.round(vr.top + vr.height / 2)],
             bar: !!col.querySelector('.PZ2QoL_kpBar.v.show'),
+            hit: (() => { const n = document.elementFromPoint(Math.round(vr.left + vr.width / 2), Math.round(vr.top + vr.height / 2)); const c = n && n.closest('.PZ2QoL_kbCol'); return c ? c.getAttribute('data-col') + ':' + c.className : String(n && n.className); })(),
+            colId: col.getAttribute('data-col'), colLeft: Math.round(cr.left), colRight: Math.round(cr.right), boardRight: Math.round(br.right),
         };
     });
     facts.before = await measure();

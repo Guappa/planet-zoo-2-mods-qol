@@ -54,6 +54,27 @@
 
 ## Layout facts
 
+- **In-park HUD (1.0.4/1.0.5, harness 1920×1080, 1rem = 18px × the UI scale), offline:**
+  - Top-left column `.NotificationsModule_buttons` (0,20, 50 wide): Help, Zoopedia, Research,
+    Timeline, Objectives, Challenges, Inspector, then the alert buttons. It grows down with alerts
+    to about y≈594.
+  - Bottom-left tools column `.ToolsBar_root` (`js/project/modules/HUD/Components/ToolsBar.js`,
+    0,645, 50×315, `bottom: 6.667rem`, grows upward): Paths, Barriers, Terrain, Foliage, Multi-select
+    and Demolish. Its background panel `.ToolsBar_background` is #3C472E with radius 0 10px 10px 0.
+    Buttons are 40px round, background #fff2dd, outline 2/2/4px #c7b5a3 at opacity 0.9, 26px icon
+    with the brown filter, and pink #FFC5C5 on hover (the `.hover` class, set by the game's JS).
+  - The column gets `.hidden` while a management screen is open, in camera or photo mode, with the
+    UI hidden, during cinematics and in explorer mode. It is only dimmed when the build browser or
+    an info panel is open.
+  - Management shortcuts (Zoo management, Staff, Market & Storage) are tabs in the bottom TaskBar
+    row, which is centred and sized by its text, so it is a poor anchor.
+  - PZ2QoL's launcher (`hudlauncher.js`, `pz2qol_hud.css`) docks above `.ToolsBar_root` in its own
+    element under `<body>`, never inside the game's preact column (the game recreates it). It
+    hides with the column and drops buttons when the alert column leaves no room.
+- The game's icons (`/img/icons/*.svg`) are not in the unpacked UI OVL, so they don't render in
+  the harness. Names the game uses: `IconAnimals`, `save`, `Icon_SaveLoad`, `IconTime`.
+- `::before` / `::after` in Gameface: unproven. Mod widgets use real elements instead.
+
 - Management Animals panel root: `.ManagementAnimals_root`. Reserve toolbar space with
   `padding-top`. **proven** in harness.
 - The management screen is chosen with `Management_SetManagementIndex(sectionId)`.
@@ -66,8 +87,15 @@
   in `pz2qol.kin.lua` (events `PZ2QoL_StoreLoad` -> `PZ2QoL_StoreData` chunks,
   `PZ2QoL_StoreSave` -> `PZ2QoL_StoreSaved`). Changes made before the file is read are replayed
   on top of it, so updates must be idempotent (set on/off, not toggle).
-  **In retail the file store always ends in `memory`** (the api.debug file calls are stubs, see
-  lua-runtime.md), so PZ2QoL's habitat assignments last only until the game closes.
+  The Lua side keeps this data on the device in the game's player save, one entry per zoo,
+  Franchise included (see lua-runtime.md "the player save"; the api.debug file calls are retail
+  stubs). Status `file` means "kept on this device"; `memory` comes with a reason
+  (`userDataReason()`: `wait` (zoo or player profile not known yet; a `PZ2QoL_StoreReset` follows,
+  and changes made meanwhile are replayed), `noplayer`, `nopark`, `failed`, `nolua`). The Species
+  board shows its "last until you close the game" notice only for reasons other than `wait`.
+  `PZ2QoL_StoreReset` (Lua to JS) makes the page read the store again when a park starts or ends
+  or the zoo's store becomes known. The store is the truth once read: data the page held before
+  (another zoo's, the localStorage mirror) is not merged in, only this view's pending changes.
 
 ## Preact runtime: hooking game components (used by Kin)
 

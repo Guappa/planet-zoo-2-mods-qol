@@ -35,6 +35,7 @@ const EDGE = opt('--edge', process.env.PZ2H_EDGE || 'C:\\Program Files (x86)\\Mi
 const SEED = Number(opt('--seed', 12345));
 const HEADED = flag('--headed');
 const KIN_ONLY = flag('--kin-only'); // only the kin_*.mjs scenarios (faster)
+const ONLY = opt('--only', ''); // with --kin-only: only the kin/desk scenarios whose name contains this
 const VANILLA = !flag('--no-vanilla') && !KIN_ONLY;
 
 let chromium;
@@ -156,6 +157,17 @@ async function openFrontend(browser, url, label) {
     const page = await browser.newPage({ viewport: { width: 1920, height: 1080 } });
     const rec = attachCollectors(page, label);
     await page.addInitScript(pageShims, { seed: SEED, css: GAMEFACE_COMPAT_CSS });
+    // the Market lister is on by default in game; its panel sits over the
+    // storage list, so harness pages start with it off and the lister
+    // scenario turns it on itself
+    await page.addInitScript(() => {
+        try {
+            window.localStorage.setItem('PZ2QoL.listerEnabled', 'false');
+        }
+        catch (e) {
+            // no storage: on, as in game
+        }
+    });
     await page.goto(url, { waitUntil: 'load' });
     await page.waitForSelector('.FrontendModule_root', { timeout: 30000 });
     await page.waitForTimeout(1500);
@@ -237,8 +249,8 @@ async function clickChip(page, barSel, startsWith) {
 // ------------------------------------------------------- market lister
 // Fakes the native side of selecting and listing a storage animal (the
 // game's Lua/C++ is absent in the browser) and checks the lister's rules:
-// off by default, recommended price used, one at a time, cap per click,
-// stop on the first server error.
+// on by default, recommended price used, one at a time, cap per click,
+// server errors skip the animal and the run carries on.
 async function installFakeNative(page) {
     await page.evaluate(async () => {
         const DS = await import('/js/common/core/DataStore.js');
@@ -256,6 +268,9 @@ async function installFakeNative(page) {
         for (const k of keys()) {
             DS.setValue(LIST.concat(k), 'auctionTimerSeconds', 0);
             DS.setValue(LIST.concat(k), 'isMoving', false);
+            // the generator picks any maturity; elderly infertile (6) animals
+            // are skipped by the lister on purpose (checked on their own below)
+            if (DS.getValue(LIST.concat(k), 'maturity') == 6) DS.setValue(LIST.concat(k), 'maturity', 2);
         }
         DS.setValue(ACTIONS, 'tradeAllowed', true);
         DS.setValue(TRADE, 'tradePriceDefault', 800);
@@ -362,7 +377,8 @@ async function runListerScenario(page) {
         return { ...a, withGenes };
     });
     facts.target = { key: target.key, species: target.species };
-    await page.locator('.PZ2QoL_bar.storage .PZ2QoL_switch').click();
+    // on by default (2026-10-16); click only if a previous scenario turned it off
+    if (!(await page.locator('.PZ2QoL_bar.storage .PZ2QoL_switch.on').count())) await page.locator('.PZ2QoL_bar.storage .PZ2QoL_switch').click();
     await page.waitForTimeout(800);
     facts.listerOnAfterClick = await page.locator('.PZ2QoL_bar.storage .PZ2QoL_switch.on').count() > 0;
     await page.evaluate(id => engine.trigger('AnimalStorage_ItemSelected', id), target.id);
@@ -557,10 +573,12 @@ async function runListerScenario(page) {
     facts.batchGapsMs = facts.batchCalls.slice(1).map((c, i) => c.t - facts.batchCalls[i].t);
     facts.bannerAfterBatch = (await domFacts(page)).errorBanner;
     await shot(page, '10_lister_batch_stopped');
+    // several selected: the pause slider under the Sell button
+    facts.paceText = await page.evaluate(() => document.querySelector('.PZ2QoL_lister .PZ2QoL_pace')?.innerText || '');
 
-    // A fatal server error (not enough CC) must stop the run, not skip; so
-    // must an unnamed code (255 / 5 in game): listing on after one crashed
-    // the game twice (2026-10-15).
+    // Any server error, even "fatal" ones (not enough CC) and unnamed codes
+    // (255 / 5 in game), skips that animal and the run carries on: only the
+    // player's Stop ends a run (the developer's decision, 2026-10-16).
     const fatalKeys = batchKeys.slice(0, 3);
     facts.fatal = [];
     for (const message of ['Server error: NotEnoughCC', 'Server error: code 255']) {
@@ -697,6 +715,32 @@ async function runListerScenario(page) {
         throw new Error(`already-listed animals not left out: button "${facts.mixButton}", ${facts.mixCalls.length} sent, status "${facts.mixStatus}"`);
     }
 
+    // Elderly animals that are no longer fertile (maturity 6) are never sent:
+    // the market won't take them. One of two selected is elderly infertile.
+    const elderlyKeys = await page.evaluate(async () => {
+        const DS = await import('/js/common/core/DataStore.js');
+        const LIST = ['hubAnimalsData', 'animalStorageData', 'list'];
+        const free = window.__fake.keys().filter(k => !(DS.getValue(LIST.concat(k), 'auctionTimerSeconds') > 0)).slice(0, 2);
+        window.__fake.calls = [];
+        for (const k of free) DS.setValue(LIST.concat(k), 'isMoving', false);
+        DS.setValue(LIST.concat(free[0]), 'maturity', 6);
+        DS.setValue(LIST.concat(free[1]), 'maturity', 2);
+        DS.setValue(['hubAnimalsData', 'animalStorageData'], 'selectedAnimalIDs', free);
+        return free;
+    });
+    await page.waitForTimeout(800);
+    await page.locator('.PZ2QoL_lister .PZ2QoL_btn.positive').click();
+    await page.waitForFunction(() => /Stopped|Done:/.test(document.querySelector('.PZ2QoL_listerStatus')?.textContent || ''), null, { timeout: 60000 });
+    facts.elderlyStatus = (await page.locator('.PZ2QoL_listerStatus').first().textContent()).trim();
+    facts.elderlyCalls = await page.evaluate(() => window.__fake.calls.map(c => c.key));
+    await page.evaluate(async k => {
+        const DS = await import('/js/common/core/DataStore.js');
+        DS.setValue(['hubAnimalsData', 'animalStorageData', 'list', k], 'maturity', 2);
+    }, elderlyKeys[0]);
+    if (elderlyKeys.length < 2 || facts.elderlyCalls.includes(elderlyKeys[0]) || facts.elderlyCalls.length != 1 || !/1 elderly and no longer fertile/.test(facts.elderlyStatus)) {
+        throw new Error(`elderly infertile animal not skipped: keys ${JSON.stringify(elderlyKeys)}, sent ${JSON.stringify(facts.elderlyCalls)}, status "${facts.elderlyStatus}"`);
+    }
+
     // "Not listed" hides the animals now on the market (the 9 just listed)
     const storageCount = () => page.evaluate(async () => {
         const { DataStoreCollection } = await import('/js/common/data/DataStoreCollection.js');
@@ -721,6 +765,84 @@ async function runListerScenario(page) {
         throw new Error(`"Not listed" should hide exactly the ${beforeHide.listed} listed animals: ${JSON.stringify(facts.notListed)}`);
     }
     if (facts.storageBarHeight > 90) throw new Error(`storage toolbar too tall: ${facts.storageBarHeight}px`);
+
+    // "Fertile adults" shows only maturity 1-3 (no infants, no infertile stages)
+    await page.evaluate(async () => {
+        const DS = await import('/js/common/core/DataStore.js');
+        const LIST = ['hubAnimalsData', 'animalStorageData', 'list'];
+        const ks = window.__fake.keys();
+        [6, 5, 3, 0].forEach((m, i) => ks[ks.length - 1 - i] && DS.setValue(LIST.concat(ks[ks.length - 1 - i]), 'maturity', m));
+    });
+    // the Adults chip cycles: all adults -> fertile adults -> juveniles -> off
+    const adultsChip = page.locator('.PZ2QoL_bar.storage .PZ2QoL_chip', { hasText: /^(Adults|Fertile adults|Juveniles)/ });
+    await adultsChip.click();
+    await page.waitForTimeout(300);
+    await adultsChip.click();
+    await page.waitForTimeout(800);
+    facts.fertileAdults = await page.evaluate(async () => {
+        const { DataStoreCollection } = await import('/js/common/data/DataStoreCollection.js');
+        const DS = await import('/js/common/core/DataStore.js');
+        const c = new DataStoreCollection(['hubAnimalsData', 'animalStorageData', 'list']);
+        await new Promise(r => setTimeout(r, 200));
+        const shown = c.source.map(x => DS.getValue(x, 'maturity'));
+        const all = c._source.map(x => DS.getValue(x, 'maturity'));
+        c.dispose();
+        return { shown: shown.length, expected: all.filter(m => m >= 1 && m <= 3).length, bad: shown.filter(m => !(m >= 1 && m <= 3)), chip: document.querySelector('.PZ2QoL_bar.storage .PZ2QoL_chip.on')?.textContent };
+    });
+    facts.storageBarHeightFertile = await page.evaluate(() => Math.round(document.querySelector('.PZ2QoL_bar.storage').getBoundingClientRect().height));
+    await shot(page, '11c_storage_fertile_adults');
+    await adultsChip.click();
+    await page.waitForTimeout(800);
+    facts.juvenilesChip = await page.evaluate(async () => {
+        const { DataStoreCollection } = await import('/js/common/data/DataStoreCollection.js');
+        const DS = await import('/js/common/core/DataStore.js');
+        const c = new DataStoreCollection(['hubAnimalsData', 'animalStorageData', 'list']);
+        await new Promise(r => setTimeout(r, 200));
+        const shown = c.source.map(x => DS.getValue(x, 'maturity'));
+        const all = c._source.map(x => DS.getValue(x, 'maturity'));
+        c.dispose();
+        return { shown: shown.length, expected: all.filter(m => m == 0 || m == undefined).length, chip: document.querySelector('.PZ2QoL_bar.storage .PZ2QoL_chip.on')?.textContent };
+    });
+    await adultsChip.click();
+    await page.waitForTimeout(500);
+    if (facts.juvenilesChip.shown != facts.juvenilesChip.expected || !facts.juvenilesChip.shown || !/^Juveniles/.test(facts.juvenilesChip.chip || '')) {
+        throw new Error(`Adults chip's Juveniles step wrong: ${JSON.stringify(facts.juvenilesChip)}`);
+    }
+    if (facts.fertileAdults.bad.length || facts.fertileAdults.shown != facts.fertileAdults.expected || !facts.fertileAdults.shown || !/^Fertile adults/.test(facts.fertileAdults.chip || '') || facts.storageBarHeightFertile > 90) {
+        throw new Error(`"Fertile adults" filter wrong: ${JSON.stringify(facts.fertileAdults)}`);
+    }
+
+    // The Sellable chip cycles: sellable -> not sellable -> off. Sellable
+    // means not infant, not infertile (4-6), not pregnant, listed or moving.
+    const sellChip = page.locator('.PZ2QoL_bar.storage .PZ2QoL_chip', { hasText: /^(Sellable|Not sellable)/ });
+    const readSellable = () => page.evaluate(async () => {
+        const { DataStoreCollection } = await import('/js/common/data/DataStoreCollection.js');
+        const DS = await import('/js/common/core/DataStore.js');
+        const c = new DataStoreCollection(['hubAnimalsData', 'animalStorageData', 'list']);
+        await new Promise(r => setTimeout(r, 200));
+        const row = x => ({ m: DS.getValue(x, 'maturity'), p: !!DS.getValue(x, 'isPregnant'), t: DS.getValue(x, 'auctionTimerSeconds'), mv: !!DS.getValue(x, 'isMoving') });
+        const ok = r => r.m != 0 && !(r.m >= 4 && r.m <= 6) && !r.p && !(r.t > 0) && !r.mv;
+        const shown = c.source.map(row);
+        const all = c._source.map(row);
+        c.dispose();
+        return { shown: shown.length, sellable: all.filter(ok).length, total: all.length, shownOk: shown.filter(ok).length, chip: document.querySelector('.PZ2QoL_bar.storage .PZ2QoL_chip.on')?.textContent };
+    });
+    await sellChip.click();
+    await page.waitForTimeout(800);
+    facts.sellableYes = await readSellable();
+    await shot(page, '11d_storage_sellable');
+    await sellChip.click();
+    await page.waitForTimeout(800);
+    facts.sellableNo = await readSellable();
+    facts.storageBarHeightSellable = await page.evaluate(() => Math.round(document.querySelector('.PZ2QoL_bar.storage').getBoundingClientRect().height));
+    await shot(page, '11e_storage_not_sellable');
+    await sellChip.click();
+    await page.waitForTimeout(500);
+    const y = facts.sellableYes, n = facts.sellableNo;
+    if (!y.shown || y.shown != y.sellable || y.shownOk != y.shown || !/^Sellable/.test(y.chip || '')
+        || !n.shown || n.shown != n.total - n.sellable || n.shownOk != 0 || !/^Not sellable/.test(n.chip || '') || facts.storageBarHeightSellable > 90) {
+        throw new Error(`"Sellable" filter wrong: ${JSON.stringify({ y, n, h: facts.storageBarHeightSellable })}`);
+    }
 
     // The game rebuilds the storage list when something sells, so list keys
     // can point at other animals mid-run. Swap a selected animal's row with
@@ -775,8 +897,8 @@ async function runListerScenario(page) {
 
     // Assertions
     const problems = [];
-    if (facts.panelVisibleByDefault) problems.push('panel visible while lister is off by default');
-    if (facts.listerOnByDefault) problems.push('lister switch on by default');
+    // (the harness starts with the lister off on purpose; in game it is on by default)
+    if (facts.listerOnByDefault) problems.push('harness page did not start with the lister off');
     if (!facts.listerOnAfterClick) problems.push('lister switch did not turn on');
     if (facts.singleCalls.length != 1) problems.push(`single sell made ${facts.singleCalls.length} calls`);
     else {
@@ -814,16 +936,19 @@ async function runListerScenario(page) {
     if (facts.offsetAfterReset != '±0%') problems.push(`offset did not reset: ${facts.offsetAfterReset}`);
     if (facts.batchCalls.length != 7) problems.push(`batch made ${facts.batchCalls.length} calls, expected 7 (the rejected 3rd is skipped, the rest continue)`);
     if (!/Done: listed 6, skipped 1 \(1 refused by the server\) of 7/.test(facts.batchStatus)) problems.push(`batch status: ${facts.batchStatus}`);
-    // pacing after every request, and a longer pause after the rejected 3rd
-    // (in game, requests sent right after a rejection failed and crashed)
+    // pacing after every request, the rejected 3rd included, with no
+    // longer pause after it (the 8 s back-off was removed 2026-10-16)
     if (facts.batchGapsMs.some(g => g < 3000)) problems.push(`listings closer than 3s: ${facts.batchGapsMs}`);
-    if (!(facts.batchGapsMs[2] >= 8000)) problems.push(`no back-off after the rejected listing: ${facts.batchGapsMs}`);
+    if (!/Pause between listings/.test(facts.paceText) || !/3 s/.test(facts.paceText)) problems.push(`no pause slider in the lister panel: "${facts.paceText}"`);
+    // the rejected gap is the normal one plus the 3 s REJECT_GRACE_MS check
+    // (about 9 s here); the old 8 s back-off made it about 14 s
+    if (!(facts.batchGapsMs[2] < facts.batchGapsMs[0] + 6000)) problems.push(`still a long back-off after the rejected listing: ${facts.batchGapsMs}`);
     if (facts.batchCalls.some(c => c.busy)) problems.push('a listing was sent while the previous request was still running');
     if (!(facts.batchDbQueries >= facts.batchCalls.length)) problems.push(`the lister asked whether the server was idle ${facts.batchDbQueries} times for ${facts.batchCalls.length} listings`);
     if (facts.batchCalls.some((c, i) => c.key != batchKeys[i])) problems.push('batch listed animals out of order');
     if (!facts.bannerAfterBatch.visible) problems.push('no error banner after the failed listing');
     for (const f of facts.fatal) {
-        if (f.calls != 1 || !/^Stopped/.test(f.status)) problems.push(`"${f.message}" did not stop the run: ${f.calls} calls, ${f.status}`);
+        if (f.calls != 3 || !/^Done: listed 2, skipped 1/.test(f.status)) problems.push(`"${f.message}" did not skip and carry on: ${f.calls} calls, ${f.status}`);
     }
     if (facts.panelVisibleAfterOff) problems.push('panel still visible after turning the lister off');
     // worst case: a finished run block with a 3-line status plus Sell and Refresh
@@ -839,6 +964,14 @@ async function openHud(browser, url, label) {
     const page = await browser.newPage({ viewport: { width: 1920, height: 1080 } });
     const rec = attachCollectors(page, label);
     await page.addInitScript(pageShims, { seed: SEED, css: GAMEFACE_COMPAT_CSS });
+    await page.addInitScript(() => {
+        try {
+            window.localStorage.setItem('PZ2QoL.listerEnabled', 'false');
+        }
+        catch (e) {
+            // no storage
+        }
+    });
     await page.goto(url, { waitUntil: 'load' });
     await page.waitForTimeout(4000);
     return { page, rec };
@@ -934,9 +1067,12 @@ async function runZooScenario(page) {
 // Each tests/uiharness/kin_*.mjs exports { name, hud?(page, ctx), frontend?(page, ctx) }.
 // They run after the built-in scenarios; a thrown Error is a harness failure.
 const KIN_SCENARIOS = [];
-for (const f of fs.readdirSync(HERE).filter(n => /^kin_.*\.mjs$/.test(n) && n !== 'kin_fixture.mjs').sort()) {
+// desk_*.mjs: the Market desk (not Kin, same hooks)
+for (const f of fs.readdirSync(HERE).filter(n => /^(kin|desk)_.*\.mjs$/.test(n) && n !== 'kin_fixture.mjs').sort()) {
     const mod = await import('./' + f);
-    KIN_SCENARIOS.push(Object.assign({ name: f.replace(/^kin_|\.mjs$/g, '') }, mod));
+    const sname = f.replace(/^kin_|\.mjs$/g, '');
+    if (ONLY && !sname.includes(ONLY)) continue;
+    KIN_SCENARIOS.push(Object.assign({ name: sname }, mod));
 }
 const kinCtx = { shot, OUT, gotoMarketTab, facts: results => results };
 

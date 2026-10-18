@@ -47,6 +47,7 @@ local Kin = module(...)
 
 Kin.nVersion = 1
 Kin.nPerFrame = 40          -- animals per frame while ticking
+Kin.nBondPerFrame = 200     -- GetMatingMonogamyIcon calls per frame (bond pass)
 Kin.nBatch = 50             -- ids per GetUIAnimalListDataForIDs call (the game uses 50)
 Kin.nChunkSize = 12000      -- characters per PZ2QoL_KinChunk event
 Kin.nAncestorDepth = 4      -- generations above an absent parent
@@ -347,17 +348,26 @@ Kin._Static = function(self, animals, nEntity)
 	return t
 end
 
+-- The animal's mates (ids), whether its species is monogamous, and the
+-- first mate's entity: for a monogamous animal that is its bonded mate, the
+-- one the info panel shows (it may be dead, moved or gone: the bond outlives
+-- it while the animal mourns, AnimalInfoPopUp._UpdateBondedMateData).
 local function mateIds(animals, nEntity)
 	local out = array()
+	local bMono, nFirst = false, nil
 	local bOk, t = pcall(animals.GetMateData, animals, nEntity)
 	if bOk and type(t) == "table" and not t.bIsBeta and type(t.tMateData) == "table" then
+		bMono = t.bIsMonogamous == true
 		for _, m in ipairs(t.tMateData) do
 			if m.nID ~= nil then
 				out[#out + 1] = idString(m.nID)
+				if nFirst == nil then
+					nFirst = m.nID
+				end
 			end
 		end
 	end
-	return out
+	return out, bMono, nFirst
 end
 
 Kin._StartPark = function(self, oUI, sReason)
@@ -370,10 +380,12 @@ Kin._StartPark = function(self, oUI, sReason)
 	local tHabOf = {}
 	local tIDs = {}
 	local tSeen = {}
+	local tAllHabs = {}
 	for _, h in ipairs(tHabitats) do
 		local bIs = true
 		pcall(function() bIs = habitat:IsHabitat(h) ~= false end)
 		if bIs then
+			tAllHabs[#tAllHabs + 1] = h
 			local bOk, tMembers = pcall(habitat.GetAnimalsInHabitat, habitat, h)
 			if bOk and type(tMembers) == "table" then
 				for _, e in ipairs(tMembers) do
@@ -398,6 +410,22 @@ Kin._StartPark = function(self, oUI, sReason)
 			end
 		end
 	end)
+	-- animals waiting at the trade centre (bought, returned from storage, sent
+	-- there) are NOT in the Habitat list; the game reads this second list for
+	-- them (helpers.notificationtasks CheckNoStaffForDelivery)
+	pcall(function()
+		local helpers = tAPIs.animalsDataHelpers
+		local nList = helpers.AnimalListType_HabitatInTradeCenterWithEntities
+		if nList == nil then
+			return
+		end
+		for _, e in ipairs(helpers:GetAllAnimalEntities(nList)) do
+			if not tSeen[e] then
+				tSeen[e] = true
+				tIDs[#tIDs + 1] = e
+			end
+		end
+	end)
 	local tExhibitIDs = {}
 	pcall(function()
 		local tAll = tAPIs.exhibits:GetAllAnimalIDs()
@@ -416,6 +444,7 @@ Kin._StartPark = function(self, oUI, sReason)
 		tAPIs = tAPIs,
 		nJuvenile = nJuvenile,
 		tHabOf = tHabOf,
+		tAllHabs = tAllHabs,
 		tIDs = tIDs,
 		nIndex = 0,
 		tExhibitIDs = tExhibitIDs,
@@ -425,6 +454,8 @@ Kin._StartPark = function(self, oUI, sReason)
 		tHabitatOrder = {},
 		tExhibitNames = {},
 		tPresent = {},
+		tAdults = {},     -- { tRec, e }: adults in habitats (bond pass candidates)
+		tBonded = {},     -- { tRec, e, nMate }: monogamous adults with a mate
 	}
 	mark("kin_scan_start")
 end
@@ -488,7 +519,123 @@ Kin._Step = function(self, nBudget)
 			end
 		end
 	end
-	return tJob.nIndex >= #tJob.tIDs and tJob.nExhibitIndex >= #tJob.tExhibitIDs
+	if tJob.nIndex < #tJob.tIDs or tJob.nExhibitIndex < #tJob.tExhibitIDs then
+		return false
+	end
+	-- the bond pass never costs the scan: on an error, no bond data at all
+	local bOk, bDone = pcall(self._BondStep, self, tJob, animals, self.nBondPerFrame)
+	if not bOk then
+		trace("bond pass failed: " .. tostring(bDone))
+		tJob.bBondsOk = false
+		for _, b in ipairs(tJob.tBonded) do
+			b.tRec.bond = nil
+		end
+		return true
+	end
+	return bDone
+end
+
+-- The bond pass, after every animal is read. For each monogamous adult with
+-- a mate, the game's own monogamy check against every other adult of its
+-- species in its habitat: animals:GetMatingMonogamyIcon(self, other, 0) is
+-- "ring" for its mate and "IconLock" when it has an existing mate (Compare
+-- Mates: either way means no conception). The page holds a related pair
+-- apart only on such a lock (kincore bondHold). Returns true when done.
+local function compatibleSexes(a, b)
+	return a.sex == 2 or b.sex == 2 or a.sex ~= b.sex
+end
+
+Kin._BondStep = function(self, tJob, animals, nBudget)
+	if tJob.tBondJobs == nil then
+		tJob.tBondJobs = {}
+		tJob.nBondJob, tJob.nBondCand = 1, 0
+		tJob.nBondCalls, tJob.nBondFails = 0, 0
+		tJob.bBondsOk = true
+		local bHas = false
+		pcall(function() bHas = animals.GetMatingMonogamyIcon ~= nil end)
+		if not bHas then
+			tJob.bBondsOk = false
+			return true
+		end
+		local tGroups = {}
+		for _, x in ipairs(tJob.tAdults) do
+			local sKey = tostring(x.tRec.hab) .. "|" .. tostring(x.tRec.species)
+			tGroups[sKey] = tGroups[sKey] or {}
+			local tList = tGroups[sKey]
+			tList[#tList + 1] = x
+		end
+		for _, b in ipairs(tJob.tBonded) do
+			local sMate = idString(b.nMate)
+			local tCands = {}
+			for _, o in ipairs(tGroups[tostring(b.tRec.hab) .. "|" .. tostring(b.tRec.species)] or {}) do
+				if o.e ~= b.e and o.tRec.id ~= sMate and compatibleSexes(b.tRec, o.tRec) then
+					tCands[#tCands + 1] = o
+				end
+			end
+			b.tRec.bond = { mate = sMate, ring = false, lock = array() }
+			tJob.tBondJobs[#tJob.tBondJobs + 1] = { b = b, tCands = tCands }
+		end
+	end
+	local nDone = 0
+	local function icon(e, nOther)
+		tJob.nBondCalls = tJob.nBondCalls + 1
+		local bOk, s = pcall(animals.GetMatingMonogamyIcon, animals, e, nOther, 0)
+		if not bOk then
+			tJob.nBondFails = tJob.nBondFails + 1
+			return nil
+		end
+		return s
+	end
+	while nDone < nBudget and tJob.nBondJob <= #tJob.tBondJobs do
+		local job = tJob.tBondJobs[tJob.nBondJob]
+		local b = job.b
+		if tJob.nBondCand == 0 then
+			b.tRec.bond.ring = icon(b.e, b.nMate) == "ring"
+			-- the mate still belongs to this habitat (alive, same assigned habitat),
+			-- even while it is at the vet or in transport and so in no habitat list
+			local bHere = false
+			pcall(function()
+				local hSelf = animals:GetAssignedHabitatEntityID(b.e)
+				local hMate = animals:GetAssignedHabitatEntityID(b.nMate)
+				bHere = hSelf ~= nil and hSelf == hMate and animals:IsInDeathState(b.nMate) ~= true
+			end)
+			b.tRec.bond.here = bHere
+			local bOk, _, nMourn = pcall(animals.GetCurrentMournTimeForUI, animals, b.e)
+			if bOk and type(nMourn) == "number" and nMourn > 0 then
+				b.tRec.bond.mourn = nMourn
+			end
+			nDone = nDone + 1
+			tJob.nBondCand = 1
+		end
+		while nDone < nBudget and tJob.nBondCand <= #job.tCands do
+			local o = job.tCands[tJob.nBondCand]
+			-- a failed call is not a lock: the pair stays a risk
+			if icon(b.e, o.e) == "IconLock" then
+				local tLock = b.tRec.bond.lock
+				tLock[#tLock + 1] = o.tRec.id
+			end
+			nDone = nDone + 1
+			tJob.nBondCand = tJob.nBondCand + 1
+		end
+		if tJob.nBondCand > #job.tCands then
+			tJob.nBondJob = tJob.nBondJob + 1
+			tJob.nBondCand = 0
+		end
+	end
+	if tJob.nBondJob <= #tJob.tBondJobs then
+		return false
+	end
+	-- every call failed: the game's check is not there (a patch?). No bond
+	-- data at all then, so nothing is held and nothing looks like a broken bond
+	if tJob.nBondCalls > 0 and tJob.nBondFails >= tJob.nBondCalls then
+		tJob.bBondsOk = false
+	end
+	if not tJob.bBondsOk then
+		for _, b in ipairs(tJob.tBonded) do
+			b.tRec.bond = nil
+		end
+	end
+	return true
 end
 
 -- 'habitat' | 'trade' | 'transit' | 'quarantine' | 'vet' | 'escaped' | 'other'
@@ -549,7 +696,12 @@ Kin._AddParkAnimal = function(self, tJob, animals, e, t)
 		genes = tStatic.tGenes,
 	}
 	if h ~= nil and not bJuvenile then
-		tRec.mates = mateIds(animals, e)
+		local bMono, nMate
+		tRec.mates, bMono, nMate = mateIds(animals, e)
+		tJob.tAdults[#tJob.tAdults + 1] = { tRec = tRec, e = e }
+		if bMono and nMate ~= nil then
+			tJob.tBonded[#tJob.tBonded + 1] = { tRec = tRec, e = e, nMate = nMate }
+		end
 	end
 	tJob.tAnimals[#tJob.tAnimals + 1] = tRec
 	if tStatic.sGuid ~= "" then
@@ -701,9 +853,33 @@ Kin._FinishPark = function(self)
 		park = self:_ParkName(tJob.tAPIs),
 		tradeCentre = self:_TradeCentre(tJob.tAPIs),
 		habitats = tHabitats,
+		habs = self:_HabitatPrints(tJob.tAPIs, tJob.tAllHabs),
 		animals = tJob.tAnimals,
 		anc = tAnc,
+		bondsOk = tJob.bBondsOk == true,
 	}
+	-- the bond pass in the trace when its result changes (not every scan)
+	local sBonds = string.format("bonds: %d bonded, %d calls, %d failed, ok=%s",
+		#tJob.tBonded, tJob.nBondCalls or 0, tJob.nBondFails or 0, tostring(tJob.bBondsOk == true))
+	if sBonds ~= self.sLastBonds then
+		self.sLastBonds = sBonds
+		trace(sBonds)
+		-- debug builds log names only (tools/trace/checkpoints.txt): the outcome
+		local nLocks = 0
+		for _, b in ipairs(tJob.tBonded) do
+			if b.tRec.bond then
+				nLocks = nLocks + #b.tRec.bond.lock
+			end
+		end
+		if tJob.bBondsOk ~= true then
+			mark("kin_bonds_unavailable")
+		elseif #tJob.tBonded == 0 then
+			mark("kin_bonds_none")
+		else
+			mark((tJob.nBondFails or 0) > 0 and "kin_bonds_some_failed" or "kin_bonds_ok")
+			mark(nLocks > 0 and "kin_bonds_locks" or "kin_bonds_no_locks")
+		end
+	end
 	mark("kin_scan_done")
 	self:_SendSnapshot(tJob.oUI, tSnapshot)
 end
@@ -711,13 +887,37 @@ end
 -- Per species in the scan: { maturity, infertility, life } in years, from
 -- the game's fertility bounds (infertility above 900 = never infertile) and
 -- longevity. Species data does not change in a session: asked once.
+-- Shoals (boids) and colonies (butterflies, bees...) breed as one group: the
+-- game's own checks, as its park rating uses them (ParkRatingManager).
+-- nil when neither check answered (asked again next scan).
+local function isCollective(tAPIs, sp)
+	local bOk, b = pcall(function() return tAPIs.animals:IsSpeciesABoid(sp) end)
+	if bOk and b == true then
+		return true
+	end
+	local bOk2, b2 = pcall(function() return tAPIs.exhibits:IsColonySpecies(sp) end)
+	if bOk2 and b2 == true then
+		return true
+	end
+	if (bOk and b == false) or (bOk2 and b2 == false) then
+		return false
+	end
+	return nil
+end
+
 Kin._SpeciesFacts = function(self, tJob)
 	local animals = tJob.tAPIs.animals
 	self.tSpeciesFacts = self.tSpeciesFacts or {}
+	self.tCollective = self.tCollective or {}
 	local tOut = {}
 	for _, a in ipairs(tJob.tAnimals) do
 		local sp = a.species
-		if type(sp) == "string" and sp ~= "" and tOut[sp] == nil and string.sub(a.id, 1, 1) ~= "x" then
+		if type(sp) == "string" and sp ~= "" and tOut[sp] == nil and self.tCollective[sp] == nil then
+			self.tCollective[sp] = isCollective(tJob.tAPIs, sp)
+		end
+		if type(sp) == "string" and sp ~= "" and tOut[sp] == nil and self.tCollective[sp] then
+			tOut[sp] = { collective = true }
+		elseif type(sp) == "string" and sp ~= "" and tOut[sp] == nil and string.sub(a.id, 1, 1) ~= "x" then
 			local t = self.tSpeciesFacts[sp]
 			if t == nil then
 				t = {}
@@ -769,6 +969,27 @@ local function entityName(e)
 	return nil
 end
 
+-- The habitat's own id (habitat:GetHabitatIDFromEntityID), not its entity
+-- id. Entity ids are handed out afresh when a zoo loads, so the page keeps
+-- habitat assignments by name, residents and this id instead.
+local function habitatKey(tAPIs, h)
+	local bOk, n = pcall(function() return tAPIs.habitat:GetHabitatIDFromEntityID(h) end)
+	if bOk and n ~= nil then
+		return idString(n)
+	end
+	return nil
+end
+
+-- Every habitat in the park, empty ones too: { id, name, hid } (what the
+-- page matches saved habitat assignments against after a reload).
+Kin._HabitatPrints = function(self, tAPIs, tHabs)
+	local tOut = array()
+	for _, h in ipairs(tHabs or {}) do
+		tOut[#tOut + 1] = { id = idString(h), name = entityName(h) or "", hid = habitatKey(tAPIs, h) }
+	end
+	return tOut
+end
+
 -- The first trade centre ({ id, name }) or nil, as the game's own
 -- "send to trade centre" picks it.
 Kin._TradeCentre = function(self, tAPIs)
@@ -804,6 +1025,10 @@ Kin.Tick = function(self)
 		if Core then Core:Checkpoint("kin_first_tick") end
 	end
 	self.nLastTick = now()
+	local bStore, sStoreErr = pcall(self._StoreTick, self)
+	if not bStore then
+		trace("store tick failed: " .. tostring(sStoreErr))
+	end
 	if self.tJob == nil then
 		return
 	end
@@ -1044,7 +1269,7 @@ Kin.Destinations = function(self, oUI, sReq, sIds)
 		local sH = idString(h)
 		if tNames[sH] == nil then
 			tNames[sH] = entityName(h) or ("Habitat " .. sH)
-			tOut.habitats[#tOut.habitats + 1] = { id = sH, name = tNames[sH] }
+			tOut.habitats[#tOut.habitats + 1] = { id = sH, name = tNames[sH], hid = habitatKey(tAPIs, h) }
 		end
 	end
 	for sSpecies, tGuids in pairs(tBySpecies) do
@@ -1186,18 +1411,92 @@ local function areas(t)
 	return bAny and out or nil
 end
 
--- 'monogamy' | 'polygyny' | 'polyandry' | 'mixed' | nil
+-- The mating rule's enum fields on the animals API (exe strings, 1.0.5:
+-- Monogamy, Polygyny, Polyandre, Polygyandry; "Polyandry" in case of a
+-- fix), in a fixed order for the trace.
+local tMatingEnums = {
+	{ "Monogamy", "monogamy" }, { "Polygyny", "polygyny" }, { "Polyandre", "polyandry" },
+	{ "Polyandry", "polyandry" }, { "Polygyandry", "mixed" },
+}
+-- The rule as text, longest match first: the enum names, the Zoopedia's
+-- words (animals.fdb Lifecycle_FertilityData.MatingType: Monogamous,
+-- Polygynous, Polyandrous, Promiscuous) and the usual spellings.
+local tMatingWords = {
+	{ "polygyandr", "mixed" }, { "polygynandr", "mixed" }, { "promiscu", "mixed" },
+	{ "polyandr", "polyandry" }, { "polygyn", "polygyny" }, { "monogam", "monogamy" },
+}
+
+-- A short, readable form of a value the mod did not understand (for the
+-- page's message): a table shows its first few fields.
+local function rawText(v)
+	if type(v) ~= "table" then
+		return tostring(v)
+	end
+	local tParts = {}
+	for k, x in pairs(v) do
+		if #tParts >= 4 then
+			tParts[#tParts + 1] = "..."
+			break
+		end
+		tParts[#tParts + 1] = tostring(k) .. "=" .. (type(x) == "table" and "{...}" or tostring(x))
+	end
+	return "{" .. table.concat(tParts, ", ") .. "}"
+end
+
+local function markNumber(sPrefix, n)
+	local Core = global.package.loaded["pz2qol.core"]
+	if Core and Core.MarkNumber then
+		pcall(Core.MarkNumber, Core, sPrefix, n)
+	end
+end
+
+-- 'monogamy' | 'polygyny' | 'polyandry' | 'mixed' | nil, and the raw rule
+-- (as text) only when the mod could not read it (for the page's message).
+-- 'mixed' is Polygyandry: both sexes take several mates (the Zoopedia's
+-- "Promiscuous"; 31 of 85 species, solitary cats and bears among them).
+-- Trace: kin_mating_<name>, or kin_mating_unknown with the value spelt out
+-- (kin_mating_raw + digits for a number, kin_mating_raw_<type> otherwise)
+-- and each enum value (kin_mating_enum + digits, or kin_mating_enum_missing),
+-- kin_mating_none (no rule), kin_mating_bonds (read from mates instead).
 Kin._MatingSystem = function(self, animals, sSpecies)
-	local tNames = { Monogamy = "monogamy", Polygyny = "polygyny", Polyandre = "polyandry", Polygyandry = "mixed" }
 	local rule = call(animals, "GetMonogamyRule", sSpecies)
 	if rule ~= nil then
-		for sEnum, sName in pairs(tNames) do
-			local bOk, v = pcall(function() return animals[sEnum] end)
+		for _, t in ipairs(tMatingEnums) do
+			local bOk, v = pcall(function() return animals[t[1]] end)
 			if bOk and v ~= nil and v == rule then
-				return sName
+				mark("kin_mating_" .. t[2])
+				return t[2], nil
 			end
 		end
+		-- the rule as text ("Polygyny", "MonogamyRule_Polygyny", "Promiscuous"...)
+		if type(rule) == "string" then
+			local sLow = string.lower(rule)
+			for _, t in ipairs(tMatingWords) do
+				if string.find(sLow, t[1], 1, true) then
+					mark("kin_mating_" .. t[2])
+					return t[2], nil
+				end
+			end
+		end
+		-- not understood: spell it and the enum values into the trace
+		mark("kin_mating_unknown")
+		if type(rule) == "number" then
+			markNumber("kin_mating_raw", rule)
+		else
+			mark("kin_mating_raw_" .. type(rule))
+		end
+		for _, t in ipairs(tMatingEnums) do
+			local bOk, v = pcall(function() return animals[t[1]] end)
+			if bOk and type(v) == "number" then
+				markNumber("kin_mating_enum", v)
+			else
+				mark("kin_mating_enum_missing")
+			end
+		end
+	else
+		mark("kin_mating_none")
 	end
+	local sRaw = rule ~= nil and rawText(rule) or nil
 	-- fallback: the game marks mates of monogamous species
 	local tSplit = call(animals, "GetAllAdultsOfSpeciesSplitByGender", sSpecies)
 	if type(tSplit) == "table" then
@@ -1206,13 +1505,95 @@ Kin._MatingSystem = function(self, animals, sSpecies)
 				for _, e in ipairs(tList) do
 					local tMate = call(animals, "GetMateData", e)
 					if type(tMate) == "table" and tMate.bIsMonogamous ~= nil then
-						return tMate.bIsMonogamous and "monogamy" or nil
+						if tMate.bIsMonogamous then
+							mark("kin_mating_bonds")
+							return "monogamy", nil
+						end
+						return nil, sRaw
 					end
 				end
 			end
 		end
 	end
-	return nil
+	return nil, sRaw
+end
+
+-- The species' own social groups (the release groups: mixed group, breeding
+-- partners...), each with its adults by sex, so the programme knows how many
+-- males go with how many females. Offline (decompiled
+-- editors.wildterritory.releasegroupstoragemode.lua,
+-- events.eventactioncreatereleasegroup.lua): the wild-territory API's
+-- GetTerritorySocialGroupsForSpecies(sSpecies) gives an array of
+-- { nSocialGroupType, sNameSymbol, nMale, nFemale }; the type values are
+-- fields on that API (SocialGroupType_<name>), and sNameSymbol is that same
+-- <name> (the objectives match the two), so it names the kind when a value is
+-- missing. Names here: what the page gets as `kind`.
+local tGroupKinds = {
+	MixedGroup = "mixed", MixedGroupLarge = "mixedLarge", BreedingPartners = "pair",
+	MaleBachelor = "maleBachelor", FemaleBachelor = "femaleBachelor",
+	MaleSolitary = "maleSolitary", FemaleSolitary = "femaleSolitary",
+}
+Kin.nGroupsMax = 12         -- social groups sent per species
+
+-- array of { kind, m, f }, or nil; may raise (the caller pcalls)
+local function socialGroups(tAPIs, sSpecies)
+	local wild = tAPIs.wildterritory
+	if wild == nil then
+		return nil
+	end
+	local tList = call(wild, "GetTerritorySocialGroupsForSpecies", sSpecies)
+	if type(tList) ~= "table" then
+		return nil
+	end
+	-- type value -> kind (a value the API lacks is simply not known)
+	local tByType = {}
+	for sName, sKind in pairs(tGroupKinds) do
+		local bOk, v = pcall(function() return wild["SocialGroupType_" .. sName] end)
+		if bOk and v ~= nil then
+			tByType[v] = sKind
+		end
+	end
+	local out = array()
+	for _, g in ipairs(tList) do
+		if #out >= Kin.nGroupsMax then
+			break
+		end
+		if type(g) == "table" and type(g.nMale) == "number" and type(g.nFemale) == "number" then
+			local sKind = (g.nSocialGroupType ~= nil and tByType[g.nSocialGroupType]) or tGroupKinds[tostring(g.sNameSymbol)] or tostring(g.sNameSymbol)
+			out[#out + 1] = { kind = sKind, m = g.nMale, f = g.nFemale }
+		end
+	end
+	return #out > 0 and out or nil
+end
+
+-- The most adults of each sex per habitat (the Zoopedia's "max per sex").
+-- Guess: the Zoopedia's maxMale / maxFemale are filled by the exe (no game
+-- Lua sets them), so look for number fields named like max + male / female
+-- in what the Lua API does give (GetSocialRequirements: nMin, nMax known;
+-- GetSpeciesSocialityData: exe-only, its signature guessed), one nested
+-- level deep. The first found wins: fields of t before nested tables.
+local function sexMaxFrom(t, tSex, nDepth)
+	if type(t) ~= "table" then
+		return
+	end
+	local tNested = {}
+	for k, v in pairs(t) do
+		if type(v) == "number" and type(k) == "string" and v > 0 and v < math.huge then
+			local s = string.lower(k)
+			if string.find(s, "max", 1, true) then
+				if string.find(s, "female", 1, true) then
+					tSex.female = tSex.female or v
+				elseif string.find(s, "male", 1, true) then
+					tSex.male = tSex.male or v
+				end
+			end
+		elseif type(v) == "table" and nDepth < 1 then
+			tNested[#tNested + 1] = v
+		end
+	end
+	for _, v in ipairs(tNested) do
+		sexMaxFrom(v, tSex, nDepth + 1)
+	end
 end
 
 -- sHabs: habitat ids (comma separated) to measure for this species.
@@ -1235,7 +1616,25 @@ Kin.SpeciesInfo = function(self, oUI, sReq, sSpecies, sHabs)
 	if type(nMat) == "number" then
 		tOut.fertilityAges = { maturity = nMat, infertility = nInfert }
 	end
-	tOut.mating = self:_MatingSystem(animals, sSpecies)
+	tOut.mating, tOut.matingRaw = self:_MatingSystem(animals, sSpecies)
+	-- group make-up (males per female): the game's own social groups
+	local bGroups, tGroups = pcall(socialGroups, tAPIs, sSpecies)
+	if bGroups and tGroups ~= nil then
+		tOut.groups = tGroups
+		mark("kin_groups_found")
+	else
+		mark("kin_groups_none")
+	end
+	-- the most adults of each sex per habitat, if the Lua API carries it
+	local tSex = {}
+	pcall(sexMaxFrom, tSocial, tSex, 0)
+	pcall(sexMaxFrom, (call(animals, "GetSpeciesSocialityData", sSpecies)), tSex, 0)
+	if tSex.male ~= nil or tSex.female ~= nil then
+		tOut.sexMax = tSex
+		mark("kin_sexmax_found")
+	else
+		mark("kin_sexmax_none")
+	end
 	-- the game's conception chance by fertility grades (0..6 x 0..6), at full welfare
 	local nSpeciesFert = call(animals, "GetAnimalSpeciesFertility", sSpecies)
 	local nBonus = call(animals, "GetMatingResearchBonus", sSpecies) or 0
@@ -1271,93 +1670,260 @@ Kin.SpeciesInfo = function(self, oUI, sReq, sSpecies, sHabs)
 end
 
 -----------------------------------------------------------------------
--- The player's own data (habitat assignments...), kept in ONE file in the
--- mod's folder: Win64\ovldata\PZ2QoL\userdata.json. Never in the save or
--- the profile; deleting the mod folder removes it. The UI's localStorage is
--- not written to disk by the game, so it is lost when the game closes.
+-- The player's own data (habitat assignments...), kept on this device in
+-- the game's player save (PZ2QoL.PlayerStore: tData.PZ2QoL.Assign, one
+-- entry per zoo), in every zoo, Franchise included: that save is local
+-- (Steam Cloud carries it to the player's other PCs) and is not the zoo's
+-- online save. The game gives mods nothing else that outlasts a restart:
+-- api.debug's file calls are retail stubs and the UI's localStorage is
+-- memory only.
+-- Each zoo is found by a stable key (_ZooKey): a Franchise zoo by its
+-- planet hub and zoo GUIDs, any other park by its hub and name. The key is
+-- worked out on the park tick (the save is loaded by then; the player
+-- profile can be missing early on), and the views are told to read again
+-- (PZ2QoL_StoreReset) once it is known.
 -- The text is the UI's JSON (ASCII only), stored as it is.
+--
+-- Builds from 2026-10-16 kept offline parks' data in the park save as a
+-- world serialisation client "PZ2QoL". That client stays registered in
+-- offline parks so those saves load exactly as before, but it only reads:
+-- what it finds moves to the player store (if this zoo has nothing there
+-- yet) and nothing is written to the park save any more.
 -----------------------------------------------------------------------
--- The game's file calls take its virtual paths: "/run/" is the install
--- folder (the game reads "/run/Blueprints/..."), "/tmp/" a temp folder.
--- Plain OS paths come last, just in case.
-Kin.tStorePaths = {
-	"/run/Win64/ovldata/PZ2QoL/userdata.json",
-	".\\Win64\\ovldata\\PZ2QoL\\userdata.json",
-	"Win64/ovldata/PZ2QoL/userdata.json",
-	"/tmp/PZ2QoL_userdata.json",
-}
-Kin.nStoreMax = 400000
+Kin.sSaveClient = "PZ2QoL"
+Kin.nSaveVersion = 1
+Kin.nStoreMax = 60000        -- characters of one zoo's text (the player store caps all zoos at 64 KB)
+Kin.nStoreRetry = 1.0        -- seconds between tries to find the zoo and the player
+Kin.nStoreModeWait = 10      -- seconds an unknown game mode is waited for (then: by park name)
+Kin.nStorePlayerWait = 20    -- seconds before a missing player profile is reported
+Kin.tStoreAPIs = nil         -- this park's world APIs, from the park start to its end
+Kin.sZooKey = nil            -- this zoo's key in the player store, once known
+Kin.sStoreOff = "nopark"     -- why there is no store yet: nopark | wait | noplayer
+Kin.sLegacyData = nil        -- text from an old park save, waiting for the zoo key
+Kin.oSaveAPI = nil           -- the park's worldserialisation, while the reader is registered
 
-local function trimmed(s)
-	return (string.gsub(s, "%s+$", ""))
+Kin._PlayerStore = function(self)
+	local Core = self.Core or global.package.loaded["pz2qol.core"]
+	return (Core and Core.PlayerStore) or global.package.loaded["pz2qol.playerstore"]
 end
 
-local function readFile(sPath)
-	local bOk, bRead, sText = pcall(api.debug.ReadStringFromFile, sPath)
-	if bOk and bRead and type(sText) == "string" then
-		return sText
+-- tells the open views to read the store again
+Kin._StoreReset = function(self)
+	for oUI in pairs(self.tViews) do
+		pcall(oUI.TriggerEventAtNextAdvance, oUI, "PZ2QoL_StoreReset")
 	end
-	return nil
 end
 
--- true, or false and why: 'err' (raised), 'false' (said no), 'diff' (reads back different)
-local function writeFile(sPath, sText)
-	local bOk, bWrote = pcall(api.debug.WriteStringToFile, sText, sPath)
-	if not bOk then
-		return false, "err"
+local function keyPart(s, nMax)
+	if type(s) ~= "string" then
+		return ""
 	end
-	if bWrote == false then
-		return false, "false"
+	return string.sub((string.gsub(s, "[^%w%-]", "")), 1, nMax)
+end
+
+-- a short hash, so any park name gives a short ASCII key
+local function hash(s)
+	local h = 5381
+	for i = 1, #s do
+		h = (h * 33 + string.byte(s, i)) % 4294967296
 	end
-	local sBack = readFile(sPath)
-	if sBack == nil or trimmed(sBack) ~= trimmed(sText) then
-		return false, "diff"
+	return string.format("%08x", math.floor(h))
+end
+
+-- This zoo's key in the player store, or nil + why not yet ("wait").
+--   Franchise: f_<planet hub GUID>_<zoo GUID>
+--   any other: o_<planet hub GUID>_<name, letters only>_<hash of the name>
+-- Offline parks are known by name: two parks with the same name share
+-- their assignments, and renaming a park starts it afresh.
+Kin._ZooKey = function(self, tAPIs, nWaited)
+	local franchise = type(tAPIs) == "table" and tAPIs.franchise or nil
+	local sHub, sZoo = nil, nil
+	if franchise ~= nil then
+		pcall(function() sZoo = franchise:GetCurrentZooGUID() end)
+		pcall(function() sHub = franchise:GetPlanetHubGuid() end)
+	end
+	sHub = keyPart(sHub, 40)
+	if type(sZoo) == "string" and keyPart(sZoo, 40) ~= "" then
+		return "f_" .. sHub .. "_" .. keyPart(sZoo, 40)
+	end
+	local sMode = self:_GameMode(tAPIs or {})
+	if sMode == "franchise" then
+		return nil, "wait" -- a Franchise zoo whose GUID is not known yet
+	end
+	if sMode ~= "offline" and (nWaited or 0) < self.nStoreModeWait then
+		return nil, "wait"
+	end
+	local sName = self:_ParkName(tAPIs or {})
+	if sName == "" then
+		return nil, "wait"
+	end
+	return "o_" .. sHub .. "_" .. keyPart(sName, 24) .. "_" .. hash(sName)
+end
+
+-- From the park tick (throttled) and from requests: finds the zoo's key
+-- and checks the player store. Tells the views when the answer changes.
+Kin._ResolveStore = function(self)
+	local tAPIs = self.tStoreAPIs
+	if tAPIs == nil or self.sZooKey ~= nil then
+		return
+	end
+	local nNow = now()
+	self.nStoreTried = nNow
+	-- not before the first park tick: the park's save (and name) is loaded by then
+	if self.nStoreFirstTick == nil then
+		return
+	end
+	local nWaited = nNow - self.nStoreFirstTick
+	local sWas = self.sStoreOff
+	local sKey, sWhy = self:_ZooKey(tAPIs, nWaited)
+	local Store = self:_PlayerStore()
+	if sKey ~= nil and (Store == nil or not Store:Available()) then
+		sKey = nil
+		sWhy = (Store ~= nil and nWaited < self.nStorePlayerWait) and "wait" or "noplayer"
+	end
+	if sKey == nil then
+		self.sStoreOff = sWhy or "wait"
+		if self.sStoreOff == "noplayer" and sWas ~= "noplayer" then
+			mark("assign_store_unavailable")
+			self:_StoreReset()
+		end
+		return
+	end
+	self.sZooKey = sKey
+	self.sStoreOff = nil
+	mark(string.sub(sKey, 1, 2) == "f_" and "assign_store_franchise" or "assign_store_offline")
+	-- data an old build kept in this park's save
+	if self.sLegacyData ~= nil then
+		local sOld = self.sLegacyData
+		self.sLegacyData = nil
+		local sHave = Store:Read(sKey)
+		if sHave == "" then
+			local bOk = Store:Write(sKey, sOld, nNow)
+			mark(bOk and "assign_store_migrated" or "assign_store_migrate_failed")
+		end
+	end
+	local sText = Store:Read(sKey)
+	mark((type(sText) == "string" and sText ~= "") and "assign_store_loaded" or "assign_store_empty")
+	self:_StoreReset()
+end
+
+-- from the park tick
+Kin._StoreTick = function(self)
+	if self.tStoreAPIs == nil then
+		return
+	end
+	local nNow = now()
+	if self.nStoreFirstTick == nil then
+		self.nStoreFirstTick = nNow
+		self:_ResolveStore()
+	elseif self.sZooKey == nil and nNow - (self.nStoreTried or 0) >= self.nStoreRetry then
+		self:_ResolveStore()
+	end
+	local Store = self:_PlayerStore()
+	if Store ~= nil then
+		Store:Tick(nNow)
+	end
+end
+
+-- the old park-save client: reads only (see above)
+Kin._LoadWorld = function(self, tLoad)
+	local s = type(tLoad) == "table" and tLoad.sData or nil
+	if type(s) == "string" and #s <= self.nStoreMax and string.sub(s, 1, 1) == "{" and s ~= "{}" then
+		mark("store_world_loaded")
+		local Store = self:_PlayerStore()
+		if self.sZooKey ~= nil and Store ~= nil then
+			if Store:Read(self.sZooKey) == "" then
+				local bOk = Store:Write(self.sZooKey, s, now())
+				mark(bOk and "assign_store_migrated" or "assign_store_migrate_failed")
+				self:_StoreReset()
+			end
+		else
+			self.sLegacyData = s
+		end
 	end
 	return true
 end
 
--- The path that works here (found once per session): an existing file,
--- else the first one that writes and reads back. Each try leaves a trace
--- mark (store_p<N>_found / _created / _err / _false / _diff).
-Kin._StorePath = function(self)
-	if self.sStorePath ~= nil then
-		return self.sStorePath or nil
-	end
-	if type(api.debug) ~= "table" or type(api.debug.ReadStringFromFile) ~= "function" or type(api.debug.WriteStringToFile) ~= "function" then
-		self.sStorePath = false
-		mark("store_no_api")
-		mark("store_unavailable")
-		return nil
-	end
-	for i, sPath in ipairs(self.tStorePaths) do
-		if readFile(sPath) ~= nil then
-			self.sStorePath = sPath
-			mark("store_p" .. i .. "_found")
-			mark("store_found")
-			return sPath
-		end
-	end
-	for i, sPath in ipairs(self.tStorePaths) do
-		local bOk, sWhy = writeFile(sPath, "{}")
-		if bOk then
-			self.sStorePath = sPath
-			mark("store_p" .. i .. "_created")
-			mark("store_created")
-			return sPath
-		end
-		mark("store_p" .. i .. "_" .. tostring(sWhy))
-	end
-	self.sStorePath = false
-	mark("store_unavailable")
-	return nil
+-- from the heat map manager's Init: a park world is starting, before its
+-- save is loaded
+Kin._ParkStoreStart = function(self, tAPIs)
+	self:_ParkStoreEnd()
+	self.tStoreAPIs = type(tAPIs) == "table" and tAPIs or {}
+	self.sStoreOff = "wait"
+	self:_RegisterReader(self.tStoreAPIs)
+	self:_StoreReset()
 end
 
--- answers PZ2QoL_StoreData(reqId, ok, part, parts, text): the file in chunks
+Kin._RegisterReader = function(self, tAPIs)
+	if self:_GameMode(tAPIs) ~= "offline" then
+		return -- never in a Franchise zoo (or one that may be)
+	end
+	local oSave = tAPIs.worldserialisation
+	if oSave == nil then
+		return
+	end
+	local bOk, sErr = pcall(function()
+		oSave:RegisterWorldSerialisationClient(self.sSaveClient, self.nSaveVersion,
+			function(tSave)
+				-- nothing is written to the park save any more
+			end,
+			function(tLoad, nVersion)
+				local bLoaded, sWhy = pcall(self._LoadWorld, self, tLoad)
+				if not bLoaded then
+					trace("park load failed: " .. tostring(sWhy))
+				end
+				return true
+			end,
+			function(nOldVersion)
+				return true
+			end)
+	end)
+	if not bOk then
+		trace("save client: " .. tostring(sErr))
+		mark("store_park_off_failed")
+		return
+	end
+	self.oSaveAPI = oSave
+	mark("store_park_on")
+end
+
+-- the park ends: its key goes (the game saves the player when a park closes)
+Kin._ParkStoreEnd = function(self)
+	local oSave = self.oSaveAPI
+	self.oSaveAPI = nil
+	if oSave ~= nil then
+		pcall(function() oSave:UnregisterWorldSerialisationClient(self.sSaveClient) end)
+	end
+	local bHad = self.tStoreAPIs ~= nil
+	self.tStoreAPIs = nil
+	self.sZooKey = nil
+	self.sLegacyData = nil
+	self.nStoreFirstTick = nil
+	self.nStoreTried = nil
+	self.sStoreOff = "nopark"
+	local Store = self:_PlayerStore()
+	if Store ~= nil then
+		pcall(Store.Forget, Store)
+	end
+	if bHad then
+		self:_StoreReset()
+	end
+end
+
+-- answers PZ2QoL_StoreData(reqId, ok, part, parts, text): this zoo's data
+-- in chunks, or ok = false with the reason as the text
+-- (nopark | wait | noplayer: 'wait' is followed by PZ2QoL_StoreReset)
 Kin.StoreLoad = function(self, oUI, sReq)
-	local sPath = self:_StorePath()
-	local sText = sPath and readFile(sPath) or nil
-	if sText == nil then
-		pcall(oUI.TriggerEventAtNextAdvance, oUI, "PZ2QoL_StoreData", sReq, false, 1, 1, "")
+	if self.sZooKey == nil and self.nStoreFirstTick ~= nil then
+		self:_ResolveStore()
+	end
+	local Store = self:_PlayerStore()
+	local sText, sWhy = nil, self.sStoreOff or "nopark"
+	if self.sZooKey ~= nil and Store ~= nil then
+		sText, sWhy = Store:Read(self.sZooKey)
+	end
+	if type(sText) ~= "string" then
+		pcall(oUI.TriggerEventAtNextAdvance, oUI, "PZ2QoL_StoreData", sReq, false, 1, 1, sWhy or "noplayer")
 		return
 	end
 	local nParts = math.max(1, math.ceil(#sText / self.nChunkSize))
@@ -1367,14 +1933,23 @@ Kin.StoreLoad = function(self, oUI, sReq)
 	end
 end
 
--- PZ2QoL_StoreSave(reqId, text): replaces the file; answers PZ2QoL_StoreSaved(reqId, ok)
+-- PZ2QoL_StoreSave(reqId, text): replaces this zoo's data in the player
+-- store (the game writes it to disk a few seconds later); answers
+-- PZ2QoL_StoreSaved(reqId, ok)
 Kin.StoreSave = function(self, oUI, sReq, sText)
-	local bOk = false
-	if type(sText) == "string" and #sText <= self.nStoreMax and string.sub(sText, 1, 1) == "{" and not string.find(sText, "[^\32-\126\t\r\n]") then
-		local sPath = self:_StorePath()
-		bOk = sPath ~= nil and writeFile(sPath, sText)
+	local bOk, sWhy = false, self.sStoreOff or "nopark"
+	local Store = self:_PlayerStore()
+	if self.sZooKey ~= nil and Store ~= nil then
+		if type(sText) == "string" and #sText <= self.nStoreMax then
+			bOk, sWhy = Store:Write(self.sZooKey, sText, now())
+		else
+			sWhy = "toobig"
+		end
 	end
-	mark(bOk and "store_saved" or "store_save_failed")
+	if not bOk then
+		trace("store save refused: " .. tostring(sWhy))
+		mark("assign_store_refused")
+	end
 	pcall(oUI.TriggerEventAtNextAdvance, oUI, "PZ2QoL_StoreSaved", sReq, bOk == true)
 end
 
@@ -1449,7 +2024,20 @@ Kin._PatchHeatMapManager = function(self, HeatMapManager)
 	if type(fnInit) == "function" then
 		HeatMapManager.Init = function(oManager, ...)
 			self.oHeatMapManager = oManager
-			return fnInit(oManager, ...)
+			local tResults = table.pack(fnInit(oManager, ...))
+			-- the player's data for this zoo: found on the park tick; the
+			-- old park-save reader registers before the save loads
+			local bOk, sErr = pcall(function()
+				local tAPIs = oManager.tWorldAPIs
+				if type(tAPIs) ~= "table" then
+					tAPIs = api.world.GetWorldAPIs()
+				end
+				self:_ParkStoreStart(tAPIs)
+			end)
+			if not bOk then
+				trace("save client failed: " .. tostring(sErr))
+			end
+			return table.unpack(tResults, 1, tResults.n)
 		end
 	end
 	HeatMapManager.Advance = function(oManager, ...)
@@ -1463,6 +2051,7 @@ Kin._PatchHeatMapManager = function(self, HeatMapManager)
 	end
 	if type(fnShutdown) == "function" then
 		HeatMapManager.Shutdown = function(oManager, ...)
+			mark("x_park_end")
 			if self.oHeatMapManager == oManager then
 				self.oHeatMapManager = nil
 				self.nLastTick = nil
@@ -1470,8 +2059,11 @@ Kin._PatchHeatMapManager = function(self, HeatMapManager)
 				-- entity ids are per park
 				self.tStatic = {}
 				self.tAncestors = {}
+				pcall(self._ParkStoreEnd, self)
 			end
-			return fnShutdown(oManager, ...)
+			local tResults = table.pack(fnShutdown(oManager, ...))
+			mark("x_park_end_done")
+			return table.unpack(tResults, 1, tResults.n)
 		end
 	end
 end
@@ -1496,6 +2088,7 @@ Kin._PatchStorageMode = function(self, StorageMode)
 end
 
 Kin.Init = function(self, Core)
+	self.Core = Core
 	Core:AddModulePatch("Managers.HeatMapManager", function(t) self:_PatchHeatMapManager(t) end)
 	Core:AddModulePatch("StartScreen.Globe.AnimalStorageHubMode", function(t) self:_PatchStorageMode(t) end)
 end

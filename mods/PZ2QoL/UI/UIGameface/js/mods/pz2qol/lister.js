@@ -1,32 +1,42 @@
 // Market lister: price advice for animals in storage and a one-click
-// "Sell at recommended price" that lists them through the game's own
-// AddToMarket path.
+// "Sell at recommended price".
+//
+// Listing goes through the mod's Lua listing engine (pz2qol.lister.lua,
+// listerlua.js, docs/DESIGN-market-desk.md): it works on animal GUIDs inside
+// Animal Storage and calls the game's own listing function, so the storage
+// list rebuilding under it cannot make it list the wrong animal. When the
+// engine is not there (an older Main.ovl) or cannot read the list, the old
+// path below drives the storage screen's own events instead.
 //
 // Safety rules (do not relax without thinking about the player's account):
-//  - off by default; Franchise only; only ever started by a click
+//  - Franchise only; only ever started by a click
 //  - one listing at a time, each confirmed by the game before the next
-//  - stops on the first error or on Stop
-//  - selects each animal through the game's own select event and checks
-//    the selection really is that animal before listing it
+//  - a failed animal is skipped; only Stop ends a run
+//  - (old path) selects each animal through the game's own select event and
+//    checks the selection really is that animal before listing it
 import * as DS from '/js/common/core/DataStore.js';
 import { translate } from '/js/common/core/Localisation.js';
 import { GameMode } from '/js/project/data/GameTypes.js';
 import { currentGamemodeIs } from '/js/project/data/SimulationDataModel.js';
 import { medalLabel, medalOf, offsetLabel, recommendPrice, speciesMarketSummary } from '/js/mods/pz2qol/pricing.js';
-import { Gender, geneScore, relevantGenes } from '/js/mods/pz2qol/scores.js';
+import { Gender, geneScore, isInfertileElderly, relevantGenes } from '/js/mods/pz2qol/scores.js';
 import { clear, fmtInt, GENES, h, icon, setClass, setText, tierOf } from '/js/mods/pz2qol/ui.js';
 import {
     childrenOf, get, MARKET_LIST, readAnimal, SPECIES_LIST, STORAGE_ACTIONS, STORAGE_DATA, STORAGE_LIST, TRADE_LISTING,
 } from '/js/mods/pz2qol/game.js';
 import { countForSpecies, getPriceBook, onPriceBookChanged, recordVisibleListings } from '/js/mods/pz2qol/pricebook.js';
 import { breadcrumb, onErrorReported, reportError } from '/js/mods/pz2qol/errors.js';
+import { getPaceMs, onPace, paceSlider } from '/js/mods/pz2qol/pace.js';
+import { deskRows, encodeJob, RESULT_WORDS, rowFingerprint, STEP_WORDS, summaryText, tally } from '/js/mods/pz2qol/listercore.js';
+import {
+    capsAgeMs, engineCaps, engineRunning, engineUsable, engineWhyNot, getEngineState, lastCaps, onEngineState, resolveGuids, setEnginePace, startEngineRun, stopEngineRun,
+} from '/js/mods/pz2qol/listerlua.js';
+import { panelApi } from '/js/mods/pz2qol/kinpanel.js';
 
 // Pause after every listing request that reached the server, accepted or
-// not. In game (2026-10-15) the requests sent 0.5 s after a rejection were
-// rejected again three times out of four, and one of them crashed the game.
-const GAP_BETWEEN_LISTINGS_MS = 3000;
-// ... and a longer one after the server refused or failed a listing.
-const ERROR_BACKOFF_MS = 8000;
+// not: the player's 'lister' pace (pace.js, default 3 s, 1 to 10 s). A
+// refused or failed listing gets the same pause, no longer one (developer,
+// 2026-10-16: the old fixed 8 s after an error was removed).
 // The game's listing request (AnimalStorage_AddToMarket) is franchise
 // request type 42 (seen in game). Errors for other request types are
 // background traffic (type 28 fails every few minutes on its own) and say
@@ -45,12 +55,14 @@ export const OFFSET_LIMIT = 0.5;
 
 // ------------------------------------------------------------- settings
 
-let enabled = false;
+// On by default (the developer's decision, 2026-10-16: Franchise is the
+// point of this mod); listing still only starts with a click on Sell.
+let enabled = true;
 try {
-    enabled = window.localStorage && window.localStorage.getItem(SETTING_KEY) === 'true';
+    enabled = !(window.localStorage && window.localStorage.getItem(SETTING_KEY) === 'false');
 }
 catch (e) {
-    enabled = false;
+    enabled = true;
 }
 const settingListeners = new Set();
 
@@ -174,9 +186,13 @@ function animalForKey(key) {
 // list is re-sorted the game rebuilds it and a key can point at another
 // animal. A run therefore remembers each animal by its id plus what it is,
 // and finds its current key again before every step.
-function fingerprint(a) {
-    const g = a.genes || {};
-    return [a.species, a.name, a.gender, g.size, g.longevity, g.fertility, g.immunity].join('|');
+export function fingerprint(a) {
+    return rowFingerprint(a);
+}
+
+// What the listing engine checks a row key against (see resolveGuids).
+export function identityOf(a) {
+    return { key: a.key, fp: fingerprint(a), name: a.name, species: a.species, gender: a.gender };
 }
 
 function targetForKey(key) {
@@ -264,8 +280,24 @@ export function onMarketCheckChanged(fn) {
     return () => peekListeners.delete(fn);
 }
 
+// When each species' market check last ended: { at, ok }. The Market desk
+// asks for a check of every species it lists (a failed check counts too, so
+// a check that can't run never blocks listing at the game's price).
+const checkedAt = new Map();
+export const PRICE_CHECK_FRESH_MS = 30 * 60 * 1000;
+
+export function priceCheckOf(species) {
+    return checkedAt.get(species) || null;
+}
+
+export function isPriceCheckFresh(species, now = Date.now()) {
+    const c = checkedAt.get(species);
+    return !!c && now - c.at < PRICE_CHECK_FRESH_MS;
+}
+
 function setPeek(changes) {
     peek = Object.assign({}, peek, changes);
+    if ((changes.state === 'done' || changes.state === 'failed') && peek.species) checkedAt.set(peek.species, { at: Date.now(), ok: changes.state === 'done' });
     peekListeners.forEach(fn => {
         try {
             fn(peek);
@@ -355,6 +387,8 @@ async function readPeekPage(species, isFresh) {
 // opts.quiet: no error toast (the multi-species check sums them up).
 export async function checkMarketFor(species, opts = {}) {
     if (isPeekBusy()) return { ok: false, total: 0, fatal: false, busy: true, message: 'A market check is already running.' };
+    // one server action at a time: never during a listing
+    if ((run && !run.finished) || engineRunning()) return { ok: false, total: 0, fatal: false, busy: true, message: 'A listing is running; check prices when it is done.' };
     setPeek({ species, uid: undefined, state: 'starting', message: 'Asking the market…' });
     const fail = (title, detail, fatal = false) => {
         setPeek({ state: 'failed', message: detail ? `${title}: ${detail}` : title });
@@ -448,7 +482,9 @@ export async function checkMarketFor(species, opts = {}) {
 // Several species, one after another (each with all its pages). Only
 // started by a click; one market check at a time, with the game-side
 // cooldown between species; Stop ends it after the current species.
-const PEEK_SPECIES_GAP_MS = 3200; // the Lua side refuses checks < 3 s apart
+const PEEK_SPECIES_GAP = 3200; // the Lua side refuses checks < 3 s apart
+// the browser harness has no Lua cooldown; the game always waits the full gap
+const peekGapMs = () => (typeof window !== 'undefined' && window.__PZ2QOL_TEST_PEEK_GAP_MS >= 0 && typeof engine !== 'undefined' && engine.__harness ? window.__PZ2QOL_TEST_PEEK_GAP_MS : PEEK_SPECIES_GAP);
 let peekAll = null; // { list, index, done, failed, listings, stopRequested, finished, message }
 
 export function getMultiMarketCheck() {
@@ -476,7 +512,7 @@ export function stopMultiCheck() {
 }
 
 export async function checkMarketForAll(speciesList) {
-    if (isMultiCheckBusy() || isPeekBusy() || (run && !run.finished)) return false;
+    if (isMultiCheckBusy() || isPeekBusy() || (run && !run.finished) || engineRunning()) return false;
     const list = Array.from(new Set(speciesList.filter(Boolean)));
     if (!list.length) return false;
     breadcrumb('peek_all_start');
@@ -485,14 +521,14 @@ export async function checkMarketForAll(speciesList) {
     for (let i = 0; i < list.length; i++) {
         if (peekAll.stopRequested) break;
         const species = list[i];
-        const wait = PEEK_SPECIES_GAP_MS - (Date.now() - lastStart);
+        const wait = peekGapMs() - (Date.now() - lastStart);
         setPeekAll({ index: i, message: `Checking ${t(species)} (${i + 1} of ${list.length})…` });
         if (wait > 0) await sleep(wait);
         if (peekAll.stopRequested) break;
         lastStart = Date.now();
         let r = await checkMarketFor(species, { quiet: true });
         if (!r.ok && r.busy && !peekAll.stopRequested) {
-            await sleep(PEEK_SPECIES_GAP_MS);
+            await sleep(peekGapMs());
             lastStart = Date.now();
             r = await checkMarketFor(species, { quiet: true });
         }
@@ -566,18 +602,16 @@ const SKIP_KINDS = {
     stopped: 'stopped while waiting',
     timeout: 'server timeout',
     refused: 'refused by the server',
+    elderly: "elderly and no longer fertile: the market won't take it",
     other: 'other',
 };
-
-function stop(title, detail) {
-    throw new StopError(`${title}${detail ? ': ' + detail : ''}`);
-}
 
 function skip(reason, kind) {
     throw new SkipError(reason, kind);
 }
 
-// Server errors that would hit every following listing too: stop instead of skipping.
+// Server errors that would hit every following listing too (still skipped:
+// a run never stops on its own).
 const FATAL_SERVER_ERRORS = /NotAuthorised|MaintainanceMode|Maintenance|PlayerBanned|NotEnoughCC|CouldNotParseResponse|InternalServerError/;
 // The game's requests time out now and then (a known game issue): the
 // listing may still go through, so wait a little longer, then move on.
@@ -589,7 +623,6 @@ const REJECT_GRACE_MS = 3000;
 // "Server error: code N": no DatabaseError_* name matched (255 and 5 seen).
 // "Unknown" is just as unspecific (names resolve since 2026-10-15 20:13).
 const UNNAMED_SERVER_ERROR = /Server error: (code -?\d+|Unknown)\b/;
-const MAX_CONSECUTIVE_REJECTIONS = 3;
 
 // Whether a reported error can be about the listing being waited on.
 function isAboutListing(entry) {
@@ -652,6 +685,8 @@ async function listOne(target, index) {
     const before = found.a;
     if (before.auctionTimerSeconds > 0) skip(`${label}: already on the market`, 'listed');
     if (before.isMoving) skip(`${label}: being moved`, 'moving');
+    // never sent: the market refuses elderly animals past breeding age
+    if (isInfertileElderly(before)) skip(`${label}: ${SKIP_KINDS.elderly}`, 'elderly');
     if (before.id == undefined) skip(`${label}: no id`, 'noid');
 
     // 1. select exactly this animal, the way a click on its row does
@@ -731,17 +766,13 @@ async function listOne(target, index) {
             breadcrumb('lister_listed_after_error');
         }
         else {
-            if (FATAL_SERVER_ERRORS.test(err)) stop(`Listing ${label} failed`, err);
-            // Unnamed codes: both in-game crashes (2026-10-15, 0xFDEAD) came
-            // right after the server answered a listing with code 5, each a
-            // few seconds after a code 255 refusal earlier in the same run.
-            // Stop at the first one; listing more is not worth the game.
-            if (UNNAMED_SERVER_ERROR.test(err)) {
-                breadcrumb('lister_stop_unnamed');
-                stop(`The server refused ${label}`, `${err}. Stopped to be safe: listing more right after a refusal has crashed the game. Wait a minute before selling again.`);
-            }
+            // Every server error skips this animal and the run carries on
+            // (the developer's decision, 2026-10-16), after the longer
+            // error pause. Unnamed codes came seconds before both 2026-10-15
+            // crashes; they are still marked in the trace.
+            if (UNNAMED_SERVER_ERROR.test(err)) breadcrumb('lister_skip_unnamed');
+            if (FATAL_SERVER_ERRORS.test(err)) breadcrumb('lister_skip_fatal');
             run.rejections++;
-            if (run.rejections >= MAX_CONSECUTIVE_REJECTIONS) stop(`${MAX_CONSECUTIVE_REJECTIONS} listings in a row were rejected`, err);
             skip(`${label}: rejected by the server (${err})`, 'refused');
         }
     }
@@ -778,18 +809,87 @@ export function sellableKeys(keys) {
     return keys.filter(k => !(animalForKey(k).auctionTimerSeconds > 0));
 }
 
+// ------------------------------------------------- the Lua listing engine
+
+// Labels of the animals in engine runs (results carry only GUIDs).
+const labelByGuid = new Map();
+// Which run the panels show: the engine's or the old path's latest.
+let lastRunKind = '';
+
+export function labelOf(guid) {
+    return labelByGuid.get(String(guid)) || 'animal';
+}
+
+function animalLabel(a) {
+    return `${t(a.species) || 'animal'} ${SEX[a.gender] || ''} "${t(a.name)}"`.replace(/\s+/g, ' ');
+}
+
+// A listing (or a market check) is running.
+export function isListingBusy() {
+    return (run && !run.finished) || engineRunning() || isMultiCheckBusy() || isPeekBusy();
+}
+
+// The storage list as it is now (readAnimal rows).
+export function storageRows() {
+    return childrenOf(STORAGE_LIST).map(ctx => readAnimal(ctx));
+}
+
+// Lists these storage animals (readAnimal rows) at their recommended prices:
+// through the Lua engine when it can, else the old click-driven path.
+// hours: 'max' (the game's longest, default) or 'default'.
+// Returns { ok, engine, count, message }.
+export async function listAnimals(animals, { hours = 'max' } = {}) {
+    if (isListingBusy()) return { ok: false, engine: false, count: 0, message: 'A listing or market check is already running.' };
+    if (!isFranchise()) {
+        reportError('lister', 'Listing is only available in Franchise mode');
+        return { ok: false, engine: false, count: 0, message: 'Franchise only.' };
+    }
+    // the answer the storage screen keeps fresh (place()); ask only without one
+    const caps = capsAgeMs() < 15000 ? lastCaps() : await engineCaps({ force: true });
+    if (!engineUsable(caps, childrenOf(STORAGE_LIST).length)) {
+        breadcrumb('lister_legacy');
+        await legacySell(animals.map(a => a.key));
+        return { ok: true, engine: false, count: animals.length, message: engineWhyNot(caps, childrenOf(STORAGE_LIST).length) };
+    }
+    const guids = await resolveGuids(animals.map(identityOf));
+    const rows = deskRows(animals, guids, a => adviceFor(a, {}));
+    const { text, items } = encodeJob(rows, { paceMs: getPaceMs('lister'), hours });
+    if (!items.length) {
+        const unknown = rows.filter(r => !r.guid).length;
+        const why = !rows.length ? 'none of them could be found in storage'
+            : unknown ? `${unknown} of them could not be identified in Animal Storage (press Read storage again; if it stays, the game-side engine could not read their ids)`
+                : 'none of them can be listed now (on the market, moving, juvenile or elderly)';
+        breadcrumb(unknown ? 'lister_nothing_noid' : 'lister_nothing_blocked');
+        reportError('lister', 'Nothing to list', `The selected animals: ${why}.`);
+        return { ok: false, engine: true, count: 0, message: why };
+    }
+    for (const r of items) labelByGuid.set(r.guid, animalLabel(r.a));
+    lastRunKind = 'engine';
+    const started = await startEngineRun(text);
+    if (!started.ok) reportError('lister', 'The listing engine did not start', started.message);
+    return { ok: started.ok, engine: true, count: items.length, message: started.message };
+}
+
 // Lists the given storage animals (child keys) at their recommended prices.
 export async function sellAtRecommendedPrice(keys) {
-    if (run && !run.finished) return;
-    if (isMultiCheckBusy() || isPeekBusy()) return; // one market action at a time
     if (!enabled) {
         reportError('lister', 'The market lister is turned off', 'Turn it on in the storage toolbar first.');
         return;
     }
-    if (!isFranchise()) {
-        reportError('lister', 'Listing is only available in Franchise mode');
-        return;
-    }
+    await listAnimals(keys.map(k => animalForKey(k)));
+}
+
+// Stop whatever listing runs.
+export function stopListing() {
+    if (engineRunning()) stopEngineRun();
+    if (run && !run.finished) stopRun();
+}
+
+// The old path: drives the storage screen's own events.
+async function legacySell(keys) {
+    if (run && !run.finished) return;
+    lastRunKind = 'legacy';
+    if (isMultiCheckBusy() || isPeekBusy()) return; // one market action at a time
     // animals already on the market are left out up front, not "skipped"
     const allKeys = keys;
     keys = sellableKeys(keys);
@@ -823,7 +923,13 @@ export async function sellAtRecommendedPrice(keys) {
                 await listOne(queue[i], i);
             }
             catch (e) {
-                if (!(e instanceof SkipError)) throw e;
+                // only the player's Stop ends a run; anything else skips this animal
+                if (e instanceof StopError) throw e;
+                if (!(e instanceof SkipError)) {
+                    reportError('lister', 'Market lister: unexpected error, skipped one animal', e, { silent: true });
+                    e = new SkipError(`${queue[i].label}: unexpected error (${e && e.message})`, 'other');
+                    if (run.attempt) run.attempt.error = true;
+                }
                 breadcrumb('lister_skip');
                 breadcrumb(`lister_skip_${e.kind}`);
                 run.skipped.push(e.message);
@@ -831,11 +937,11 @@ export async function sellAtRecommendedPrice(keys) {
                 run.log.push(`Skipped ${e.message}`);
                 notifyRun();
             }
-            // pace after every request the server saw (listed or not), longer
-            // after an error; skips that sent nothing move straight on
+            // pace after every request the server saw (listed or not, same
+            // pause after an error); skips that sent nothing move straight on
             const attempt = run.attempt || {};
             if ((attempt.sent || attempt.error) && i < queue.length - 1) {
-                const pause = attempt.error ? ERROR_BACKOFF_MS : GAP_BETWEEN_LISTINGS_MS;
+                const pause = getPaceMs('lister');
                 run.status = attempt.error
                     ? `Listed ${run.done}/${run.total}. The server had a problem; next in ${pause / 1000}s…`
                     : `Listed ${run.done}/${run.total}. Next in ${pause / 1000}s…`;
@@ -888,11 +994,12 @@ let panel = null;
 let body = null;
 let countPill = null;
 let offsetControl = null;
+let paceControl = null;
 let lastRender = '';
 
 // "Price vs recommended  [-]  -10%  [+]": one global offset in 5% steps;
 // click the value to go back to 0.
-function buildOffsetControl() {
+export function buildOffsetControl() {
     const value = h('div.PZ2QoL_segItem.PZ2QoL_offsetValue', { title: 'Reset to the recommended price', onClick: () => setPriceOffset(0) });
     const less = h('div.PZ2QoL_segItem', { text: '−', title: `${Math.round(OFFSET_STEP * 100)}% lower`, onClick: () => setPriceOffset(priceOffset - OFFSET_STEP) });
     const more = h('div.PZ2QoL_segItem', { text: '+', title: `${Math.round(OFFSET_STEP * 100)}% higher`, onClick: () => setPriceOffset(priceOffset + OFFSET_STEP) });
@@ -913,6 +1020,8 @@ function buildOffsetControl() {
 function buildPanel() {
     countPill = h('div.PZ2QoL_pill.subtle');
     offsetControl = buildOffsetControl();
+    // the pause between listings: a compact slider in the header
+    paceControl = paceSlider('lister', { compact: true });
     body = h('div.PZ2QoL_listerBody');
     panel = h('div.PZ2QoL_card.PZ2QoL_lister', null,
         h('div.PZ2QoL_cardHeader', null,
@@ -921,8 +1030,16 @@ function buildPanel() {
                 h('div.PZ2QoL_cardTitle', { text: 'Market lister' }),
                 h('div.PZ2QoL_cardSubtitle', { text: 'Prices from Conservation Credit listings you have seen on the Market and in your History' })),
             h('div.PZ2QoL_flex1'),
+            paceControl,
             offsetControl,
-            countPill),
+            countPill,
+            h('div.PZ2QoL_btn.PZ2QoL_deskBtn', {
+                title: 'Market desk: pick and list many animals at once, species by species, with every price and result in one place. Nothing is listed until you press List.',
+                onClick: () => {
+                    const desk = panelApi('desk');
+                    if (desk) desk.open();
+                },
+            }, icon('IconTrade', 'brown', 'sm'), h('span', { text: 'Market desk' }))),
         body);
     document.body.appendChild(panel);
 }
@@ -1051,7 +1168,34 @@ function medalRow(s, mine) {
         }));
 }
 
+// The engine's run in the panel (the same look as the old path's).
+function engineRunBlock(s) {
+    const tl = tally(s);
+    const processed = tl.total - tl.pending - tl.working;
+    const pct = tl.total ? Math.round(processed / tl.total * 100) : 0;
+    const state = s.phase === 'running' ? 'running' : s.phase === 'done' ? 'done' : 'stopped';
+    const cur = s.results[s.index];
+    const status = state === 'running'
+        ? `${processed + 1 > tl.total ? tl.total : processed + 1}/${tl.total}: ${cur ? labelOf(cur.guid) : ''} · ${STEP_WORDS[s.step] || s.message || 'Working…'}${s.waited >= 2 ? ` (${Math.round(s.waited)}s)` : ''}`
+        : summaryText(s, fmtInt) + (s.phase === 'closed' ? ' Animal Storage was closed.' : '');
+    const notListed = s.results.filter(r => r.status !== 'listed' && r.status !== 'pending' && r.status !== 'working');
+    return h(`div.PZ2QoL_run.${state}`, null,
+        h('div.PZ2QoL_runHead', null,
+            h('div.PZ2QoL_runTitle', { text: state == 'running' ? 'Listing…' : state == 'stopped' ? 'Stopped' : 'Finished' }),
+            h('div.PZ2QoL_flex1'),
+            h('div.PZ2QoL_pill.ok', { text: `${tl.listed} listed` }),
+            notListed.length ? h('div.PZ2QoL_pill.warn', { text: `${notListed.length} not listed` }) : null),
+        h('div.PZ2QoL_progress', null, h('div.PZ2QoL_progressFill', { style: { width: `${pct}%` } })),
+        h('div.PZ2QoL_listerStatus.clamp', { text: status, title: status }),
+        notListed.slice(-2).map(r => {
+            const text = `${labelOf(r.guid)}: ${RESULT_WORDS[r.kind] || r.status}${r.detail ? ` (${t(r.detail)})` : ''}`;
+            return h('div.PZ2QoL_runSkip', { text: `Not listed · ${text}`, title: text });
+        }));
+}
+
 function runBlock() {
+    const es = getEngineState();
+    if (es && (lastRunKind === 'engine' || engineRunning() || !run)) return engineRunBlock(es);
     if (!run) return null;
     const processed = run.done + run.skipped.length;
     const pct = run.total ? Math.round(processed / run.total * 100) : 0;
@@ -1068,7 +1212,7 @@ function runBlock() {
 }
 
 function recColumn(keys, single, advice) {
-    const busy = run && !run.finished;
+    const busy = (run && !run.finished) || engineRunning();
     const col = h('div.PZ2QoL_col.rec');
     if (single) {
         col.appendChild(h('div.PZ2QoL_colLabel', { text: advice.offset ? `Recommended price ${offsetLabel(advice.offset)}` : 'Recommended price' }));
@@ -1090,7 +1234,7 @@ function recColumn(keys, single, advice) {
     }
     const actions = h('div.PZ2QoL_actions');
     if (busy) {
-        actions.appendChild(h('div.PZ2QoL_btn.negative', { onClick: () => stopRun() }, icon('Icon_Close', 'white', 'sm'), h('span', { text: 'Stop' })));
+        actions.appendChild(h('div.PZ2QoL_btn.negative', { onClick: () => stopListing() }, icon('Icon_Close', 'white', 'sm'), h('span', { text: 'Stop' })));
     }
     else {
         const n = single ? keys.length : sellableKeys(keys).length;
@@ -1155,7 +1299,7 @@ function multiCheckButton(keys) {
     const button = h('div.PZ2QoL_btn', { onClick: () => checkMarketForAll(species), title: "Loads each selected species' Market listings (all pages) in the background, one species after another; the screen stays on Animal Storage" },
         icon('IconSearch', 'brown', 'sm'),
         h('span', { text: `Refresh prices (${species.length} species)` }));
-    if (isPeekBusy() || (run && !run.finished)) button.classList.add('disabled');
+    if (isPeekBusy() || (run && !run.finished) || engineRunning()) button.classList.add('disabled');
     return button;
 }
 
@@ -1219,7 +1363,9 @@ function multiColumn(keys) {
 function renderPanel(force) {
     const keys = selectedKeys().filter(k => animalForKey(k).id != undefined);
     const book = getPriceBook();
-    const signature = JSON.stringify([keys, book.length, run && [run.status, run.done, run.skipped.length, run.finished], enabled, isFranchise(), priceOffset, peek && [peek.state, peek.message], peekAll && [peekAll.message, peekAll.finished, peekAll.stopRequested]]);
+    const es = getEngineState();
+    const signature = JSON.stringify([keys, book.length, run && [run.status, run.done, run.skipped.length, run.finished], enabled, isFranchise(), priceOffset, peek && [peek.state, peek.message], peekAll && [peekAll.message, peekAll.finished, peekAll.stopRequested],
+        es && [es.run, es.phase, es.index, es.step, Math.round(es.waited || 0), es.results.map(r => r.status).join('')]]);
     if (offsetControl) offsetControl.__update();
     if (!force && signature == lastRender) return;
     lastRender = signature;
@@ -1230,7 +1376,7 @@ function renderPanel(force) {
         body.appendChild(h('div.PZ2QoL_empty', null, icon('IconInformation', 'brown', 'lg'), h('div.PZ2QoL_listerMsg', { text: 'Listing animals is only available in Franchise mode.' })));
         return;
     }
-    if (keys.length == 0 && !(run && !run.finished)) {
+    if (keys.length == 0 && !(run && !run.finished) && !engineRunning()) {
         body.appendChild(h('div.PZ2QoL_empty', null, icon('IconInformation', 'brown', 'lg'),
             h('div.PZ2QoL_listerMsg', { text: 'Select an animal, or tick several, to see live market prices and a recommended price.' })));
         const rb = runBlock();
@@ -1267,6 +1413,8 @@ function place() {
         }
     }
     const anchor = visibleElement('.AnimalMarketStorage_header');
+    // what the game-side listing engine can do, kept fresh while storage is open
+    if (anchor && isFranchise()) engineCaps({ maxAgeMs: 8000 }).catch(() => {});
     if (!enabled || !anchor) {
         if (panel) panel.style.display = 'none';
         return;
@@ -1288,6 +1436,11 @@ export function installLister() {
     onRunChanged(() => panel && renderPanel(true));
     onPriceBookChanged(() => panel && renderPanel(true));
     onMarketCheckChanged(() => panel && renderPanel(true));
+    onEngineState(() => panel && renderPanel(true));
+    // a pace change during an engine run applies from the next pause
+    onPace(kind => {
+        if (kind === 'lister' && engineRunning()) setEnginePace(getPaceMs('lister'));
+    });
     if (typeof engine !== 'undefined') engine.on('PZ2QoL_MarketPeekState', (state, detail) => onPeekState(state, detail));
     onListerSettingChanged(() => {
         lastRender = '';

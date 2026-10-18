@@ -9,12 +9,13 @@ import {
 } from './kincore.js';
 
 // Severities a habitat counts (distant pairs are only shown in the matrix).
-export const COUNTED = ['risk', 'kin', 'future', 'covered'];
+export const COUNTED = ['risk', 'kin', 'future', 'held', 'covered'];
 
 export const COUNT_WORDS = {
     risk: ['inbreeding risk', 'inbreeding risks'],
     kin: ['close kin', 'close kin'],
     future: ['later', 'later'],
+    held: ['bonded elsewhere', 'bonded elsewhere'],
     covered: ['covered', 'covered'],
 };
 
@@ -23,10 +24,11 @@ export function countWord(severity, n) {
     return n === 1 ? w[0] : w[1];
 }
 
-// The counts the player wants to see (covered pairs can be hidden).
+// The counts the player wants to see (covered pairs can be hidden; pairs
+// held apart by a bond are always shown).
 export function visibleCounts(counts, showCovered = true) {
     const c = counts || {};
-    return { risk: c.risk || 0, kin: c.kin || 0, future: c.future || 0, covered: showCovered ? c.covered || 0 : 0 };
+    return { risk: c.risk || 0, kin: c.kin || 0, future: c.future || 0, held: c.held || 0, covered: showCovered ? c.covered || 0 : 0 };
 }
 
 export function worstOf(counts) {

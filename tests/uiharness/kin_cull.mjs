@@ -6,6 +6,8 @@
 // window.__kc.active, earlier fakes cleared). Checks: preview numbers, the
 // old ones and the extra males leave, the best stays, the fill control,
 // click to keep / send away, "Too old" from habitats that are not full,
+// a 0% fertility gene leaves a habitat with room (and its switch), the
+// poor-gene levels and Core only send more away,
 // "Send N to the trade centre" fills the plan, Execute sends them to the
 // trade centre one at a time.
 import { seedZooKin } from './kin_fixture.mjs';
@@ -51,7 +53,10 @@ async function seedLemurs(page) {
         const L = 'CDEFGH';
         const genes = s => {
             const st = o => Array.from({ length: 6 }, (_, i) => L[(s * 5 + (i + o) * 3) % 6]).join('');
-            return { F: st(0) + st(s % 5), I: st(1) + st(s % 4), S: 'AACCCC' + st(2), L: 'ACCCCC' + st(3) };
+            // the second strand differs from the first at k loci: fertility k/6
+            // (1..6, never 0 by accident), immunity 2..5 of 6
+            const vary = (x, k) => x.split('').map((c, i) => (i < k ? L[(L.indexOf(c) + 1) % 6] : c)).join('');
+            return { F: st(0) + vary(st(0), 1 + (s * 7) % 6), I: st(1) + vary(st(1), 2 + (s * 5) % 4), S: 'AACCCC' + st(2), L: 'ACCCCC' + st(3) };
         };
         const best = { F: 'ABCDEFBCDEFA', I: 'ABCDEFBCDEFA', S: 'AABBAABBAABB', L: 'AABBAABBAABB' };
         let n = 0;
@@ -84,7 +89,9 @@ async function seedLemurs(page) {
         // Lemur Valley: room 8, 6 adults (one elderly), 6 young
         add('9032', 'Moto', 0);
         ids.oldValley = add('9032', 'Mzee', 1, { age: 17, ageQ: 3, infertile: true });
-        for (let i = 1; i <= 4; i++) add('9032', `Valley ${i}`, 1);
+        for (let i = 1; i <= 3; i++) add('9032', `Valley ${i}`, 1);
+        // 0% fertility gene (both strands the same), in a habitat with room
+        ids.zeroFert = add('9032', 'Tasa', 1, { genes: { F: 'CDEFGHCDEFGH', I: 'ABCDEFBCDEFA', S: 'AABBAABBAABB', L: 'AABBAABBAABB' } });
         young('9032', 6);
         // Lemur Woods: room 8, 8 adults, 4 young
         add('9033', 'Shujaa', 0);
@@ -186,6 +193,9 @@ export async function hud(page, ctx) {
         facts.layoutPreview = await layoutFacts(page);
         layoutProblems('preview', facts.layoutPreview, problems);
         if (facts.loading !== 1) problems.push('no "Asking the game" state');
+        facts.zeroFert = { row: p.rows[ids.zeroFert], tile: p.zeroFert };
+        if (!facts.zeroFert.row || facts.zeroFert.row.state !== 'cull' || !/0% fertility/.test(facts.zeroFert.row.why)) problems.push(`0% fertility gene: ${JSON.stringify(facts.zeroFert)}`);
+        if (!p.zeroFert || p.zeroFert[0] !== 1 || p.zeroFert[1] !== 0) problems.push(`0% fertility tile: ${p.zeroFert}`);
         if (!(p.moves >= 6)) problems.push(`only ${p.moves} to the trade centre`);
         if (p.animals[0] !== 60 || p.animals[1] !== 60 - p.moves) problems.push(`animals ${p.animals} with ${p.moves} leaving`);
         if (p.old[0] !== 3 || p.old[1] !== 1) problems.push(`too-old ${p.old}: expected 3 → 1 (the one in a habitat with room stays)`);
@@ -202,13 +212,13 @@ export async function hud(page, ctx) {
 
         // 2. the fill level recomputes
         facts.fill = {};
-        for (const f of ['lean', 'full', 'balanced']) {
+        for (const f of ['core', 'strict', 'lean', 'full', 'balanced']) {
             await click(page.locator(`.PZ2QoL_kbCull .PZ2QoL_kbSegItem[data-fill="${f}"]`));
             await page.waitForTimeout(200);
             facts.fill[f] = (await preview(page)).moves;
             if (f === 'lean') await ctx.shot(page, 'kc_2_lean');
         }
-        if (!(facts.fill.lean > facts.fill.balanced && facts.fill.balanced > facts.fill.full)) problems.push(`fill does not change the count: ${JSON.stringify(facts.fill)}`);
+        if (!(facts.fill.core > facts.fill.strict && facts.fill.strict > facts.fill.lean && facts.fill.lean > facts.fill.balanced && facts.fill.balanced > facts.fill.full)) problems.push(`fill does not change the count: ${JSON.stringify(facts.fill)}`);
 
         // 3. click to send away / keep
         await click(row(ids.zuri));
@@ -228,13 +238,34 @@ export async function hud(page, ctx) {
         await page.waitForTimeout(150);
         if ((await preview(page)).moves !== facts.fill.balanced) problems.push('toggling twice does not restore the plan');
 
+        // 3b. the 0% fertility switch, then the poor-gene levels
+        const zeroSw = page.locator('.PZ2QoL_kbCull .PZ2QoL_kpSwitch[data-opt="zeroFertility"]');
+        await click(zeroSw);
+        await page.waitForTimeout(200);
+        const z = await preview(page);
+        facts.zeroOff = { row: z.rows[ids.zeroFert], moves: z.moves };
+        if (z.rows[ids.zeroFert].state !== 'keep' || z.moves !== facts.fill.balanced - 1) problems.push(`0% fertility switch off: ${JSON.stringify(facts.zeroOff)}`);
+        await click(zeroSw);
+        await page.waitForTimeout(150);
+        facts.genes = {};
+        for (const g of ['weak', 'below', 'best', 'off']) {
+            await click(page.locator(`.PZ2QoL_kbCull .PZ2QoL_kbSegItem[data-genes="${g}"]`));
+            await page.waitForTimeout(200);
+            const q = await preview(page);
+            facts.genes[g] = { moves: q.moves, gene: q.gene };
+            if (g === 'best') await ctx.shot(page, 'kc_3b_best_only');
+        }
+        const gl = facts.genes;
+        if (!(gl.best.moves >= gl.below.moves && gl.below.moves > gl.weak.moves && gl.weak.moves > gl.off.moves && gl.off.moves === facts.fill.balanced)) problems.push(`poor-gene levels: ${JSON.stringify(gl)}`);
+        if (!(gl.best.gene[1] >= gl.below.gene[1])) problems.push(`best only does not raise the genes: ${JSON.stringify(gl)}`);
+
         // 4. too old from a habitat with room
-        await click(page.locator('.PZ2QoL_kbCull .PZ2QoL_kpSwitch'));
+        await click(page.locator('.PZ2QoL_kbCull .PZ2QoL_kpSwitch[data-opt="oldAlways"]'));
         await page.waitForTimeout(200);
         const o = await preview(page);
         facts.oldAlways = { mzee: o.rows[ids.oldValley], moves: o.moves, old: o.old };
         if (facts.oldAlways.mzee.state !== 'cull' || o.old[1] !== 0) problems.push(`"also too-old animals": ${JSON.stringify(facts.oldAlways)}`);
-        await click(page.locator('.PZ2QoL_kbCull .PZ2QoL_kpSwitch'));
+        await click(page.locator('.PZ2QoL_kbCull .PZ2QoL_kpSwitch[data-opt="oldAlways"]'));
         await page.waitForTimeout(150);
 
         // 5. a shorter list for the run: Full, then send

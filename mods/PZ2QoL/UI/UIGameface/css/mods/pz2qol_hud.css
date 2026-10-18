@@ -1,0 +1,252 @@
+/* =====================================================================
+   PZ2QoL: in-park launcher (Species board, Autosave), the autosave card,
+   and the pause sliders (Market lister, Species board plans).
+   The launcher copies the game's tools column (.ToolsBar_*): dark green
+   panel, 40px cream round buttons with a light outline, brown 26px icons,
+   pink on hover. Sizes in rem so it scales with the game's UI scale.
+   ===================================================================== */
+
+/* ------------------------------------------------------------ launcher */
+
+.PZ2QoL_dock {
+  position: absolute;
+  z-index: 40;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  width: 3.3333rem;
+  padding: 0.5556rem 0 0.5556rem 0.5556rem;
+  margin-bottom: 0.2778rem;
+}
+.PZ2QoL_dock.displayNone,
+.PZ2QoL_dockBtn.displayNone { display: none !important; }
+.PZ2QoL_dockPanel {
+  position: absolute;
+  left: 0;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  background-color: #3C472E;
+  border-radius: 0 0.5556rem 0.5556rem 0;
+}
+.PZ2QoL_dockBtn {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 2.2222rem;
+  height: 2.2222rem;
+  margin-bottom: 0.2778rem;
+  cursor: pointer;
+}
+.PZ2QoL_dockBtn:last-child { margin-bottom: 0; }
+.PZ2QoL_dockBg {
+  position: absolute;
+  left: 0;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  border-radius: 99px;
+  background-color: #fff2dd;
+  border-style: solid;
+  border-color: rgba(199, 181, 163, 0.9);
+  border-width: 0.1111rem 0.1111rem 0.2222rem 0.1111rem;
+  transition: background-color 0.12s, border-color 0.12s;
+}
+.PZ2QoL_dockBtn.hover .PZ2QoL_dockBg {
+  background-color: #FFC5C5;
+  border-color: rgba(199, 181, 163, 0.15);
+}
+.PZ2QoL_dockBtn.on .PZ2QoL_dockBg { background-color: #FFC5C5; }
+.PZ2QoL_dockBtn:active { transform: scale(0.95); }
+.PZ2QoL_icon.dock {
+  position: relative;
+  width: 1.4444rem;
+  height: 1.4444rem;
+}
+.PZ2QoL_dockBtn.hover .PZ2QoL_icon.dock { transform: translateX(0.1111rem); }
+
+.PZ2QoL_dockTip {
+  position: absolute;
+  left: 2.9rem;
+  top: 0.2rem;
+  display: none;
+  white-space: nowrap;
+  padding: 0.35rem 0.7rem;
+  border-radius: 0.5rem;
+  background-color: #FFF9EE;
+  color: #725B4A;
+  font-size: 0.8rem;
+  box-shadow: 0 0.2rem 0.6rem rgba(60, 45, 30, 0.25);
+}
+.PZ2QoL_dockBtn.hover .PZ2QoL_dockTip { display: flex; }
+.PZ2QoL_dockBtn.on .PZ2QoL_dockTip { display: none; }
+
+.PZ2QoL_dockBadge {
+  position: absolute;
+  right: -0.35rem;
+  bottom: -0.2rem;
+  display: flex;
+  padding: 0 0.25rem;
+  min-width: 0.9rem;
+  height: 0.85rem;
+  align-items: center;
+  justify-content: center;
+  border-radius: 0.45rem;
+  font-size: 0.55rem;
+  font-weight: bold;
+  color: #FFF9EE;
+  background-color: #596943;
+  border: 0.0556rem solid #fff2dd;
+}
+.PZ2QoL_dockBadge:empty { display: none; }
+.PZ2QoL_dockBadge[data-tone="off"] { background-color: rgba(114, 91, 74, 0.6); }
+.PZ2QoL_dockBadge[data-tone="due"] { background-color: #D9932E; }
+.PZ2QoL_dockBadge[data-tone="busy"] { background-color: #4F8A86; }
+.PZ2QoL_dockBadge[data-tone="bad"] { background-color: #C9524E; }
+
+/* ------------------------------------------------------- autosave card */
+
+.PZ2QoL_card.PZ2QoL_asCard {
+  position: absolute;
+  z-index: 41;
+  flex-direction: column;
+  width: 20rem;
+  padding: 0.8rem 0.9rem;
+  border-radius: 0.9rem;
+  background-color: #FFF9EE;
+  color: #725B4A;
+  box-shadow: 0 0.35rem 1.1rem rgba(60, 45, 30, 0.22), 0 0.05rem 0.2rem rgba(60, 45, 30, 0.18);
+}
+.PZ2QoL_asCard .PZ2QoL_asHead { align-items: center; margin-bottom: 0.35rem; }
+.PZ2QoL_asCard .PZ2QoL_asHeading { font-size: 1rem; font-weight: bold; }
+.PZ2QoL_asCard .PZ2QoL_asClose {
+  width: 1.4rem;
+  height: 1.4rem;
+  align-items: center;
+  justify-content: center;
+  border-radius: 99px;
+  cursor: pointer;
+  font-size: 1rem;
+}
+.PZ2QoL_asCard .PZ2QoL_asClose:hover { background-color: rgba(114, 91, 74, 0.15); }
+.PZ2QoL_asCard .PZ2QoL_asTitle { font-size: 0.85rem; font-weight: bold; }
+.PZ2QoL_asCard .PZ2QoL_asDetail { font-size: 0.75rem; color: rgba(114, 91, 74, 0.72); margin: 0.15rem 0 0.6rem 0; }
+.PZ2QoL_asCard[data-tone="bad"] .PZ2QoL_asTitle { color: #C9524E; }
+.PZ2QoL_asCard[data-tone="due"] .PZ2QoL_asTitle { color: #D9932E; }
+.PZ2QoL_asCard .PZ2QoL_asLabel {
+  font-size: 0.65rem;
+  font-weight: bold;
+  text-transform: uppercase;
+  letter-spacing: 0.05rem;
+  color: rgba(114, 91, 74, 0.45);
+  margin-bottom: 0.25rem;
+}
+.PZ2QoL_asCard .PZ2QoL_segmented { align-self: stretch; margin-bottom: 0.6rem; }
+.PZ2QoL_asCard .PZ2QoL_segItem { flex: 1; justify-content: center; white-space: nowrap; }
+.PZ2QoL_asCard .PZ2QoL_segmented.disabled { opacity: 0.45; pointer-events: none; }
+.PZ2QoL_asCard .PZ2QoL_asRow { align-items: center; margin-bottom: 0.45rem; }
+.PZ2QoL_asCard .PZ2QoL_asLast { font-size: 0.72rem; color: rgba(114, 91, 74, 0.72); }
+.PZ2QoL_asCard .PZ2QoL_asNow.disabled { opacity: 0.45; pointer-events: none; }
+.PZ2QoL_asCard .PZ2QoL_asNote { font-size: 0.65rem; color: rgba(114, 91, 74, 0.45); }
+
+/* ------------------------------------------------------- pause sliders */
+
+.PZ2QoL_pace, .PZ2QoL_pace * { display: flex; flex-direction: row; }
+.PZ2QoL_pace {
+  flex-direction: column;
+  align-self: stretch;
+  margin-top: 0.55rem;
+  padding: 0.5rem 0.6rem;
+  border-radius: 0.6rem;
+  background-color: rgba(114, 91, 74, 0.06);
+  color: #725B4A;
+}
+.PZ2QoL_pace .PZ2QoL_paceHead { align-items: center; margin-bottom: 0.35rem; }
+.PZ2QoL_pace .PZ2QoL_paceLabel { font-size: 0.75rem; }
+.PZ2QoL_pace .PZ2QoL_paceValue { font-size: 0.8rem; font-weight: bold; }
+.PZ2QoL_pace.fast .PZ2QoL_paceValue { color: #D9932E; }
+.PZ2QoL_pace .PZ2QoL_paceReset {
+  margin-left: 0.5rem;
+  padding: 0.05rem 0.45rem;
+  border-radius: 99px;
+  font-size: 0.65rem;
+  cursor: pointer;
+  background-color: rgba(114, 91, 74, 0.08);
+}
+.PZ2QoL_pace .PZ2QoL_paceReset:hover { background-color: rgba(114, 91, 74, 0.15); }
+.PZ2QoL_pace .PZ2QoL_paceReset.hidden { display: none; }
+.PZ2QoL_pace .PZ2QoL_paceRow { align-items: center; }
+.PZ2QoL_pace .PZ2QoL_paceEnd { font-size: 0.62rem; color: rgba(114, 91, 74, 0.45); }
+.PZ2QoL_pace .PZ2QoL_paceTrack {
+  position: relative;
+  flex: 1;
+  height: 1.3rem;
+  margin: 0 0.55rem;
+  cursor: pointer;
+  align-items: center;
+}
+/* a real element, not ::before (Gameface) */
+.PZ2QoL_pace .PZ2QoL_paceRail {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 0.5rem;
+  height: 0.3rem;
+  border-radius: 99px;
+  background-color: rgba(114, 91, 74, 0.18);
+}
+.PZ2QoL_pace .PZ2QoL_paceFill {
+  position: absolute;
+  left: 0;
+  top: 0.5rem;
+  height: 0.3rem;
+  border-radius: 99px;
+  background-color: #596943;
+}
+.PZ2QoL_pace.fast .PZ2QoL_paceFill { background-color: #D9932E; }
+.PZ2QoL_pace .PZ2QoL_paceDefault {
+  position: absolute;
+  top: 0.25rem;
+  width: 0.12rem;
+  height: 0.8rem;
+  margin-left: -0.06rem;
+  background-color: rgba(114, 91, 74, 0.45);
+}
+.PZ2QoL_pace .PZ2QoL_paceKnob {
+  position: absolute;
+  top: 0.2rem;
+  width: 0.9rem;
+  height: 0.9rem;
+  margin-left: -0.45rem;
+  border-radius: 99px;
+  background-color: #FFF9EE;
+  border: 0.14rem solid #596943;
+  box-shadow: 0 0.08rem 0.25rem rgba(60, 45, 30, 0.3);
+}
+.PZ2QoL_pace.fast .PZ2QoL_paceKnob { border-color: #D9932E; }
+.PZ2QoL_pace.dragging .PZ2QoL_paceKnob { transform: scale(1.15); }
+.PZ2QoL_pace .PZ2QoL_paceWarn {
+  margin-top: 0.4rem;
+  font-size: 0.66rem;
+  line-height: 1.3;
+  color: #A8691C;
+}
+.PZ2QoL_pace .PZ2QoL_paceWarn.hidden { display: none; }
+
+/* the lister header keeps one line with the slider in it */
+.PZ2QoL_lister .PZ2QoL_cardTitles { flex-shrink: 1; min-width: 0; overflow: hidden; }
+.PZ2QoL_lister .PZ2QoL_cardSubtitle { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+/* compact: one row in a panel header (Market lister) */
+.PZ2QoL_pace.compact {
+  align-self: center;
+  flex-shrink: 0;
+  margin: 0 0.6rem 0 0;
+  padding: 0.25rem 0.55rem;
+  max-width: 19rem;
+}
+.PZ2QoL_pace.compact .PZ2QoL_paceLabel { font-size: 0.68rem; white-space: nowrap; }
+.PZ2QoL_pace.compact .PZ2QoL_paceTrack { flex: 0 0 auto; width: 6.5rem; }
+.PZ2QoL_pace.compact .PZ2QoL_paceValue { min-width: 2.2rem; }
+.PZ2QoL_pace.compact .PZ2QoL_paceWarn { margin-top: 0.25rem; font-size: 0.6rem; }

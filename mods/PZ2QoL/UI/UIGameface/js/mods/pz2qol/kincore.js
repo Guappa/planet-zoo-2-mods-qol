@@ -6,8 +6,10 @@
 //     habitats: [{ id, name, kind: 'habitat' | 'exhibit' }],
 //     animals: [{ id, key, guid, name, species, sex, juv, contra, infertile,
 //                 preg, hab, loc, par: [guid, guid], mates: [id],
+//                 bond: { mate, ring, lock: [id], mourn } (monogamous only),
 //                 genes: { F, I, S, L } }],
-//     anc: { guid: [parentGuid, parentGuid] } }   // ancestors not in the zoo
+//     anc: { guid: [parentGuid, parentGuid] },    // ancestors not in the zoo
+//     bondsOk }                                    // the bond pass answered
 // ids are strings (entity ids; exhibit animals 'x<uid>'); guids are strings,
 // '' or '0' when unknown. Genes are 12 alleles per stat (strand A = 1..6,
 // strand B = 7..12), one letter each.
@@ -20,9 +22,10 @@
 
 export const Sex = { Male: 0, Female: 1, Unisex: 2 };
 
-// Worst first. 'distant' pairs are only shown in the planner.
-export const SEVERITY_ORDER = ['risk', 'kin', 'future', 'covered', 'distant'];
-const SEVERITY_RANK = { risk: 5, kin: 4, future: 3, covered: 2, distant: 1 };
+// Worst first. 'distant' pairs are only shown in the planner. 'held' sits
+// below 'future': a young animal grows up for certain, a bond may never end.
+export const SEVERITY_ORDER = ['risk', 'kin', 'future', 'held', 'covered', 'distant'];
+const SEVERITY_RANK = { risk: 6, kin: 5, future: 4, held: 3, covered: 2, distant: 1 };
 export function severityRank(s) {
     return SEVERITY_RANK[s] || 0;
 }
@@ -36,6 +39,7 @@ export const SEVERITY_INFO = {
     risk: { label: 'Inbreeding risk', short: 'Risk', tip: 'The game counts this pair as inbred, and both can breed now.' },
     kin: { label: 'Close kin', short: 'Kin', tip: 'Closely related, but the game does not warn about it. Their young lose fertility and immunity all the same.' },
     future: { label: 'Future risk', short: 'Later', tip: 'Related, and one of them is still young. They become a risk when it grows up.' },
+    held: { label: 'Bonded elsewhere', short: 'Bonded', tip: 'Related, but the game will not let them breed: one of them has a mate (monogamy). If that bond ends, this becomes a risk again.' },
     covered: { label: 'Covered', short: 'Covered', tip: 'Related, but they cannot breed: contraception, infertility, old age, or one will be too old by the time the other grows up.' },
     distant: { label: 'Distant kin', short: 'Far', tip: 'Distantly related (below the close-kin threshold).' },
 };
@@ -51,6 +55,23 @@ function known(g) {
 
 function asArray(v) {
     return Array.isArray(v) ? v : [];
+}
+
+// A monogamous animal's bond, from the Lua bond pass: its mate (the one the
+// info panel shows; it may be dead or elsewhere), whether the game calls the
+// two mates ("ring"), the animals the game locks it against ("IconLock":
+// it has an existing mate) and the mourning time when the bond is broken.
+function normalizeBond(b) {
+    if (!b || typeof b !== 'object' || b.mate == null || b.mate === '') return null;
+    return {
+        mate: String(b.mate),
+        ring: b.ring === true,
+        // the game puts the mate in the same habitat (alive), even while it is
+        // away at the vet or in transport
+        here: b.here === true,
+        lock: asArray(b.lock).map(String),
+        mourn: typeof b.mourn === 'number' && isFinite(b.mourn) && b.mourn > 0 ? b.mourn : 0,
+    };
 }
 
 // ------------------------------------------------------------- snapshot
@@ -80,6 +101,7 @@ export function normalizeSnapshot(raw) {
         ageQ: typeof a.ageQ === 'number' ? a.ageQ : undefined,
         par: asArray(a.par).filter(known).map(String),
         mates: asArray(a.mates).map(String),
+        bond: normalizeBond(a.bond),
         genes: a.genes && typeof a.genes === 'object' ? a.genes : null,
     }));
     const anc = {};
@@ -89,13 +111,14 @@ export function normalizeSnapshot(raw) {
         }
     }
     // per species: { maturity, infertility, life } in years (the game's
-    // fertility bounds and longevity; infertility above 900 = never)
+    // fertility bounds and longevity; infertility above 900 = never), and
+    // collective: shoals and colonies, which breed as one group
     const speciesFacts = {};
     if (snap.speciesFacts && typeof snap.speciesFacts === 'object') {
         for (const [sp, f] of Object.entries(snap.speciesFacts)) {
             if (!f || typeof f !== 'object') continue;
             const num = v => (typeof v === 'number' && isFinite(v) ? v : null);
-            speciesFacts[sp] = { maturity: num(f.maturity), infertility: num(f.infertility), life: num(f.life) };
+            speciesFacts[sp] = { maturity: num(f.maturity), infertility: num(f.infertility), life: num(f.life), collective: f.collective === true };
         }
     }
     for (const a of animals) a.fert = fertilityOf(a, speciesFacts[a.species]);
@@ -104,16 +127,26 @@ export function normalizeSnapshot(raw) {
         name: h.name != null ? String(h.name) : '',
         kind: h.kind === 'exhibit' ? 'exhibit' : 'habitat',
     }));
+    // every habitat in the park, empty ones too, with the game's habitat id
+    // (entity ids change when the zoo loads; see kinboardcore resolveAssignments)
+    const habs = asArray(snap.habs).filter(h => h && h.id != null).map(h => ({
+        id: String(h.id),
+        name: h.name != null ? String(h.name) : '',
+        hid: h.hid != null && h.hid !== '' ? String(h.hid) : null,
+    }));
     return {
         normalized: true,
         v: snap.v || 1,
         seq: snap.seq || 0,
         scope: snap.scope === 'storage' ? 'storage' : 'park',
         habitats,
+        habs,
         animals,
         anc,
         speciesFacts,
         names: snap.names && typeof snap.names === 'object' ? snap.names : {},
+        // the Lua bond pass answered (false: it failed, so no bond data this scan)
+        bondsOk: snap.bondsOk === true,
         park: snap.park != null ? String(snap.park) : '',
         // 'franchise' | 'offline' (Sandbox, Career, Challenge) | 'unknown'
         mode: snap.mode === 'franchise' || snap.mode === 'offline' ? snap.mode : 'unknown',
@@ -563,6 +596,45 @@ export function coverReason(x, y) {
     return '';
 }
 
+// The game's own monogamy rule (CompareMatesPopup: "IconLock" either way
+// means no conception): x and y are held apart when one of them is locked
+// against the other in this scan AND its bonded mate is alive, in the model
+// and in the same habitat (not the other one). A dead or absent mate (the
+// bond is broken, the animal mourns) does not hold: the lock may lift at any
+// time, so the pair is warned about as before. Moves in a plan clear the
+// bond (kinboardcore plannedSnapshot). -> { by, mate, fragile } or null
+export function bondHold(animals, x, y) {
+    for (const [self, other] of [[x, y], [y, x]]) {
+        const b = self.bond;
+        if (!b || !b.lock.includes(other.id)) continue;
+        const mate = animals.get(b.mate);
+        if (!bondIntact(self, mate) || mate.id === other.id) continue;
+        // an elderly or too old mate: the bond will likely end with its life
+        const fragile = mate.ageQ === 3 || !!(mate.fert && mate.fert.state === 'old');
+        return { by: self, mate, fragile };
+    }
+    return null;
+}
+
+// self's bond to `mate` still holds: the mate is alive and lives with it,
+// or is briefly away (vet, transport: in no habitat, but the game still
+// assigns it to self's habitat).
+function bondIntact(self, mate) {
+    const b = self && self.bond;
+    if (!b || !mate || mate.id !== b.mate || !mate.alive || !self.hab) return false;
+    return mate.hab === self.hab || (!mate.hab && b.here && mate.lt !== 'trade');
+}
+
+// Why a held pair cannot breed, in words ('' when it is not held).
+export function holdReason(p) {
+    const h = p && p.held;
+    if (!h) return '';
+    const other = h.by === p.a ? p.b : p.a;
+    let s = `${h.by.name} is bonded to ${h.mate.name} (monogamy): the game won't pair ${h.by.name} with ${other.name} while ${h.mate.name} is there`;
+    if (h.fragile) s += `. ${h.mate.name} is elderly: when the bond ends, this becomes ${p.unheld === 'risk' ? 'an inbreeding risk' : 'close kin'}`;
+    return s;
+}
+
 function pairKeyOf(x, y) {
     const a = x.guid || 'e' + x.id;
     const b = y.guid || 'e' + y.id;
@@ -575,9 +647,19 @@ function ordered(x, y) {
     return [x, y];
 }
 
+// Shoals (boids) and colonies, by the game's own species checks.
+export function isCollective(model, species) {
+    const f = model && model.speciesFacts && model.speciesFacts[species];
+    return !!(f && f.collective);
+}
+
 export function buildKinModel(raw, opts = {}) {
     const snap = raw && raw.normalized ? raw : normalizeSnapshot(raw);
     const closeKinship = opts.closeKinship != null ? opts.closeKinship : DEFAULT_CLOSE_KINSHIP;
+    // pair bonds count as protection (the player's switch); only with this
+    // scan's bond data
+    const bondHolds = opts.bondHolds !== false;
+    const useBonds = bondHolds && snap.bondsOk === true;
     const ped = new Pedigree(snap);
     const animals = new Map();
     const byKey = new Map();
@@ -589,12 +671,15 @@ export function buildKinModel(raw, opts = {}) {
     const habitats = new Map();
     for (const h of snap.habitats) habitats.set(h.id, { id: h.id, name: h.name, kind: h.kind });
     // groups: habitat id -> species -> animals
+    // Shoals and colonies (fish, butterflies...) are left out: they breed as
+    // one group, so nearly every pair in it is related.
     const groups = new Map();
     for (const a of snap.animals) {
         if (!a.hab || !a.alive) continue;
         if (!habitats.has(a.hab)) habitats.set(a.hab, { id: a.hab, name: a.loc || a.hab, kind: a.exhibit ? 'exhibit' : 'habitat' });
         const h = habitats.get(a.hab);
         if (!h.name && a.loc) h.name = a.loc;
+        if (isCollective(snap, a.species)) continue;
         let bySpecies = groups.get(a.hab);
         if (!bySpecies) groups.set(a.hab, bySpecies = new Map());
         if (!bySpecies.has(a.species)) bySpecies.set(a.species, []);
@@ -617,6 +702,8 @@ export function buildKinModel(raw, opts = {}) {
                     const tier = rel.game ? 'game' : rel.kinship >= closeKinship - 1e-9 ? 'close' : 'distant';
                     const [m, f] = ordered(x, y);
                     const relMF = m === x ? rel : ped.relation(m.guid, f.guid);
+                    const base = pairSeverity(m, f, tier);
+                    const held = useBonds && (base === 'risk' || base === 'kin') ? bondHold(animals, m, f) : null;
                     const p = {
                         key: pairKeyOf(m, f),
                         a: m,
@@ -625,11 +712,15 @@ export function buildKinModel(raw, opts = {}) {
                         species,
                         rel: relMF,               // f is m's <relation>
                         tier,
-                        severity: pairSeverity(m, f, tier),
-                        cover: pairSeverity(m, f, tier) === 'covered' ? coverReason(m, f) : '',
+                        severity: held ? 'held' : base,
+                        cover: base === 'covered' ? coverReason(m, f) : '',
                         kinship: rel.kinship,
                         mated: m.mates.includes(f.id) || f.mates.includes(m.id),
                     };
+                    if (held) {
+                        p.held = held;
+                        p.unheld = base;         // what it is again when the bond ends
+                    }
                     pairs.push(p);
                     addTo(m.id, p);
                     addTo(f.id, p);
@@ -638,10 +729,11 @@ export function buildKinModel(raw, opts = {}) {
         }
     }
     const sortPairs = list => list.sort((p, q) => severityRank(q.severity) - severityRank(p.severity)
+        || severityRank(q.unheld) - severityRank(p.unheld)
         || (q.mated - p.mated) || q.kinship - p.kinship);
     sortPairs(pairs);
     for (const list of byAnimal.values()) sortPairs(list);
-    const counts = { risk: 0, kin: 0, future: 0, covered: 0, distant: 0 };
+    const counts = { risk: 0, kin: 0, future: 0, held: 0, covered: 0, distant: 0 };
     for (const p of pairs) counts[p.severity]++;
     const model = {
         seq: snap.seq,
@@ -661,6 +753,9 @@ export function buildKinModel(raw, opts = {}) {
         byAnimal,
         counts,
         closeKinship,
+        bondHolds,
+        // what a rebuild of this model (a simulated plan) must use too
+        opts: { closeKinship, bondHolds },
     };
     model.habitatSummaries = summarizeHabitats(model);
     return model;
@@ -755,14 +850,14 @@ function summarizeHabitats(model) {
     const out = new Map();
     for (const [hab, bySpecies] of model.groups) {
         const h = model.habitats.get(hab) || { id: hab, name: hab, kind: 'habitat' };
-        const entry = { id: hab, name: h.name, kind: h.kind, counts: { risk: 0, kin: 0, future: 0, covered: 0 }, species: [] };
+        const entry = { id: hab, name: h.name, kind: h.kind, counts: { risk: 0, kin: 0, future: 0, held: 0, covered: 0 }, species: [] };
         for (const [species, list] of bySpecies) {
             const sp = {
                 species,
                 animals: list,
                 males: list.filter(a => a.sex === Sex.Male),
                 females: list.filter(a => a.sex === Sex.Female),
-                counts: { risk: 0, kin: 0, future: 0, covered: 0 },
+                counts: { risk: 0, kin: 0, future: 0, held: 0, covered: 0 },
                 pairs: [],
             };
             entry.species.push(sp);
@@ -851,12 +946,34 @@ export function newRisks(prev, next, { includeKin = false } = {}) {
     const watched = s => s === 'risk' || (includeKin && s === 'kin');
     // by pair, not by habitat: a pair that moves together is not new
     const before = new Map();
+    const heldBefore = new Map();
     if (prev) {
         for (const p of prev.pairs) {
             if (!watched(before.get(p.key))) before.set(p.key, p.severity);
+            if (p.severity === 'held') heldBefore.set(p.key, p);
         }
     }
-    return next.pairs.filter(p => watched(p.severity) && !watched(before.get(p.key)));
+    // a held pair whose hold went away without its bond ending: the bond
+    // pass failed this scan, or the player turned the bond switch off
+    const noBondNews = !!prev && ((next.snapshot && next.snapshot.bondsOk === false && prev.snapshot && prev.snapshot.bondsOk === true)
+        || (prev.bondHolds !== undefined && next.bondHolds !== undefined && prev.bondHolds !== next.bondHolds));
+    const out = [];
+    for (const p of next.pairs) {
+        if (!watched(p.severity)) continue;
+        const was = before.get(p.key);
+        if (watched(was)) continue;
+        if (was === 'held' && noBondNews) continue;
+        if (was === 'held') {
+            // the bond still looks whole (same mate, alive, with it): the
+            // game's lock was just not reported this scan. Not news.
+            const h = heldBefore.get(p.key).held;
+            const by = next.animals.get(h.by.id);
+            if (bondIntact(by, next.animals.get(h.mate.id))) continue;
+            p.bondEnded = true;
+        }
+        out.push(p);
+    }
+    return out;
 }
 
 // ------------------------------------------------------- storage (hub)

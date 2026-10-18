@@ -1,12 +1,16 @@
 // The player's own PZ2QoL data that must outlast the game session (habitat
-// assignments...). Gameface keeps localStorage in memory only: it is gone
-// when the game closes. So the data lives in one file in the mod's folder
-// (Win64\ovldata\PZ2QoL\userdata.json), read and written by the Lua side
-// (PZ2QoL_StoreLoad / PZ2QoL_StoreSave). Never in the save or the profile.
+// assignments...), one set per zoo. Gameface keeps localStorage in memory
+// only, and the game's file calls are retail stubs, so the Lua side keeps
+// the data on this device in the game's player save (the mod's own PZ2QoL
+// entry, keyed by zoo), in every zoo, Franchise included: that save is not
+// the zoo's online save (PZ2QoL_StoreLoad / PZ2QoL_StoreSave;
+// PZ2QoL_StoreReset when the zoo's data can be read, or a park starts or ends).
 //
 // localStorage stays a mirror for the session, and the fallback when the
-// file cannot be used (status 'memory'). Changes made before the file was
-// read are kept as operations and applied again on top of the file.
+// store cannot be used (status 'memory', reason from the Lua side; 'wait'
+// means the zoo or the player profile is not known yet, and a
+// PZ2QoL_StoreReset follows). The store is the truth once read: changes
+// made before that are kept as operations and applied again on top of it.
 import { breadcrumb, reportError } from '/js/mods/pz2qol/errors.js';
 
 const MIRROR_KEY = 'PZ2QoL.userdata.v1';
@@ -14,7 +18,8 @@ const ANSWER_TIMEOUT_MS = 6000;
 const SAVE_DELAY_MS = 400;
 
 let data = readMirror();
-let status = 'loading'; // 'loading' | 'file' | 'memory'
+let status = 'loading'; // 'loading' | 'file' (kept on this device) | 'memory'
+let reason = ''; // why 'memory': wait | noplayer | nopark | failed | nolua
 let installed = false;
 let reqSeq = 0;
 let loadReq = null;
@@ -22,6 +27,7 @@ let loadParts = [];
 let loadTimer = null;
 let saveTimer = null;
 let pending = []; // [key, fn] changes made before the file was read
+let epoch = 0; // counts reads of the store: a new zoo load gives a new one
 const listeners = new Set();
 
 function readMirror() {
@@ -70,27 +76,26 @@ function setStatus(s) {
 function finishLoad(ok, text) {
     clearTimeout(loadTimer);
     loadReq = null;
+    epoch++;
     if (!ok) {
+        reason = String(text || 'nopark');
         setStatus('memory');
+        notify();
         return;
     }
+    reason = '';
     let fromFile = {};
     try {
         const v = text ? JSON.parse(text) : {};
         if (v && typeof v === 'object' && !Array.isArray(v)) fromFile = v;
     }
     catch (e) {
-        reportError('mod', 'PZ2QoL data file could not be read; starting from this session\'s data', e, { silent: true });
+        reportError('mod', 'PZ2QoL park data could not be read; starting from this session\'s data', e, { silent: true });
     }
+    // the store is this zoo's truth: what the session held before (another
+    // zoo's data, a mirror) is not carried over, only this view's changes
     const merged = Object.assign({}, fromFile);
-    let needSave = pending.length > 0;
-    for (const [k, v] of Object.entries(data)) {
-        // not in the file yet (e.g. kept by an earlier build in localStorage)
-        if (!(k in fromFile)) {
-            merged[k] = v;
-            needSave = true;
-        }
-    }
+    const needSave = pending.length > 0;
     // this session's changes, again on top of the file
     for (const [k, fn] of pending) {
         try {
@@ -115,7 +120,7 @@ function install() {
     installed = true;
     engine.on('PZ2QoL_StoreData', (reqId, ok, i, n, text) => {
         if (String(reqId) !== loadReq) return;
-        if (ok !== true) return finishLoad(false);
+        if (ok !== true) return finishLoad(false, text);
         loadParts[Number(i) - 1] = String(text || '');
         const parts = Number(n) || 1;
         let have = 0;
@@ -125,13 +130,22 @@ function install() {
     engine.on('PZ2QoL_StoreSaved', (reqId, ok) => {
         if (ok !== true) {
             reportError('mod', 'PZ2QoL could not keep its data; changes last until the game closes', 'PZ2QoL_StoreSave', { silent: true });
+            reason = reason || 'failed';
             setStatus('memory');
         }
     });
-    // the Lua side (re)connected: read the file if we could not before
+    // the Lua side (re)connected: read the store if we could not before
     engine.on('PZ2QoL_Hello', () => {
         if (status === 'file') return;
         loadReq = null; // a request sent before the Lua side was there is never answered
+        loadUserData();
+    });
+    // a park started or ended, or its save was loaded: read the store again
+    engine.on('PZ2QoL_StoreReset', () => {
+        clearTimeout(saveTimer);
+        epoch++;
+        if (status === 'file') status = 'loading';
+        loadReq = null;
         loadUserData();
     });
 }
@@ -151,7 +165,10 @@ export function loadUserData() {
         if (loadReq) {
             loadReq = null;
             // no answer: the Lua side is not there (yet); PZ2QoL_Hello retries
-            if (status === 'loading') setStatus('memory');
+            if (status === 'loading') {
+                reason = 'nolua';
+                setStatus('memory');
+            }
         }
     }, ANSWER_TIMEOUT_MS);
     try {
@@ -199,9 +216,20 @@ export function setUserData(key, value) {
     updateUserData(key, () => value);
 }
 
-// 'loading' | 'file' (kept across restarts) | 'memory' (until the game closes)
+// 'loading' | 'file' (kept on this device) | 'memory' (until the game closes)
 export function userDataStatus() {
     return status;
+}
+
+// why the status is 'memory': wait, noplayer, nopark, failed, nolua ('' otherwise)
+export function userDataReason() {
+    return status === 'memory' ? reason : '';
+}
+
+// Changes each time the store is read again (a park started, ended or was
+// loaded): entity ids seen under an older epoch may belong to another load.
+export function userDataEpoch() {
+    return epoch;
 }
 
 export function onUserData(fn) {
@@ -213,6 +241,8 @@ export function onUserData(fn) {
 export function _resetUserStoreForTests(value = {}) {
     data = value;
     status = 'loading';
+    reason = '';
     pending = [];
     loadReq = null;
+    epoch++;
 }

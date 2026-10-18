@@ -38,7 +38,8 @@ export function zooKinCounts() {
         const p = animalPairs(model, a.id);
         if (!p.length) continue;
         if (p[0].severity === 'risk') out.risk++;
-        if (p[0].severity !== 'covered') out.any++;
+        // pairs kept apart (contraception..., a pair bond) are not problems now
+        if (p[0].severity !== 'covered' && p[0].severity !== 'held') out.any++;
     }
     return out;
 }
@@ -88,7 +89,7 @@ function habitatBadge(model, rowId) {
     if (!getKinSettings().showCovered) counts.covered = 0;
     const worst = worstOfCounts(counts);
     if (!worst) return null;
-    const n = counts.risk + counts.kin + counts.future + counts.covered;
+    const n = counts.risk + counts.kin + counts.future + (counts.held || 0) + counts.covered;
     const build = pinned => habitatCardContent(model, m[1], { pinned, openPlanner: () => openKinPlanner({ habitatId: m[1] }) });
     return badgeVNode(worst, n, { host: 'inline habitats', build, title: '' });
 }

@@ -6,7 +6,9 @@
 // Gene values are 0..1 as the game sends them; missing genes are undefined.
 
 export const Gender = { Male: 0, Female: 1, Unisex: 2 };
-export const Maturity = { Infant: 0, YoungAdult: 1, Adult: 2, Elderly: 3, YoungAdultInfertile: 4 };
+// The game's EAnimalMaturity (ManagementDataTypes.js): age stage plus
+// fertility in one value. Storage and market rows carry it as `maturity`.
+export const Maturity = { Infant: 0, YoungAdult: 1, Adult: 2, Elderly: 3, YoungAdultInfertile: 4, AdultInfertile: 5, ElderlyInfertile: 6 };
 
 function isNum(v) {
     return typeof v === 'number' && isFinite(v);
@@ -90,6 +92,49 @@ export function isAdult(a) {
     return a.maturity != undefined && a.maturity != Maturity.Infant;
 }
 
+// An adult the game marks fertile (young adult, adult or elderly). Infants
+// and the three "infertile" stages are out.
+export function isFertileAdult(a) {
+    return a.maturity == Maturity.YoungAdult || a.maturity == Maturity.Adult || a.maturity == Maturity.Elderly;
+}
+
+// Elderly and no longer fertile: the Franchise market won't take these
+// (developer report); the game's own in-park sell lists "infertile" as a
+// sell preventer (bInfertileSell, RelocateAnimalsPopup).
+export function isInfertileElderly(a) {
+    return a.maturity == Maturity.ElderlyInfertile;
+}
+
+// Why the game would refuse to list this storage animal, from what the row
+// shows. The park's own sell flow blocks juveniles, infertile animals and
+// pregnant ones (RelocateAnimalsPopup g_tSellPreventers: bJuvenileSell,
+// bInfertileSell, bPregnant, bPendingTransport); a storage row can also be
+// on the market already or on its way to the zoo. Dead, boxed, injured,
+// sick, escaped and in-surgery only happen in a park, and "can't be sold"
+// has no row field, so the game's own check still has the last word.
+// Unknown maturity blocks nothing.
+export const SELL_BLOCKERS = {
+    juvenile: 'Juvenile',
+    infertile: 'Infertile',
+    pregnant: 'Pregnant',
+    listed: 'Already listed',
+    moving: 'Being moved',
+};
+
+export function sellBlockers(a) {
+    const out = [];
+    if (a.maturity == Maturity.Infant) out.push('juvenile');
+    if (a.maturity == Maturity.YoungAdultInfertile || a.maturity == Maturity.AdultInfertile || a.maturity == Maturity.ElderlyInfertile) out.push('infertile');
+    if (a.isPregnant) out.push('pregnant');
+    if (isOnMarket(a)) out.push('listed');
+    if (a.isMoving) out.push('moving');
+    return out;
+}
+
+export function isSellable(a) {
+    return sellBlockers(a).length == 0;
+}
+
 export function canBreed(a) {
     return a.maturity == Maturity.YoungAdult || a.maturity == Maturity.Adult;
 }
@@ -143,12 +188,14 @@ export const DEFAULT_STORAGE_FILTERS = Object.freeze({
     pregnant: false,
     alpha: false,
     adults: false,
+    fertileAdults: false, // adults the game marks fertile (no infertile elderly)
     juveniles: false,
     pairsOnly: false,
     surplusOnly: false,
     surplusKeep: 2,
     hideListed: false, // hide animals already listed on the market
     related: false, // only animals with a close relative in storage (Kin)
+    sellable: 'any', // 'any' | 'yes' (the market would take it) | 'no' (sellBlockers)
     sort: 'none', // 'none' | 'gene' | 'breeder'
 });
 
@@ -158,7 +205,7 @@ export function isOnMarket(a) {
 }
 
 export function storageFiltersActive(f) {
-    return f.minScore > 0 || f.pregnant || f.alpha || f.adults || f.juveniles || f.pairsOnly || f.surplusOnly || f.hideListed || !!f.related || f.sort != 'none';
+    return f.minScore > 0 || f.pregnant || f.alpha || f.adults || f.fertileAdults || f.juveniles || f.pairsOnly || f.surplusOnly || f.hideListed || !!f.related || (!!f.sellable && f.sellable != 'any') || f.sort != 'none';
 }
 
 // Returns the animals to show, in display order. Input order is kept
@@ -182,7 +229,10 @@ export function applyStorageFilters(animals, f, predicates = {}) {
         if (f.pregnant && !a.isPregnant) return false;
         if (f.alpha && !a.isAlpha) return false;
         if (f.adults && !isAdult(a)) return false;
+        if (f.fertileAdults && !isFertileAdult(a)) return false;
         if (f.juveniles && isAdult(a)) return false;
+        if (f.sellable == 'yes' && !isSellable(a)) return false;
+        if (f.sellable == 'no' && isSellable(a)) return false;
         if (stats) {
             const s = stats.get(a.species || '?');
             if (!s || s.pairs < 1) return false;
@@ -262,9 +312,9 @@ export const DEFAULT_ZOO_FILTERS = Object.freeze({
     sort: 'none',       // 'none' | 'gene' | 'breeder' | 'welfare' | 'kin'
 });
 
-// Zoo animals may carry kinSeverity ('risk' | 'kin' | 'future' | 'covered')
+// Zoo animals may carry kinSeverity ('risk' | 'kin' | 'future' | 'held' | 'covered')
 // and kinCluster (relatives share one key), set from the Kin model.
-const KIN_RANK = { risk: 4, kin: 3, future: 2, covered: 1 };
+const KIN_RANK = { risk: 5, kin: 4, future: 3, held: 2, covered: 1 };
 
 export const UNHAPPY_WELFARE = 1 / 3;
 
@@ -293,7 +343,7 @@ export function applyZooFilters(animals, f) {
             if (typeof v !== 'number' || v * 100 < f.minFertility) return false;
         }
         if (f.kin == 'risk' && a.kinSeverity != 'risk') return false;
-        if (f.kin == 'any' && !(KIN_RANK[a.kinSeverity] >= 2)) return false;
+        if (f.kin == 'any' && !(KIN_RANK[a.kinSeverity] >= KIN_RANK.future)) return false;
         return true;
     });
     if (f.sort == 'kin') {

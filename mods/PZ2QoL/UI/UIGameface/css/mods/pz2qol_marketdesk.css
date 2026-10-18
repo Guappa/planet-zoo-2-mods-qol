@@ -1,0 +1,206 @@
+/* =====================================================================
+   PZ2QoL Market desk (marketdesk.js): list many storage animals at once.
+   Same frame and kit as the Species board (.PZ2QoL_kp* from the planner's
+   CSS). Gameface: explicit display:flex, no CSS grid, no native scrolling.
+   ===================================================================== */
+
+.PZ2QoL_md, .PZ2QoL_md * {
+  display: flex;
+  flex-direction: row;
+  box-sizing: border-box;
+}
+.PZ2QoL_md .PZ2QoL_kpTitles,
+.PZ2QoL_md .PZ2QoL_kpScroll,
+.PZ2QoL_md .PZ2QoL_kpViewport,
+.PZ2QoL_md .PZ2QoL_kpContent { flex-direction: column; }
+.PZ2QoL_md .PZ2QoL_kpBar { display: none; }
+.PZ2QoL_md .PZ2QoL_kpBar.show { display: flex; }
+.PZ2QoL_md .hidden { display: none; }
+/* the pace slider and offset control come from the lister's CSS */
+.PZ2QoL_md .PZ2QoL_pace { flex-direction: column; }
+.PZ2QoL_md .PZ2QoL_paceWarn.hidden { display: none; }
+
+.PZ2QoL_md {
+  position: fixed;
+  z-index: 55;
+  left: 4vw;
+  top: 8vh;
+  width: 92vw;
+  max-width: 96rem;
+  height: 84vh;
+  flex-direction: column;
+  border-radius: 1.1rem;
+  background-color: var(--qol-card);
+  border: 0.08rem solid rgba(114, 91, 74, 0.22);
+  border-top: 0.3rem solid var(--qol-olive);
+  box-shadow: 0 1rem 3rem rgba(40, 30, 20, 0.38), 0 0.15rem 0.5rem rgba(40, 30, 20, 0.2);
+  color: var(--qol-ink);
+  font-size: 0.9rem;
+  overflow: hidden;
+  user-select: none;
+  -webkit-user-select: none;
+  animation: PZ2QoL_kpIn 0.18s ease-out 1;
+}
+.PZ2QoL_md.hidden { display: none; }
+.PZ2QoL_kpLogo.desk { background-image: url(/img/icons/IconTrade.svg); }
+.PZ2QoL_mdSub { align-items: center; min-height: 1.55rem; margin-top: 0.2rem; font-size: 0.8rem; color: var(--qol-ink-soft); white-space: nowrap; }
+.PZ2QoL_md .PZ2QoL_kpBtn.disabled { opacity: 0.45; cursor: default; }
+.PZ2QoL_md .PZ2QoL_kpBtn.disabled:active { transform: none; }
+.PZ2QoL_md .PZ2QoL_kpBtn.wide { justify-content: center; width: 100%; height: 2.4rem; margin: 0.6rem 0 0 0; font-size: 0.95rem; }
+.PZ2QoL_md .PZ2QoL_kpBtn.stop { background-color: var(--qol-red); color: #FFFFFF; }
+.PZ2QoL_md .PZ2QoL_kpBtn.small { margin: 0.45rem 0 0 0; align-self: flex-start; }
+
+.PZ2QoL_mdEngine { flex-shrink: 0; align-items: center; margin-right: 0.6rem; }
+.PZ2QoL_mdEnginePill { align-items: center; height: 1.7rem; padding: 0 0.75rem; border-radius: 0.85rem; font-size: 0.76rem; font-weight: bold; white-space: nowrap; }
+.PZ2QoL_mdEnginePill.ok { background-color: rgba(89, 105, 67, 0.16); color: var(--qol-olive); }
+.PZ2QoL_mdEnginePill.fallback { background-color: rgba(217, 134, 42, 0.18); color: var(--kp-kin-ink); }
+
+.PZ2QoL_mdNotice { flex-shrink: 0; margin: 0.45rem 0.8rem 0 0.8rem; padding: 0.35rem 0.7rem; border-radius: 0.5rem; font-size: 0.8rem; background-color: var(--qol-chip); color: var(--qol-ink-soft); }
+.PZ2QoL_mdNotice.ok { background-color: rgba(89, 105, 67, 0.14); color: var(--qol-olive); }
+.PZ2QoL_mdNotice.warn { background-color: rgba(217, 134, 42, 0.16); color: var(--kp-kin-ink); }
+
+.PZ2QoL_mdBody { flex: 1; min-height: 0; padding: 0.7rem 0.8rem 0.55rem 0.8rem; }
+
+/* ---------------------------------------------------------------- rail */
+.PZ2QoL_mdRail { flex-shrink: 0; flex-direction: column; width: 14.5rem; margin-right: 0.75rem; border-radius: 0.8rem; background-color: var(--qol-card-2); }
+.PZ2QoL_kpScroll.mdRail { flex: 1; }
+.PZ2QoL_kpScroll.mdRail > .PZ2QoL_kpViewport > .PZ2QoL_kpContent { padding: 0.45rem 0.7rem 0.45rem 0.45rem; }
+.PZ2QoL_mdSpecies { flex-shrink: 0; flex-direction: column; margin-bottom: 0.25rem; padding: 0.4rem 0.6rem; border-radius: 0.55rem; cursor: pointer; border-left: 0.22rem solid transparent; }
+.PZ2QoL_mdSpecies:hover { background-color: var(--qol-chip); }
+.PZ2QoL_mdSpecies.on { background-color: #FFFFFF; border-left-color: var(--qol-olive); }
+.PZ2QoL_mdSpeciesName { font-size: 0.86rem; font-weight: bold; white-space: nowrap; overflow: hidden; }
+.PZ2QoL_mdSpeciesMeta { flex-wrap: wrap; margin-top: 0.12rem; font-size: 0.7rem; color: var(--qol-ink-soft); }
+.PZ2QoL_mdSpeciesMeta span { margin-right: 0.5rem; white-space: nowrap; }
+.PZ2QoL_mdSpeciesMeta .sell { color: var(--qol-olive); font-weight: bold; }
+.PZ2QoL_mdSpeciesMeta .listed { color: var(--qol-teal); }
+.PZ2QoL_mdSpeciesMeta .chosen { color: var(--kp-kin-ink); font-weight: bold; }
+
+/* ---------------------------------------------------------------- list */
+.PZ2QoL_mdMain { flex: 1; min-width: 0; flex-direction: column; }
+.PZ2QoL_mdTools { flex-shrink: 0; flex-wrap: wrap; align-items: center; margin-bottom: 0.4rem; }
+.PZ2QoL_mdTools.second .PZ2QoL_kpBtn { margin-right: 0.45rem; }
+.PZ2QoL_mdSeg { flex-shrink: 0; align-items: center; height: 1.9rem; margin: 0 0.5rem 0.3rem 0; padding: 0 0.2rem 0 0.6rem; border-radius: 0.95rem; background-color: var(--qol-chip); }
+.PZ2QoL_mdSegLabel { margin-right: 0.35rem; font-size: 0.7rem; font-weight: bold; letter-spacing: 0.04rem; text-transform: uppercase; color: var(--qol-ink-faint); white-space: nowrap; }
+.PZ2QoL_mdSegItem { align-items: center; height: 1.55rem; padding: 0 0.6rem; border-radius: 0.78rem; font-size: 0.8rem; color: var(--qol-ink-soft); cursor: pointer; white-space: nowrap; }
+.PZ2QoL_mdSegItem:hover { color: var(--qol-ink); }
+.PZ2QoL_mdSegItem.on { background-color: var(--qol-olive); color: #FFFFFF; font-weight: bold; }
+.PZ2QoL_mdCheck { min-width: 0; margin-left: 0.5rem; font-size: 0.72rem; color: var(--qol-ink-soft); white-space: nowrap; overflow: hidden; }
+.PZ2QoL_mdCheck.failed { color: var(--kp-risk-ink); }
+
+.PZ2QoL_mdRow { flex-shrink: 0; align-items: center; height: 2.05rem; margin-bottom: 0.18rem; padding: 0 0.5rem; border-radius: 0.5rem; background-color: #FFFFFF; cursor: pointer; font-size: 0.82rem; }
+.PZ2QoL_mdRow:hover { background-color: #F7F2E8; }
+.PZ2QoL_mdRow.on { background-color: #EEF4E2; }
+.PZ2QoL_mdRow.blocked { cursor: default; opacity: 0.72; }
+.PZ2QoL_mdRow.head { height: 1.6rem; margin: 0 0.75rem 0.2rem 0; background-color: transparent; cursor: default; font-size: 0.66rem; font-weight: bold; letter-spacing: 0.05rem; text-transform: uppercase; color: var(--qol-ink-faint); }
+.PZ2QoL_kpScroll.mdList { flex: 1; }
+.PZ2QoL_kpScroll.mdList > .PZ2QoL_kpViewport > .PZ2QoL_kpContent { padding: 0 0.75rem 0.3rem 0; }
+.PZ2QoL_mdCell { flex-shrink: 0; align-items: center; min-width: 0; overflow: hidden; white-space: nowrap; }
+.PZ2QoL_mdCell.tick { width: 1.7rem; }
+.PZ2QoL_mdCell.sex { width: 1.4rem; font-weight: bold; }
+.PZ2QoL_mdCell.sex.male { color: var(--qol-male); }
+.PZ2QoL_mdCell.sex.female { color: var(--qol-female); }
+.PZ2QoL_mdCell.name { flex: 1; min-width: 6rem; }
+.PZ2QoL_mdName { font-weight: bold; white-space: nowrap; overflow: hidden; }
+.PZ2QoL_mdSpeciesTag { flex-shrink: 0; margin-left: 0.4rem; font-size: 0.7rem; color: var(--qol-ink-faint); white-space: nowrap; }
+.PZ2QoL_mdCell.stage { width: 9.5rem; color: var(--qol-ink-soft); font-size: 0.76rem; }
+.PZ2QoL_mdCell.medal { width: 3.4rem; justify-content: center; }
+.PZ2QoL_mdCell.genes { width: 3.2rem; justify-content: center; font-weight: bold; }
+.PZ2QoL_mdCell.price { width: 6.2rem; justify-content: flex-end; font-weight: bold; }
+.PZ2QoL_mdCell.state { width: 15rem; margin-left: 0.8rem; font-size: 0.76rem; color: var(--qol-ink-soft); }
+.PZ2QoL_mdCell.state.sellable { color: var(--qol-olive); }
+.PZ2QoL_mdCell.state.listed { color: var(--qol-teal); }
+.PZ2QoL_mdCell.state.caution { color: var(--kp-kin-ink); }
+.PZ2QoL_mdCell.state.working, .PZ2QoL_mdCell.state.queued { color: var(--qol-teal); font-weight: bold; }
+.PZ2QoL_mdCell.state.done { color: var(--kp-ok-ink); font-weight: bold; }
+.PZ2QoL_mdCell.state.skipped { color: var(--kp-kin-ink); }
+.PZ2QoL_mdCell.state.refused { color: var(--kp-risk-ink); }
+.PZ2QoL_mdBox { width: 1.05rem; height: 1.05rem; border-radius: 0.25rem; border: 0.12rem solid rgba(114, 91, 74, 0.45); background-color: #FFFFFF; }
+.PZ2QoL_mdBox.on { border-color: var(--qol-olive); background-color: var(--qol-olive); box-shadow: inset 0 0 0 0.16rem #FFFFFF; }
+.PZ2QoL_mdBox.off { opacity: 0.3; }
+.PZ2QoL_mdConf { width: 0.45rem; height: 0.45rem; margin-left: 0.35rem; border-radius: 0.225rem; background-color: rgba(114, 91, 74, 0.3); }
+.PZ2QoL_mdConf.c_high { background-color: var(--kin-ok); }
+.PZ2QoL_mdConf.c_medium { background-color: #C9A43A; }
+.PZ2QoL_mdConf.c_low { background-color: #D9862A; }
+.PZ2QoL_mdEmpty { flex-shrink: 0; justify-content: center; padding: 2rem 0; color: var(--qol-ink-faint); }
+
+/* ------------------------------------------------------------- the run */
+.PZ2QoL_mdSide { flex-shrink: 0; flex-direction: column; width: 21rem; margin-left: 0.75rem; padding: 0.7rem 0.8rem; border-radius: 0.8rem; background-color: var(--qol-card-2); overflow: hidden; }
+.PZ2QoL_mdSide > * { flex-shrink: 0; }
+.PZ2QoL_mdSide .PZ2QoL_mdSeg { align-self: flex-start; margin: 0.5rem 0 0.4rem 0; }
+.PZ2QoL_mdSide .PZ2QoL_segmented { margin: 0.2rem 0 0.4rem 0; }
+.PZ2QoL_mdCardTitle { font-size: 0.7rem; font-weight: bold; letter-spacing: 0.06rem; text-transform: uppercase; color: var(--qol-ink-faint); }
+.PZ2QoL_mdBig { align-items: baseline; margin-top: 0.2rem; }
+.PZ2QoL_mdBig .n { font-size: 2rem; font-weight: bold; line-height: 2.2rem; }
+.PZ2QoL_mdBig .l { margin-left: 0.45rem; color: var(--qol-ink-soft); }
+.PZ2QoL_mdTotal { font-size: 0.8rem; color: var(--qol-ink-soft); }
+.PZ2QoL_mdRun { flex-direction: column; margin-top: 0.7rem; padding: 0.55rem 0.65rem; border-radius: 0.6rem; background-color: #FFFFFF; border-left: 0.25rem solid var(--qol-teal); min-height: 0; flex-shrink: 1; overflow: hidden; }
+.PZ2QoL_mdRun.done { border-left-color: var(--kin-ok); }
+.PZ2QoL_mdRun.stopped, .PZ2QoL_mdRun.closed { border-left-color: #D9862A; }
+.PZ2QoL_mdRunHead { flex-shrink: 0; align-items: center; font-weight: bold; }
+.PZ2QoL_mdRunCount { font-size: 0.78rem; color: var(--qol-ink-soft); }
+.PZ2QoL_mdProgress { flex-shrink: 0; height: 0.45rem; margin: 0.4rem 0; border-radius: 0.225rem; background-color: rgba(114, 91, 74, 0.14); }
+.PZ2QoL_mdProgressFill { height: 100%; border-radius: 0.225rem; background-color: var(--qol-olive); }
+.PZ2QoL_mdRunNow { flex-shrink: 0; font-weight: bold; font-size: 0.82rem; white-space: nowrap; overflow: hidden; }
+.PZ2QoL_mdRunStep { flex-shrink: 0; flex-wrap: wrap; font-size: 0.76rem; line-height: 1.05rem; color: var(--qol-ink-soft); white-space: normal; }
+.PZ2QoL_mdRunLine { flex-shrink: 0; margin-top: 0.2rem; font-size: 0.74rem; white-space: nowrap; overflow: hidden; }
+.PZ2QoL_mdRunLine.ok { color: var(--kp-ok-ink); }
+.PZ2QoL_mdRunLine.no { color: var(--kp-kin-ink); }
+
+.PZ2QoL_mdRules { min-width: 0; font-size: 0.72rem; color: var(--qol-ink-faint); white-space: nowrap; overflow: hidden; }
+
+/* its button in the price panel's header */
+.PZ2QoL_btn.PZ2QoL_deskBtn { flex-shrink: 0; margin-left: 0.6rem; white-space: nowrap; }
+
+/* ------------------------------------------------------------- filters */
+/* the dim layer over Animal Storage while the desk is open */
+.PZ2QoL_mdScrim { display: flex; position: fixed; z-index: 54; left: 0; top: 0; width: 100vw; height: 100vh; background-color: rgba(28, 22, 16, 0.62); }
+.PZ2QoL_mdScrim.hidden { display: none; }
+.PZ2QoL_md .PZ2QoL_kpBtn.on { background-color: var(--qol-olive); color: #FFFFFF; }
+.PZ2QoL_md .PZ2QoL_mdTools.second .PZ2QoL_kpBtn { margin-bottom: 0.3rem; }
+.PZ2QoL_mdShown { flex-shrink: 0; margin: 0 0.4rem 0.3rem 0.2rem; font-size: 0.76rem; color: var(--qol-ink-soft); white-space: nowrap; }
+.PZ2QoL_mdSeg.genes { padding-right: 0.3rem; }
+.PZ2QoL_mdSeg.off { opacity: 0.6; }
+.PZ2QoL_mdSegNote { font-size: 0.74rem; color: var(--qol-ink-faint); margin-right: 0.5rem; white-space: nowrap; }
+.PZ2QoL_mdStepValue { justify-content: center; min-width: 4.6rem; font-size: 0.8rem; font-weight: bold; white-space: nowrap; }
+.PZ2QoL_mdCell.sortable { cursor: pointer; }
+.PZ2QoL_mdCell.sortable:hover { color: var(--qol-ink); }
+.PZ2QoL_mdCell.sortable.on { color: var(--qol-olive); }
+
+/* the range slider (rangeslider.js) */
+.PZ2QoL_rng { flex-shrink: 0; align-items: center; margin-right: 0.35rem; }
+.PZ2QoL_rngTrack { position: relative; width: 9rem; height: 1.5rem; margin: 0 0.55rem; cursor: pointer; }
+.PZ2QoL_rng.small .PZ2QoL_rngTrack { width: 7.5rem; }
+.PZ2QoL_rngRail { position: absolute; left: 0; right: 0; top: 0.62rem; height: 0.26rem; border-radius: 0.13rem; background-color: rgba(114, 91, 74, 0.22); }
+.PZ2QoL_rngFill { position: absolute; top: 0.62rem; height: 0.26rem; border-radius: 0.13rem; background-color: var(--qol-olive); }
+.PZ2QoL_rng.full .PZ2QoL_rngFill { background-color: rgba(89, 105, 67, 0.45); }
+.PZ2QoL_rngKnob { position: absolute; top: 0.3rem; width: 0.9rem; height: 0.9rem; margin-left: -0.45rem; border-radius: 0.45rem; background-color: #FFFFFF; border: 0.14rem solid var(--qol-olive); box-shadow: 0 0.06rem 0.2rem rgba(40, 30, 20, 0.3); }
+.PZ2QoL_rng.dragging .PZ2QoL_rngKnob { border-color: var(--qol-ink); }
+.PZ2QoL_rngValue { justify-content: flex-start; min-width: 3.6rem; margin-left: 0.2rem; font-size: 0.78rem; font-weight: bold; color: var(--qol-ink); white-space: nowrap; }
+.PZ2QoL_rng.full .PZ2QoL_rngValue { color: var(--qol-ink-faint); font-weight: normal; }
+
+/* More filters */
+.PZ2QoL_mdMore { flex-shrink: 0; flex-direction: column; margin-bottom: 0.45rem; padding: 0.45rem 0.55rem 0.2rem 0.55rem; border-radius: 0.7rem; background-color: var(--qol-card-2); }
+.PZ2QoL_mdMoreCol { flex-shrink: 0; flex-direction: column; align-items: flex-start; margin-right: 1.1rem; }
+.PZ2QoL_mdMoreLine { flex-shrink: 0; flex-wrap: wrap; align-items: flex-start; }
+.PZ2QoL_mdMoreLine.other { align-items: center; }
+.PZ2QoL_mdMoreLine.other > * { margin-right: 1rem; }
+.PZ2QoL_mdGeneGrid { flex-shrink: 0; }
+.PZ2QoL_mdGeneGrid > .PZ2QoL_mdMoreCol { margin-right: 0.6rem; }
+.PZ2QoL_mdMoreTitle { margin-bottom: 0.25rem; font-size: 0.66rem; font-weight: bold; letter-spacing: 0.05rem; text-transform: uppercase; color: var(--qol-ink-faint); }
+.PZ2QoL_mdMoreRow { flex-shrink: 0; align-items: center; height: 1.75rem; margin-bottom: 0.15rem; }
+.PZ2QoL_mdMoreLabel.short { width: auto; margin-right: 0.1rem; }
+.PZ2QoL_mdMoreLabel { width: 4.6rem; font-size: 0.76rem; color: var(--qol-ink-soft); white-space: nowrap; }
+.PZ2QoL_md input.PZ2QoL_mdText { width: 11.5rem; height: 1.55rem; margin-left: 0.55rem; padding: 0 0.55rem; border-radius: 0.5rem; border: 0.08rem solid rgba(114, 91, 74, 0.3); background-color: #FFFFFF; color: var(--qol-ink); font-size: 0.8rem; }
+.PZ2QoL_mdHidden { margin-top: 0.15rem; font-size: 0.76rem; font-weight: bold; color: var(--kp-kin-ink); }
+.PZ2QoL_mdCheckWrap { flex-shrink: 1; min-width: 0; align-items: center; margin-bottom: 0.3rem; }
+.PZ2QoL_md .PZ2QoL_mdCheckWrap .PZ2QoL_kpBtn { flex-shrink: 0; margin-bottom: 0; }
+/* the price check above List (List waits for it) */
+.PZ2QoL_mdPriceCheck { flex-direction: column; margin-top: 0.6rem; }
+.PZ2QoL_md .PZ2QoL_mdPriceCheck .PZ2QoL_kpBtn.wide { margin-top: 0; }
+.PZ2QoL_md .PZ2QoL_mdPriceCheck .PZ2QoL_kpBtn.attention { background-color: #E9C46A; color: var(--qol-ink); font-weight: bold; }
+.PZ2QoL_mdPriceStatus { flex-wrap: wrap; margin-top: 0.3rem; font-size: 0.74rem; line-height: 1rem; color: var(--qol-ink-soft); white-space: normal; }
+.PZ2QoL_mdPriceStatus.ok { color: var(--kp-ok-ink); }
+.PZ2QoL_mdPriceStatus.warn { color: var(--kp-kin-ink); font-weight: bold; }
+.PZ2QoL_mdPriceStatus.reading { color: var(--qol-teal); }
+/* during a listing run: Animal Storage behind the desk is hidden entirely */
+.PZ2QoL_mdScrim.solid { background-color: rgb(46, 38, 30); }
