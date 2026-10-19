@@ -16,20 +16,29 @@
 // Gameface: own DOM under <body>, explicit display:flex, no CSS grid, no
 // native scrolling (kinpanel.js), pointer drag with mouse events (no HTML5
 // drag and drop).
-import { Sex, relationWord, severityRank, fertilityTag, holdReason } from '/js/mods/pz2qol/kincore.js';
+import { Sex, relationWord, severityRank, fertilityTag, holdReason, withStored } from '/js/mods/pz2qol/kincore.js';
 import {
-    TRADE, boardColumns, canMove, moveText, planImpact, planProblems, prunePlan, setMove, simulatePlan, speciesList, suggestPlan,
+    STORED_SHOW, TRADE, boardColumns, canMove, moveText, planImpact, planProblems, prunePlan, setMove, simulatePlan, speciesList, suggestPlan,
+    isPinned, PREGNANT_STAYS,
 } from '/js/mods/pz2qol/kinboardcore.js';
 import { countWord, visibleCounts } from '/js/mods/pz2qol/kinplannercore.js';
 import {
-    getKinModel, getKinSettings, getKinState, markKinActive, onKin, onKinSettings, requestKinScan, setKinSettings,
+    getKinModel, getKinSettings, getKinState, locatePlace, markKinActive, onKin, onKinSettings, requestKinScan, setKinSettings,
+    setContraception,
 } from '/js/mods/pz2qol/kin.js';
 import {
-    cachedDestinations, getPlanRun, moveAnimal, onPlanRun, planBlockedReason, requestDestinations, requestSpeciesInfo, runPlan, stopPlan,
+    cachedDestinations, getPlanRun, isAskingStored, moveAnimal, onPlanRun, planBlockedReason, requestDestinations, requestSpeciesInfo, requestStoredAdults, runPlan, stopPlan,
 } from '/js/mods/pz2qol/kinmoves.js';
 import {
-    PROGRAMME_DEFAULTS, RATIO_CHOICES, conceptionChance, groupRule, planProgrammeAsync, ratioKey, unknownMakeupText, youngQuality,
+    PROGRAMME_DEFAULTS, RATIO_CHOICES, conceptionChance, groupRule, planProgrammeAsync, programmeLogData, programmeProblemSig, ratioKey, unknownMakeupText, youngQuality,
 } from '/js/mods/pz2qol/kinprogramme.js';
+import {
+    CPU_ORDER, CPU_STEPS, CUSTOM_STEPS, DEEP_PRESETS, PRESET_ORDER, PRESET_WORDS, cpuOf, deepJob, deepKey, deepResult, deepSettings,
+    cancelDeep, dropDeepResults, durationText, estimateSeconds, getOptimiser, installDeep, latestDeepResult, msPerStartFor, onDeep, onOptimiser,
+    setOptimiser, startDeep, stopDeep,
+} from '/js/mods/pz2qol/kinprogdeep.js';
+import { getPref, setPref } from '/js/mods/pz2qol/prefs.js';
+import { dlog } from '/js/mods/pz2qol/debuglog.js';
 import { FILL_STEPS, GENE_STEPS, cullPlan, geneScore } from '/js/mods/pz2qol/kincull.js';
 import { hideKinCard, kinBadge, sexClass, sexSymbol } from '/js/mods/pz2qol/kinui.js';
 import { clear, h, icon, setClass, setText } from '/js/mods/pz2qol/ui.js';
@@ -37,6 +46,9 @@ import { breadcrumb, reportError } from '/js/mods/pz2qol/errors.js';
 import { getUserData, updateUserData } from '/js/mods/pz2qol/userstore.js';
 import { paceSlider } from '/js/mods/pz2qol/pace.js';
 import { getAssignments, onAssignments, toggleAssignment, assignmentStorage, assignmentStorageReason } from '/js/mods/pz2qol/kinassign.js';
+import { isMuted, mutedSpecies, onMuted, setMuted } from '/js/mods/pz2qol/kinmute.js';
+import { canOpenTrade, onStorageCounts, openTrade, requestStorageCounts, tradeRow } from '/js/mods/pz2qol/tradejump.js';
+import { fetchRow } from '/js/mods/pz2qol/storagefetch.js';
 import {
     btn as kitBtn, closeButton, closeOtherPanels, countPills, makeGuard, makeScroll, panelApi, placePanel, refreshBars, registerPanel,
     remPx, restoreScroll, scrollBoxTo, speciesName, switchEl as kitSwitch, trunc, wheelScroll,
@@ -90,16 +102,32 @@ const S = {
     unsub: [],
     timer: 0,
     prog: null,               // the breeding programme preview: { species, state, step, info, results, ... }
+    storedBy: new Map(),      // species -> the player's stored adults (Franchise; kinmoves requestStoredAdults), null: no answer
+    storedTried: new Set(),   // species asked since the board opened
+    storedFresh: false,       // the next ask skips the 60 s cache (board just opened)
+    storedAll: false,         // the trade column lists every stored adult, not the first few
+    storedView: null,         // withStored(model, answer): the merged pedigree (hover relatives)
 };
 
-// "Fewer moves <-> Best genetics": the optimiser's cost per moved animal.
+// "Fewer moves <-> Best genetics": the optimiser's cost per moved animal
+// (and for joining an established group: the default unless given). Best
+// genetics counts no move cost at all (developer, 2026-10-18); a move that
+// gains nothing is still undone at the end.
 const PROG_STEPS = [
     { label: 'Fewest moves', cost: 0.15 },
     { label: 'Fewer moves', cost: 0.08 },
     { label: 'Balanced', cost: 0.04 },
-    { label: 'Best genetics', cost: 0.02 },
+    { label: 'Best genetics', cost: 0, outsider: 0 },
 ];
-const PROG_DEFAULT_STEP = 2;
+const PROG_DEFAULT_STEP = 3; // Best genetics (developer, 2026-10-18)
+// The slider's last position is the player's default for every species and
+// zoo (prefs.js, the player save; developer, 2026-10-18).
+const PROG_STEP_PREF = 'progStep';
+
+function savedProgStep() {
+    const v = getPref(PROG_STEP_PREF);
+    return Number.isInteger(v) && v >= 0 && v < PROG_STEPS.length ? v : PROG_DEFAULT_STEP;
+}
 
 // Thin out: the last known "over the room" count per species (for the rail)
 const overBySpecies = new Map();
@@ -112,6 +140,7 @@ const CULL_MARKS = {
     'last breeder of its sex': { cls: 'best', text: 'last breeder', title: 'Every breeder of this sex has poor genes; the best of them stays so the species can still breed' },
     'your choice': { cls: 'mine', text: 'your choice', title: 'You chose this' },
     'on the move': { cls: 'moving', text: 'on the move', title: 'Already on the move' },
+    'away for now': { cls: 'moving', text: 'away', title: 'At the vet, in a quarantine or being carried: it comes back to this habitat and is kept' },
 };
 // The optimiser's budget on the board: it runs in slices (the page stays
 // responsive), so it can search longer than a one-go call.
@@ -175,6 +204,8 @@ function ensureRoot() {
             if (S.prog || S.cull) return recomputePanel();
             requestKinScan('board', { force: true });
             loadDestinations(true);
+            if (S.species) requestStorageCounts([S.species], { force: true });
+            if (S.species) loadStored(true);
             notice('Reading the animals and the habitats again…');
         }, { title: 'Read the animals and the habitat checks again now' }),
         closeButton(guard, 'Close (Esc)', () => closeSpeciesBoard()));
@@ -273,7 +304,7 @@ function renderAll() {
         onModel(model);
         S.model = model;
         if (model) {
-            const list = speciesList(model);
+            const list = speciesList(model, { muted: mutedSpecies() });
             if (!S.species || !list.some(s => s.species === S.species)) {
                 S.species = list.length ? list[0].species : null;
                 S.selected.clear();
@@ -367,7 +398,7 @@ function renderRail(model) {
     el.appendChild(box.wrap);
     if (!model) return;
     if (S.cull) cullResult();          // its "N over" shows in the rail
-    const list = speciesList(model);
+    const list = speciesList(model, { muted: mutedSpecies() });
     const showCovered = getKinSettings().showCovered;
     box.content.appendChild(h('div.PZ2QoL_kpSideHead', { text: `Species (${list.length})` }));
     if (!list.length) box.content.appendChild(h('div.PZ2QoL_kbRailEmpty', { text: 'No animals in the zoo yet.' }));
@@ -384,7 +415,8 @@ function renderRail(model) {
         if (own) meta.push(`★ ${own} assigned`);
         const over = overBySpecies.get(s.species);
         if (over) meta.push(`${over} over`);
-        box.content.appendChild(h(`div.PZ2QoL_kbSpecies.sev_${worst}${on ? '.on' : ''}`, {
+        if (s.muted) meta.push('muted');
+        box.content.appendChild(h(`div.PZ2QoL_kbSpecies.sev_${worst}${on ? '.on' : ''}${s.muted ? '.muted' : ''}`, {
             'data-species': s.species,
             title: speciesName(s.species),
             onClick: guard('Species', () => focusSpecies(s.species)),
@@ -416,8 +448,11 @@ function renderBoard(model, dest) {
         return;
     }
     const assignments = getAssignments(model);
-    const base = boardColumns(model, S.species, [], dest, { assignments });
-    const cols = boardColumns(model, S.species, S.plan, dest, { assignments });
+    const base = boardColumns(model, S.species, [], dest, { assignments, after: model });
+    // S.after: this render's simulation of S.plan (renderAll), not built twice
+    // the player's stored adults (Franchise) for the pinned trade column: read-only
+    const stored = storedFor(model);
+    const cols = boardColumns(model, S.species, S.plan, dest, { assignments, after: S.after && S.model === model ? S.after : null, stored });
     // a stable order: the order before the plan (a drop must not reshuffle the board)
     const order = new Map(base.map((c, i) => [c.id, i]));
     cols.sort((x, y) => (order.has(x.id) ? order.get(x.id) : 999) - (order.has(y.id) ? order.get(y.id) : 999));
@@ -442,7 +477,9 @@ function renderBoard(model, dest) {
             h('div.PZ2QoL_kpMainTitle', { text: trunc(speciesName(S.species), 30) }),
             h('div.PZ2QoL_kpMainSub', { text: `${animals.length} animal${animals.length === 1 ? '' : 's'} · ${habs.size} habitat${habs.size === 1 ? '' : 's'}${away ? ` · ${away} elsewhere` : ''}` })),
         h('div.PZ2QoL_kbHeadPills', null, now ? countPills(visibleCounts(now.counts, getKinSettings().showCovered)) : null),
+        muteSwitch(),
         h('div.PZ2QoL_kpFlex'),
+        tradeHead(),
         right));
     // no other suitable habitat: say so
     if (destKnown()) {
@@ -474,6 +511,31 @@ function renderBoard(model, dest) {
         box.wrap,
         pinned ? h('div.PZ2QoL_kbPinned', null, columnEl(model, pinned, { pinned: true })) : null));
     restoreScroll(box, S.scroll.board, 0);
+}
+
+// Trade shortcuts (tradejump.js): this species' adults in Animal Storage,
+// and Storage / Market buttons that open the hub filtered to it. The board
+// closes when the hub opens.
+function tradeHead() {
+    const sp = S.species;
+    if (!sp) return null;
+    return tradeRow(sp, {
+        rowCls: 'PZ2QoL_kbTrade',
+        btnCls: 'PZ2QoL_kpBtn',
+        showCounts: true,
+        onOpened: () => closeSpeciesBoard(),
+        onError: text => notice(text, 'warn'),
+    });
+}
+
+// No kin alerts for this species in this zoo (kinmute.js); badges stay.
+function muteSwitch() {
+    const sp = S.species;
+    if (!sp) return null;
+    const el = switchEl('Mute alerts', isMuted(sp), () => setMuted(sp, !isMuted(sp)),
+        `No alert messages about ${speciesName(sp)} in this zoo. Its badges, the planner and this board still show every related pair.`);
+    el.classList.add('kbMute');
+    return el;
 }
 
 // Columns as tall as the board strip, cards scrolling inside. Sized in
@@ -529,6 +591,19 @@ function dropCheck(model, c, ids) {
     return { ok: true, reason: '', unknown: c.kind === 'habitat' && !c.dest, noop };
 }
 
+// "Show in park" on a habitat column: the camera to the habitat and its info
+// panel (the game's Habitats list's own locate); the board closes.
+function showInParkEl(model, c) {
+    if (c.kind !== 'habitat' || c.id == null) return null;
+    const sample = c.animals.find(x => !x.planned) || c.animals[0] || null;
+    return h('div.PZ2QoL_kbColShow', {
+        title: `Show ${c.name} in the park: the camera moves there and opens its info panel. The board closes.`,
+        onClick: guard('Show in park', () => {
+            if (locatePlace(c.id, sample && sample.a ? sample.a.id : '')) closeSpeciesBoard();
+        }),
+    }, icon('IconLocation', 'brown', 'xs'), h('span', { text: 'Show' }));
+}
+
 function columnEl(model, c, { pinned = false } = {}) {
     const empty = !c.animals.length;
     const unsuitable = c.kind === 'habitat' && c.dest && c.dest.ok === false;
@@ -545,6 +620,7 @@ function columnEl(model, c, { pinned = false } = {}) {
     if (c.counts.males) counts.push(`${c.counts.males}♂`);
     if (c.counts.females) counts.push(`${c.counts.females}♀`);
     if (c.counts.juveniles) counts.push(`${c.counts.juveniles} young`);
+    const storedN = c.kind === 'trade' && c.stored ? c.stored.length : 0;
     const iconName = c.kind === 'trade' ? 'IconTradeCentre' : c.kind === 'away' ? 'IconTransport' : 'IconHabitat';
     const rel = h('div.PZ2QoL_kbColRel');
     const drop = h('div.PZ2QoL_kbColDrop');
@@ -571,9 +647,13 @@ function columnEl(model, c, { pinned = false } = {}) {
             icon(iconName, 'brown', 'sm'),
             h('div.PZ2QoL_kbColName', { text: trunc(c.name, 22), title: c.name }),
             h('div.PZ2QoL_kpFlex'),
+            showInParkEl(model, c),
             h('div.PZ2QoL_kpHabCount', { text: String(c.animals.length) })),
         h('div.PZ2QoL_kbColMeta', null,
-            h('div.PZ2QoL_kbColCounts', { text: counts.join(' · ') || (empty ? 'no animals' : '') }),
+            storedN ? h('div.PZ2QoL_kbColCounts.stored', {
+                text: `${c.animals.length} here · +${storedN} in storage`,
+                title: `${counts.join(' · ') || 'None'} here; ${storedN} adult${storedN === 1 ? '' : 's'} in your Animal Storage (stored young are not shown)`,
+            }) : h('div.PZ2QoL_kbColCounts', { text: counts.join(' · ') || (empty ? 'no animals' : '') }),
             h('div.PZ2QoL_kpFlex'),
             other),
         h('div.PZ2QoL_kbColPills', null, riskPills.length ? riskPills
@@ -613,15 +693,151 @@ function columnEl(model, c, { pinned = false } = {}) {
             text: unsuitable ? 'Not suitable for this species' : c.kind === 'away' ? 'Nobody away' : 'Drop animals here',
         }));
     }
+    if (c.kind === 'trade') storedGroup(model, c, body.content);
     node.appendChild(body.wrap);
     restoreScroll(body, 0, S.scroll.cols[c.id] || 0);
     S.colEls.set(c.id, { el: node, col: c, rel, drop });
     return node;
 }
 
+// ------------------------------------------------- stored adults (trade)
+
+// The player's stored adults of the board's species (Franchise only: the
+// game shows the park only its stored adults, and only there; most of them
+// have no entity, so the park scan misses them). Asked once per species
+// after the board opens (past the cache), on a new species, and on Rescan;
+// never on a timer. -> the answer (normalizeStored) or null.
+function storedFor(model) {
+    S.storedView = null;
+    const sp = S.species;
+    if (!model || !sp || model.mode !== 'franchise') return null;
+    if (!S.storedTried.has(sp) && !isAskingStored(sp)) loadStored(S.storedFresh);
+    const v = S.storedBy.get(sp);
+    if (!v || v.error || !v.animals || !v.animals.length) return null;
+    S.storedView = withStored(model, v);
+    return v;
+}
+
+function loadStored(force) {
+    const sp = S.species;
+    const model = getKinModel();
+    if (!sp || !model || model.mode !== 'franchise') return;
+    S.storedTried.add(sp);
+    S.storedFresh = false;
+    requestStoredAdults(sp, { force: !!force }).then(v => {
+        S.storedBy.set(sp, v || null);
+        if (S.open && S.species === sp) queueRender();
+    }, e => reportError('mod', 'Species board: stored animals failed', e, { silent: true }));
+}
+
+// Under the trade column's own cards: the stored adults, read-only, the
+// first few then "N more". Nothing when there are none or the game did not
+// answer; a faint note outside Franchise.
+function storedGroup(model, c, content) {
+    const sp = S.species;
+    if (!model || !sp) return;
+    const fetch = fetchRow(model, sp, { onOpened: () => closeSpeciesBoard(), onError: text => notice(text, 'warn') });
+    if (fetch) content.appendChild(fetch);
+    if (model.mode !== 'franchise') {
+        content.appendChild(h('div.PZ2QoL_kbStoredNote.faint', { text: 'Your Animal Storage adults show here in Franchise zoos.' }));
+        return;
+    }
+    const list = c.stored || [];
+    if (!list.length) {
+        if (isAskingStored(sp) && !S.storedBy.has(sp)) content.appendChild(h('div.PZ2QoL_kbStoredNote.faint', { text: 'Checking your Animal Storage…' }));
+        return;
+    }
+    const info = S.storedBy.get(sp);
+    const group = h('div.PZ2QoL_kbStored');
+    group.appendChild(h('div.PZ2QoL_kbStoredHead', null,
+        h('span', { text: 'In Animal Storage (adults)' }),
+        h('div.PZ2QoL_kpFlex'),
+        h('span', { text: String(list.length) })));
+    group.appendChild(h('div.PZ2QoL_kbStoredNote', {
+        text: `Stored young aren't listed${info && info.capped ? `; the first ${list.length} adults shown` : ''}. Bring them with the button above, or from Animal Storage.`,
+    }));
+    const shown = S.storedAll ? list : list.slice(0, STORED_SHOW);
+    for (const x of shown) group.appendChild(storedCardEl(model, x));
+    if (list.length > STORED_SHOW) {
+        group.appendChild(h('div.PZ2QoL_kbStoredMore', {
+            onClick: guard('Stored more', () => {
+                S.storedAll = !S.storedAll;
+                renderAll();
+            }),
+        }, h('span', { text: S.storedAll ? 'Show fewer' : `${list.length - STORED_SHOW} more` })));
+    }
+    content.appendChild(group);
+}
+
+// Opens Animal Storage on this species (tradejump.js); the board closes.
+function openStorage() {
+    const why = canOpenTrade();
+    if (why) {
+        notice(why, 'warn');
+        return;
+    }
+    openTrade('storage', S.species).then(r => {
+        if (r.ok) closeSpeciesBoard();
+        else notice(r.text, 'warn');
+    }, e => reportError('mod', 'Species board: opening Animal Storage failed', e));
+}
+
+// A stored adult: read-only (no drag, no select: a move needs an animal in
+// the park), Storage shortcut. No inbreeding badge or stripe: a stored animal
+// can't breed (developer, 2026-10-18); its relatives in the park show only as
+// a plain line and on hover, for planning.
+function storedCardEl(model, x) {
+    const a = x.a;
+    const sev = 'none';
+    const cls = ['stored', 'locked', sexClass(a.sex), `sev_${sev}`];
+    const p0 = x.pairs[0];
+    const kinLine = p0 ? h('span.PZ2QoL_kbKinLine', {
+        text: `${relationWord(p0.rel, p0.other.sex)} ${trunc(p0.other.name, 10)}${x.pairs.length > 1 ? ` +${x.pairs.length - 1}` : ''}`,
+        title: x.pairs.map(p => `${relationWord(p.rel, p.other.sex)} ${p.other.name} (${placeName(model, homeOf(p.other)) || 'in the zoo'})`).join(', '),
+    }) : null;
+    const ft = fertilityTag(a);
+    const why = canOpenTrade();
+    const relLabel = h('span.PZ2QoL_kbRelLabel');
+    const card = h(`div.PZ2QoL_kbCard.${cls.join('.')}`, { 'data-id': a.id, 'data-sev': sev, 'data-stored': '1' },
+        h('div.PZ2QoL_kbStripe'),
+        h('div.PZ2QoL_kbCardMain', null,
+            h('div.PZ2QoL_kbCardTop', null,
+                h('div.PZ2QoL_kbCardName', { text: `${sexSymbol(a.sex)} ${trunc(a.name, 13)}`, title: a.name }),
+                h('div.PZ2QoL_kpFlex'),
+                h(`div.PZ2QoL_kbStoredBtn${why ? '.blocked' : ''}`, {
+                    'data-trade': 'storage',
+                    title: why || `Open your Animal Storage in the hub, showing only ${speciesName(S.species)}. The board closes.`,
+                    onClick: guard('Storage', () => openStorage()),
+                }, h('span', { text: 'Storage' }))),
+            h('div.PZ2QoL_kbCardTags', null,
+                h('span.PZ2QoL_kbTag.storage', { text: 'in storage', title: 'In your Animal Storage (hub): not in the park' }),
+                a.forSale ? h('span.PZ2QoL_kbTag.listed', { text: 'listed', title: 'On the market now' }) : null,
+                ft ? h(`span.PZ2QoL_kbTag.${ft.cls}`, { text: ft.text, title: ft.title }) : null,
+                kinLine, h('div.PZ2QoL_kpFlex'), relLabel)));
+    card.__id = a.id;
+    card.__rel = relLabel;
+    card.__col = TRADE;
+    card.addEventListener('mouseenter', () => {
+        if (S.drag) return;
+        S.hoverId = a.id;
+        highlightRelatives(a.id);
+    });
+    card.addEventListener('mouseleave', () => {
+        if (S.drag || S.hoverId !== a.id) return;
+        S.hoverId = null;
+        clearHighlight();
+    });
+    card.addEventListener('click', guard('Stored card', () => {
+        notice(`${a.name} is in your Animal Storage, not in the park. Send it to the zoo from Animal Storage (Storage), then plan its moves here.`);
+    }));
+    S.cards.set(a.id, card);
+    return card;
+}
+
 function tagsFor(a, x, model) {
     const out = [];
     if (a.moving) out.push(h('span.PZ2QoL_kbTag.moving', { text: 'on the move' }));
+    else if (a.away) out.push(h('span.PZ2QoL_kbTag.away', { text: LT_WORDS[a.away] || a.away, title: 'Assigned to this habitat; away for now. It counts here and comes back.' }));
     else if (!a.hab && a.lt && a.lt !== 'trade' && a.lt !== 'habitat') out.push(h('span.PZ2QoL_kbTag.away', { text: LT_WORDS[a.lt] || a.lt }));
     if (x && x.planned) {
         const before = model.animals.get(a.id);
@@ -630,7 +846,7 @@ function tagsFor(a, x, model) {
     const ft = fertilityTag(a);
     if (ft) out.push(h(`span.PZ2QoL_kbTag.${ft.cls}`, { text: ft.text, title: ft.title }));
     if (a.contra) out.push(h('span.PZ2QoL_kbTag.contra', { text: 'contra' }));
-    if (a.preg) out.push(h('span.PZ2QoL_kbTag.preg', { text: 'pregnant' }));
+    if (a.preg) out.push(h('span.PZ2QoL_kbTag.preg', { text: 'pregnant', title: `Pregnant: Kin's plans never move her; she stays until she gives birth (she can't be sold). The game still lets you move her yourself.` }));
     if (S.pendingMove.has(a.id)) out.push(h('span.PZ2QoL_kbTag.moving', { text: 'moving…' }));
     return out;
 }
@@ -777,7 +993,10 @@ function highlightRelatives(id) {
     const after = S.after;
     if (!model || !after) return;
     clearHighlight();
-    const self = model.animals.get(String(id));
+    // stored adults (trade column) take part through the merged pedigree
+    const view = S.storedView && S.storedView.ped ? S.storedView : model;
+    const find = oid => model.animals.get(String(oid)) || (view.stored ? view.stored.get(String(oid)) : undefined);
+    const self = find(id);
     if (!self || !self.guid) return;
     const pairs = new Map();
     for (const p of after.byAnimal.get(self.id) || []) pairs.set(p.a.id === self.id ? p.b.id : p.a.id, p);
@@ -788,8 +1007,8 @@ function highlightRelatives(id) {
             setClass(card, 'focus', true);
             continue;
         }
-        const other = model.animals.get(oid);
-        const rel = other && other.guid ? model.ped.relation(self.guid, other.guid) : null;
+        const other = find(oid);
+        const rel = other && other.guid ? view.ped.relation(self.guid, other.guid) : null;
         if (!rel) {
             setClass(card, 'dim', true);
             continue;
@@ -935,7 +1154,13 @@ function dragMove(ev) {
             let trial = S.plan;
             for (const id of d.ids) trial = setMove(S.model, trial, id, over);
             const dest = destFor(S.model);
-            const imp = planImpact(S.after, simulatePlan(S.model, trial, dest), S.species);
+            // one simulation per column for this drag (hovering back and forth)
+            if (!d.impacts) d.impacts = new Map();
+            let imp = d.impacts.get(over);
+            if (!imp) {
+                imp = planImpact(S.after, simulatePlan(S.model, trial, dest), S.species);
+                d.impacts.set(over, imp);
+            }
             const made = imp.created.filter(p => p.severity === 'risk' || p.severity === 'kin');
             const gone = imp.fixed.filter(p => p.severity === 'risk' || p.severity === 'kin');
             if (made.length) {
@@ -951,6 +1176,7 @@ function dragMove(ev) {
                 tone = 'ok';
             }
             if (check.unknown) text += ' · not checked by the game yet';
+            if (d.ids.some(id => isPinned(S.model && S.model.animals.get(String(id))))) text += " · pregnant: allowed, but she can't be sold until she gives birth";
         }
     }
     setText(c.drop, text);
@@ -993,18 +1219,23 @@ function applyMoves(ids, to) {
     if (!model) return;
     let plan = S.plan;
     const names = [];
+    const pregnant = [];
     for (const id of ids) {
         const a = model.animals.get(String(id));
         if (!a || !canMove(a)) continue;
-        plan = setMove(model, plan, a.id, to);
+        // planned by hand: the run moves her even when pregnant (the game allows it)
+        plan = setMove(model, plan, a.id, to, { byPlayer: true });
         S.reasons.delete(a.id);
         names.push(`${a.name} ${sexSymbol(a.sex)}`);
+        if (isPinned(a) && String(to) !== String(homeOf(a))) pregnant.push(a.name);
     }
     S.plan = plan;
     S.selected.clear();
     if (names.length) {
-        notice(`${names.join(', ')} → ${placeName(model, to)}: planned. Nothing moves until you run the plan.`);
-        breadcrumb('kin_board_plan');
+        notice(pregnant.length
+            ? `${names.join(', ')} → ${placeName(model, to)}: planned. ${pregnant.join(', ')} ${pregnant.length === 1 ? 'is' : 'are'} pregnant: the game allows the move, but she can't be sold and has to give birth first. Nothing moves until you run the plan.`
+            : `${names.join(', ')} → ${placeName(model, to)}: planned. Nothing moves until you run the plan.`, pregnant.length ? 'warn' : undefined);
+        breadcrumb(pregnant.length ? 'kin_board_plan_pregnant' : 'kin_board_plan');
     }
     S.planTab = 'plan';
     renderAll();
@@ -1040,6 +1271,7 @@ function suggest() {
     }
     let plan = S.plan;
     for (const m of moves) {
+        if (isPinned(model.animals.get(String(m.id)))) continue;
         plan = setMove(model, plan, m.id, m.to);
         S.reasons.set(String(m.id), m.reason || '');
     }
@@ -1064,8 +1296,11 @@ function execute() {
         return;
     }
     if (!S.plan.length) return;
-    const plan = S.plan.map(m => ({ id: m.id, to: m.to }));
+    const plan = S.plan.map(m => (m.byPlayer ? { id: m.id, to: m.to, byPlayer: true } : { id: m.id, to: m.to }));
     for (const m of plan) S.sent.add(m.id);
+    // a deep search of a species about to change stops (its best is kept)
+    const dj = deepJob();
+    if (dj && plan.some(m => { const a = model.animals.get(String(m.id)); return a && a.species === dj.species; })) stopDeep(dj.species);
     S.planTab = 'run';
     S.selected.clear();
     closeMenu();
@@ -1101,7 +1336,9 @@ function moveNow(id, to) {
     S.pendingMove.set(a.id, to);
     S.sent.add(a.id);
     closeMenu();
-    notice(`Moving ${a.name} ${sexSymbol(a.sex)} to ${where}…`);
+    notice(isPinned(a)
+        ? `Moving ${a.name} ${sexSymbol(a.sex)} to ${where}… She is pregnant: the game allows it, but she can't be sold until she gives birth.`
+        : `Moving ${a.name} ${sexSymbol(a.sex)} to ${where}…`, isPinned(a) ? 'warn' : undefined);
     breadcrumb('kin_board_move_now');
     moveAnimal(a.id, to).then(r => {
         S.pendingMove.delete(a.id);
@@ -1341,8 +1578,8 @@ function actionsEl(model) {
     const blocked = model ? planBlockedReason(model) : 'No kin data yet.';
     const row = h('div.PZ2QoL_kbActRow', null,
         btn('Suggest fixes', 'IconGenetics', suggest, { title: 'Moves that remove this species\' related pairs without creating new ones' }),
-        btn('Breeding programme', 'IconFertility', openProgramme, {
-            cls: S.prog && S.prog.species === S.species ? 'on' : '',
+        btn(programmeButtonText(), 'IconFertility', openProgramme, {
+            cls: `${S.prog && S.prog.species === S.species ? 'on.' : ''}PZ2QoL_kbProgBtn`,
             title: 'Plan the best breeding groups for this species: unrelated partners, the best expected young, the game\'s own group sizes and space',
         }),
         btn('Thin out', 'IconTradeCentre', openCull, {
@@ -1392,7 +1629,7 @@ function openProgramme() {
     if (S.prog && S.prog.species === S.species) return closeProgramme();
     S.cull = null;
     const species = S.species;
-    S.prog = { species, state: 'loading', step: PROG_DEFAULT_STEP, info: null, infoError: '', results: new Map(), modelRef: null, error: null };
+    S.prog = { species, state: 'loading', step: savedProgStep(), info: null, infoError: '', results: new Map(), modelRef: null, error: null };
     closeMenu();
     S.selected.clear();
     S.scroll.prog = 0;
@@ -1437,6 +1674,9 @@ function recomputePanel() {
     p.state = 'loading';
     if (isProg) {
         // a search still running uses the old facts
+        cancelDeep(species);
+        dropDeepResults(species);
+        p.problem = null;
         if (p.job) p.job.cancelled = true;
         p.job = null;
         p.sig = null;
@@ -1528,7 +1768,7 @@ function programmeSig(model, species) {
     for (const a of model.animals.values()) {
         if (a.species !== species || a.exhibit) continue;
         rows.push([a.id, a.hab || '', a.lt || '', a.moving ? 1 : 0, a.sex, a.juv ? 1 : 0, a.contra ? 1 : 0, a.infertile ? 1 : 0,
-            a.alive === false ? 0 : 1, (a.fert && a.fert.state) || '', (a.mates || []).join('+'), (a.par || []).join('+')].join(','));
+            a.alive === false ? 0 : 1, (a.fert && a.fert.state) || '', (a.mates || []).join('+'), (a.par || []).join('+'), a.preg ? 1 : 0].join(','));
     }
     rows.sort();
     const assigned = [];
@@ -1577,9 +1817,12 @@ function startProgramme(p, model, key) {
     p.job = job;
     const live = () => !job.cancelled && S.prog === p;
     breadcrumb('kin_board_programme_search');
+    const cpu = cpuOf();
     planProgrammeAsync(model, p.species, p.info || {}, destFor(model), {
         assignments: getAssignments(model),
-        options: Object.assign({ moveCost: PROG_STEPS[p.step].cost, useTradeCentre: p.useTrade !== false, ratio: ratioChoice(p.species) }, PROG_SEARCH),
+        options: programmeOptions(p),
+        sliceMs: cpu.sliceMs,
+        restMs: cpu.restMs,
         onProgress: v => {
             job.progress = v;
             if (live()) renderProgrammeProgress(v);
@@ -1589,6 +1832,10 @@ function startProgramme(p, model, key) {
         if (!live()) return;
         p.job = null;
         p.error = null;
+        if (r) {
+            const info = p.info || {};
+            dlog('kin', 'prog_classic_done', Object.assign({ species: p.species, step: p.step, social: info.social ? info.social.max : 'none', exact: r.exact ? 1 : 0, ms: r.searchMs }, programmeLogData(r)));
+        }
         if (p.sig === job.sig) p.results.set(key, r);
         p.stale = { key, r };
         queueRender();
@@ -1600,6 +1847,272 @@ function startProgramme(p, model, key) {
         reportError('ui', 'Species board: the breeding programme failed', e);
         queueRender();
     });
+}
+
+// The programme's own options (both engines).
+function programmeOptions(p) {
+    const st = PROG_STEPS[p.step];
+    const o = { moveCost: st.cost, useTradeCentre: p.useTrade !== false, ratio: ratioChoice(p.species) };
+    if (st.outsider != null) o.outsiderCost = st.outsider;
+    return Object.assign(o, PROG_SEARCH);
+}
+
+// ----------------------------------------------------------- deep search
+// The Deep optimiser (kinprogdeep.js owns the job and the results). The
+// panel shows Classic's plan at once; a deep result for the same settings
+// and breeders replaces it. Deep starts by itself, with the player's saved
+// Standard, never over a running job (docs/PLAN-deep-optimiser.md).
+
+// The problem signature (what the search reads) for the panel's settings,
+// worked out once per kin model.
+function problemSigFor(p, model) {
+    const key = programmeKey(p);
+    if (p.problem && p.problem.model === model && p.problem.key === key) return p.problem.sig;
+    let sig = '';
+    try {
+        sig = programmeProblemSig(model, p.species, p.info || {}, destFor(model), { assignments: getAssignments(model), options: programmeOptions(p) });
+    }
+    catch (e) {
+        reportError('mod', 'Species board: deep search signature failed', e, { silent: true });
+    }
+    p.problem = { model, key, sig };
+    return sig;
+}
+
+// What the panel shows: { r, kind: 'classic' | 'deep', entry (the deep
+// result), stale (the breeders changed since it), classic (Classic's r) }.
+function programmeView(model) {
+    const p = S.prog;
+    if (!p || !model || p.state !== 'ready') return null;
+    const classic = programmeResult();
+    const opt = getOptimiser();
+    if (opt.engine !== 'deep') return { r: classic, kind: 'classic', entry: null, stale: false, classic };
+    const key = programmeKey(p), dkey = deepKey(opt);
+    const sig = problemSigFor(p, model);
+    const exact = deepResult(p.species, key, dkey, sig);
+    const entry = exact || latestDeepResult(p.species, key, dkey);
+    if (entry && entry.r) return { r: entry.r, kind: 'deep', entry, stale: !exact, classic };
+    return { r: classic, kind: 'classic', entry: null, stale: false, classic };
+}
+
+// Start (or continue) the deep search for the panel's species and settings.
+// -> true if it started.
+function runDeep(p, model, { resume = null, auto = false } = {}) {
+    const classic = programmeResult();
+    if (!classic || programmeBusy(p)) return false;
+    const opt = getOptimiser();
+    const key = programmeKey(p);
+    const sig = problemSigFor(p, model);
+    const settings = deepSettings(opt);
+    breadcrumb(auto ? 'kin_board_programme_deep_auto' : 'kin_board_programme_deep_run');
+    startDeep({
+        species: p.species, key, dkey: deepKey(opt), psig: sig, breeders: breedersOf(classic),
+        model, info: p.info || {}, dest: destFor(model), assignments: getAssignments(model), options: programmeOptions(p),
+        // Classic's plan for the same setting and zoo is start 0
+        warm: classic.moves, warmTotal: classic.score, resume, settings, cpu: cpuOf(opt),
+    });
+    renderAll();
+    return true;
+}
+
+const breedersOf = r => (r && r.before ? r.before.breedingPairs * 2 + r.before.idle : 0);
+
+// Deep starts by itself with the saved settings, every preset (developer,
+// 2026-10-18: no staring at a Run button): once per setting and zoo, 1 s
+// after the last change, unless a job is running (never taken over), a
+// result is kept, or Classic already scored every layout.
+function maybeAutoDeep(p, model, view) {
+    const opt = getOptimiser();
+    if (opt.engine !== 'deep' || !deepSettings(opt).auto) return;
+    if (!view || view.kind === 'deep' || !view.classic || view.classic.exact || programmeBusy(p) || deepJob()) return;
+    const want = `${programmeKey(p)}|${deepKey(opt)}|${problemSigFor(p, model)}`;
+    if (p.autoDone === want || p.autoWant === want) return;
+    if (p.autoTimer) clearTimeout(p.autoTimer);
+    p.autoWant = want;
+    p.autoTimer = setTimeout(guard('Programme deep auto', () => {
+        p.autoTimer = 0;
+        p.autoWant = '';
+        const m = getKinModel();
+        if (S.prog !== p || !m || deepJob()) return;
+        const v = programmeView(m);
+        if (!v || v.kind === 'deep') return;
+        if (`${programmeKey(p)}|${deepKey(getOptimiser())}|${problemSigFor(p, m)}` !== want) return;
+        // Classic still working (a scan changed the species): the next render tries again
+        if (runDeep(p, m, { auto: true })) p.autoDone = want;
+        else queueRender();
+    }), 1000);
+}
+
+// The board's button: the running deep search's progress.
+function programmeButtonText() {
+    const j = deepJob();
+    if (!j) return 'Breeding programme';
+    const pct = `${Math.round(Math.max(0, Math.min(1, j.progress || 0)) * 100)} %`;
+    return j.species === S.species ? `Breeding programme · deep ${pct}` : `Breeding programme · ${trunc(speciesName(j.species), 14)} deep ${pct}`;
+}
+
+// The gain over Classic in words ('+1.4 % over Classic'), or ''.
+function gainText(total, classicTotal, suffix = '') {
+    if (total == null || classicTotal == null || !(total > classicTotal + 1e-9)) return '';
+    if (classicTotal > 0) return `+${(Math.round((total - classicTotal) / classicTotal * 1000) / 10).toFixed(1)} % over Classic${suffix}`;
+    return `better than Classic${suffix}`;
+}
+
+// The running job in words: start 5 of 32 · best at start 3 · ~2 min left
+function deepProgressText(j) {
+    const bits = [`start ${Math.min(j.planned, j.done + 1)} of ${j.planned}`];
+    if (j.bestStart) bits.push(`best at start ${j.bestStart}`);
+    const gain = gainText(j.total, j.warmTotal, ' so far');
+    if (gain) bits.push(gain);
+    if (j.msPerStart != null) {
+        let left = (j.planned - j.done) * j.msPerStart / 1000;
+        const lim = j.settings.limitMin > 0 ? j.settings.limitMin * 60 - (Date.now() - j.startedAt) / 1000 : Infinity;
+        left = Math.max(0, Math.min(left, lim));
+        bits.push(`~${durationText(left)} left`);
+    }
+    return j.stopRequested ? `Stopping: finishing the current step… (${bits[0]})` : `Deep search · ${bits.join(' · ')}`;
+}
+
+// Only the deep progress texts and bar, between full renders.
+function renderDeepProgress() {
+    const root = S.root;
+    const j = deepJob();
+    if (!root || !S.open || !j) return;
+    const pct = `${Math.round(Math.max(0, Math.min(1, j.progress || 0)) * 100)}%`;
+    for (const n of root.querySelectorAll('.PZ2QoL_kbDeepFill')) n.style.width = pct;
+    for (const n of root.querySelectorAll('.PZ2QoL_kbDeepText')) setText(n, deepProgressText(j));
+    for (const n of root.querySelectorAll('.PZ2QoL_kbProgBtn > span')) setText(n, programmeButtonText());
+}
+
+// The deep search's row under the panel head: running, stopped, done,
+// stale, or the Run button.
+function deepStatusEl(p, model, view) {
+    const opt = getOptimiser();
+    if (opt.engine !== 'deep') return null;
+    const j = deepJob();
+    const settings = deepSettings(opt);
+    const key = programmeKey(p), dkey = deepKey(opt);
+    const mine = !!j && j.species === p.species && j.key === key && j.dkey === dkey;
+    const row = (cls, ...kids) => h(`div.PZ2QoL_kbDeep.${cls}`, null, ...kids);
+    if (mine) {
+        const pct = `${Math.round(Math.max(0, Math.min(1, j.progress || 0)) * 100)}%`;
+        return row('running',
+            h('span.PZ2QoL_kbDeepText', { text: deepProgressText(j) }),
+            h('div.PZ2QoL_kbDeepBar', null, h('div.PZ2QoL_kbDeepFill', { style: { width: pct } })),
+            btn(j.stopRequested ? 'Stopping…' : 'Stop', null, () => {
+                stopDeep(p.species);
+                renderAll();
+            }, { cls: j.stopRequested ? 'disabled' : 'stop', title: 'End the deep search now and show the best plan it found (you can continue it later)' }));
+    }
+    const classic = view && view.classic;
+    // few enough layouts that Classic scored every one: nothing to search
+    if (classic && classic.exact && !mine && !(view && view.kind === 'deep')) {
+        return row('exact', h('span', { text: 'Classic already scored every possible layout for this species: this is the best plan there is, so Deep has nothing to add. Deep helps on species with more breeders or habitats.' }));
+    }
+    const est = durationText(estimateSeconds(breedersOf(classic), settings, msPerStartFor(p.species)));
+    const ready = !!classic && !programmeBusy(p);
+    const runBtn = (label, resume = null) => btn(label, null, () => runDeep(p, model, { resume }), {
+        cls: ready ? 'primary' : 'disabled',
+        title: `${settings.starts} starts after the Classic plan${settings.limitMin > 0 ? `, at most ${durationText(settings.limitMin * 60)}` : ', no time limit'}. It runs in the background: you can close this panel or the board.`,
+    });
+    const otherName = j && !mine ? (j.species === p.species ? 'other' : trunc(speciesName(j.species), 16)) : '';
+    const other = j && !mine ? `${j.species === p.species ? 'Another deep search for this species' : `The deep search for ${speciesName(j.species)}`} is running (${Math.round((j.progress || 0) * 100)} %). ` : '';
+    const withStop = label => (j && !mine ? `${label} (stops the ${otherName} search)` : label);
+    const e = view && view.kind === 'deep' ? view.entry : null;
+    if (e) {
+        const gain = gainText(e.r.score, e.warmTotal) || 'the same as Classic';
+        if (view.stale) {
+            const n = e.r.moves.length;
+            return row('stale',
+                h('span', { text: `${other}The breeders changed since this deep search (${n} move${n === 1 ? '' : 's'}; some may no longer apply). Recompute, or run it again.` }),
+                runBtn(withStop('Run deep search')));
+        }
+        if (e.stopped && e.resume) {
+            const why = e.stopped === 'time' ? 'the time limit' : 'Stop';
+            return row('stopped',
+                h('span', { text: `${other}Deep: stopped by ${why} after ${e.done} of ${e.planned} starts · ${gain}.` }),
+                runBtn(withStop('Continue'), e.resume));
+        }
+        return row('done', h('span', { text: `${other}Deep · ${e.done} start${e.done === 1 ? '' : 's'}${e.r.bestStart ? ` · best at start ${e.r.bestStart}` : ''} · ${gain}` }));
+    }
+    const wait = settings.auto && !j ? 'The deep search starts in a moment. ' : '';
+    return row('idle', h('span', { text: `${other || wait}This plan is Classic's.` }), runBtn(withStop(`Run deep search (est. ~${est})`)));
+}
+
+// The Optimiser chip in the panel head: opens the options row.
+function optimiserChip(p) {
+    const opt = getOptimiser();
+    const text = opt.engine === 'deep' ? `Optimiser: Deep · ${opt.preset === 'custom' ? 'Custom' : DEEP_PRESETS[opt.preset].label}` : 'Optimiser: Classic';
+    return h(`div.PZ2QoL_kbOptChip${p.optOpen ? '.on' : ''}${opt.engine === 'deep' ? '.deep' : ''}`, {
+        title: 'Choose the optimiser: Classic (a few seconds) or Deep (many starts, minutes; the better plan on big species). Your choice is kept for every zoo.',
+        onClick: guard('Programme optimiser', () => {
+            p.optOpen = !p.optOpen;
+            breadcrumb('kin_board_programme_optimiser');
+            renderAll();
+        }),
+    }, h('span', { text }));
+}
+
+function optPick(label, on, onClick, title) {
+    return h(`div.PZ2QoL_kbOptPick${on ? '.on' : ''}`, { title: title || '', onClick: guard('Programme option', onClick) }, h('span', { text: label }));
+}
+
+// A custom number with arrows (stepping through CUSTOM_STEPS).
+function optStepper(label, k, value, words) {
+    const list = CUSTOM_STEPS[k];
+    const i = Math.max(0, list.indexOf(value));
+    const step = d => {
+        const v = list[Math.max(0, Math.min(list.length - 1, i + d))];
+        setOptimiser({ preset: 'custom', custom: { [k]: v } });
+        renderAll();
+    };
+    return h('div.PZ2QoL_kbOptStep', { 'data-k': k },
+        h('span.PZ2QoL_kbOptLabel', { text: label }),
+        h('div.PZ2QoL_kbRatioArrow.prev', { onClick: guard('Programme option', () => step(-1)) }, h('span', { text: '‹' })),
+        h('span.PZ2QoL_kbOptValue', { text: words(value) }),
+        h('div.PZ2QoL_kbRatioArrow.next', { onClick: guard('Programme option', () => step(1)) }, h('span', { text: '›' })));
+}
+
+// The options row: engine, deep presets (or custom numbers), CPU use.
+// Every change is the player's default at once (prefs.js, all zoos).
+function optimiserRow() {
+    const opt = getOptimiser();
+    const set = patch => {
+        setOptimiser(patch);
+        renderAll();
+    };
+    const kids = [
+        h('div.PZ2QoL_kbOptGroup', null,
+            h('span.PZ2QoL_kbOptLabel', { text: 'Optimiser' }),
+            optPick('Classic', opt.engine === 'classic', () => set({ engine: 'classic' }), "Today's optimiser: one guided search, a few seconds (up to ~25 s on Gentle)"),
+            optPick('Deep', opt.engine === 'deep', () => set({ engine: 'deep' }), 'Many starts after the Classic plan, with exact repairs: never worse than Classic, often better on big species. Runs in the background.')),
+    ];
+    if (opt.engine === 'deep') {
+        kids.push(h('div.PZ2QoL_kbOptGroup', null,
+            h('span.PZ2QoL_kbOptLabel', { text: 'Search' }),
+            PRESET_ORDER.map(k => {
+                const d = DEEP_PRESETS[k];
+                const title = d
+                    ? `${PRESET_WORDS[k]}. ${d.starts} starts, ${d.limitMin > 0 ? `at most ${durationText(d.limitMin * 60)}` : 'no time limit'}${d.auto ? '; starts by itself when you open the programme' : '; starts when you click Run'}.`
+                    : PRESET_WORDS[k];
+                return optPick(d ? d.label : 'Custom', opt.preset === k, () => set({ preset: k }), title);
+            })));
+        if (opt.preset === 'custom') {
+            const c = opt.custom;
+            kids.push(h('div.PZ2QoL_kbOptGroup.custom', null,
+                optStepper('Starts', 'starts', c.starts, v => String(v)),
+                optStepper('Effort', 'effort', c.effort, v => `${v}×`),
+                optStepper('Repair', 'repair', c.repair, v => ({ off: 'off', light: 'light', strong: 'strong (slower)' })[v] || v),
+                optStepper('Time limit', 'limitMin', c.limitMin, v => (v > 0 ? durationText(v * 60) : 'none')),
+                optStepper('Stop early', 'patience', c.patience, v => (v > 0 ? `after ${v} quiet round${v === 1 ? '' : 's'}` : 'off'))));
+        }
+    }
+    kids.push(h('div.PZ2QoL_kbOptGroup', null,
+        h('span.PZ2QoL_kbOptLabel', { text: 'CPU use' }),
+        CPU_ORDER.map(k => optPick(CPU_STEPS[k].label, opt.cpu === k, () => set({ cpu: k }),
+            `${CPU_STEPS[k].sliceMs} ms of search, then ${CPU_STEPS[k].restMs} ms for the game. Gentler is smoother on slower PCs, and slower to finish.`))));
+    kids.push(h('div.PZ2QoL_kbOptNote', { text: 'Kept as your default in every zoo. Deep runs in the background; Stop keeps the best plan it found, and Continue picks it up again.' }));
+    return h('div.PZ2QoL_kbOptRow', null, ...kids);
 }
 
 // Only the progress bar and its text, between full renders.
@@ -1639,13 +2152,14 @@ function programmeReasonIn(model, a, to, groups, info) {
 
 function useProgramme() {
     const model = getKinModel();
-    const r = programmeResult();
-    if (!model || !r || programmeBusy(S.prog)) return;
+    const view = programmeView(model);
+    const r = view && view.r;
+    if (!model || !r || (view.kind === 'classic' && programmeBusy(S.prog))) return;
     let plan = [];
     S.reasons.clear();
     for (const m of r.moves) {
         const a = model.animals.get(String(m.id));
-        if (!a || !canMove(a)) continue;
+        if (!a || !canMove(a) || isPinned(a)) continue;
         plan = setMove(model, plan, a.id, m.to);
         S.reasons.set(a.id, programmeReason(model, a, m.to, r.groups, S.prog && S.prog.info));
     }
@@ -1714,8 +2228,9 @@ function programmeEl(model) {
             h('div.PZ2QoL_kpEmptyActions', null, cancel)));
         return wrap;
     }
-    const r = programmeResult();
-    const busy = programmeBusy(p);
+    const view = programmeView(model);
+    const r = view ? view.r : programmeResult();
+    const busy = programmeBusy(p) && !(view && view.kind === 'deep');
     const wrap = h(`div.PZ2QoL_kbProg.state_${p.state}${busy ? '.busy' : ''}`);
     if (!r && !busy) {
         wrap.appendChild(h('div.PZ2QoL_kpEmpty', null,
@@ -1761,9 +2276,10 @@ function programmeEl(model) {
         h('span.PZ2QoL_kbStepEnd', { text: 'Fewer moves' }),
         PROG_STEPS.map((st, i) => h(`div.PZ2QoL_kbStep${i === p.step ? '.on' : ''}`, {
             'data-step': String(i),
-            title: `${st.label}: each move costs ${st.cost} (in expected-young units)`,
+            title: st.cost ? `${st.label}: each move costs ${st.cost} (in expected-young units)` : `${st.label}: moves cost nothing; only the young count (a move that gains nothing is still left out)`,
             onClick: guard('Programme step', () => {
                 p.step = i;
+                setPref(PROG_STEP_PREF, i === PROG_DEFAULT_STEP ? undefined : i);
                 renderAll();
             }),
         }, h('div.PZ2QoL_kbStepDot'))),
@@ -1774,12 +2290,15 @@ function programmeEl(model) {
             h('div.PZ2QoL_kbProgTitle', { text: `Breeding programme · ${trunc(name, 24)}` }),
             h('div.PZ2QoL_kbProgSub', { text: subText, title: subText })),
         h('div.PZ2QoL_kpFlex'),
-        makeup,
-        tradeToggle,
-        steps,
         recomputeBtn(),
         btn(`Use this plan (${nMoves})`, null, useProgramme, { cls: `primary${nMoves && !busy ? '' : '.disabled'}`, title: busy ? 'The optimiser is still working' : 'Put these moves in the plan (it replaces the current plan)' }),
         cancel));
+    // the choices on a row of their own (it wraps): the head's buttons stay in view
+    wrap.appendChild(h('div.PZ2QoL_kbProgControls', null, makeup, tradeToggle, steps, optimiserChip(p)));
+    if (p.optOpen) wrap.appendChild(optimiserRow());
+    const deepRow = deepStatusEl(p, model, view);
+    if (deepRow) wrap.appendChild(deepRow);
+    maybeAutoDeep(p, model, view);
     if (busy) {
         const pct = `${Math.round(Math.max(0, Math.min(1, p.job.progress || 0)) * 100)}%`;
         wrap.appendChild(h('div.PZ2QoL_kbProgBusy', { title: 'The optimiser tries many layouts: every one for a few breeders, a guided search for more. The game keeps running meanwhile.' },
@@ -1848,7 +2367,8 @@ function groupEl(model, hab, g, r, moved) {
         const incoming = moved.has(a.id) && home !== hab;
         return h(`div.PZ2QoL_kbGroupAnimal.${sexClass(a.sex)}${incoming ? '.in' : ''}`, { 'data-id': a.id },
             h('span.PZ2QoL_kbGroupWho', { text: `${sexSymbol(a.sex)} ${trunc(a.name, 15)}`, title: a.name }),
-            incoming ? h('span.PZ2QoL_kbGroupFrom', null, h('div.PZ2QoL_kbArrow.small'), h('span', { text: `from ${trunc(placeOfHab(model, home), 12)}` })) : null);
+            incoming ? h('span.PZ2QoL_kbGroupFrom', null, h('div.PZ2QoL_kbArrow.small'), h('span', { text: `from ${trunc(placeOfHab(model, home), 12)}` })) : null,
+            a.preg ? h('span.PZ2QoL_kbTag.preg', { text: 'pregnant · stays', title: `Pregnant: ${PREGNANT_STAYS}. The programme never moves her; it can still bring partners to her.` }) : null);
     };
     const males = animals.filter(a => a.sex === Sex.Male);
     const females = animals.filter(a => a.sex !== Sex.Male);
@@ -1857,6 +2377,8 @@ function groupEl(model, hab, g, r, moved) {
     if (males.length && females.length) node.appendChild(h('div.PZ2QoL_kbGroupGap'));
     for (const a of females) node.appendChild(line(a));
     if (staying) node.appendChild(h('div.PZ2QoL_kbGroupStay', { text: `+${staying} staying (young or not breeding)` }));
+    // pregnant females here who should get contraception once they give birth
+    for (const adv of (r.contraception || []).filter(x => x.hab === hab)) node.appendChild(contraAdviceEl(model, adv));
     // who leaves this habitat
     const leaving = [];
     for (const [id, to] of moved) {
@@ -1872,6 +2394,45 @@ function groupEl(model, hab, g, r, moved) {
         }
     }
     return node;
+}
+
+// One contraception suggestion (kinprogramme.js contraceptionAdvice): the
+// reason and a one-click Contraception (the game's own setter, this animal
+// only, never applied by itself).
+function contraAdviceEl(model, adv) {
+    const a = model.animals.get(String(adv.id));
+    const pending = S.contraAsk && S.contraAsk.until > Date.now() ? S.contraAsk : null;
+    const mine = pending && pending.id === adv.id;
+    const done = !!(a && a.contra);
+    const title = `${adv.name} is pregnant and stays here. ${adv.text}. The game lets you set contraception during a pregnancy; it is meant to stop her next one. Kin never sets it by itself.`;
+    return h(`div.PZ2QoL_kbContra.kind_${adv.kind}`, { 'data-id': String(adv.id), 'data-kind': adv.kind, title },
+        h('div.PZ2QoL_kbContraText', null,
+            h('span.PZ2QoL_kbContraWho', { text: `♀ ${trunc(adv.name, 14)}` }),
+            h('span.PZ2QoL_kbContraWhy', { text: adv.text })),
+        h(`div.PZ2QoL_kbContraBtn${done || pending ? '.disabled' : ''}`, {
+            title: done ? `${adv.name} is on contraception` : pending ? 'Waiting for the game' : `Give ${adv.name} contraception (the game's own toggle, this animal only)`,
+            onClick: guard('Contraception', () => adviseContraception(adv.id)),
+        }, icon('Icon_Contracepted', 'white', 'xs'), h('span', { text: done ? 'On contraception' : mine ? 'Asking…' : 'Contraception' })));
+}
+
+// One click, one animal, one game action (Franchise: the click is the opt-in).
+function adviseContraception(id) {
+    const model = getKinModel();
+    const a = model && model.animals.get(String(id));
+    if (!a || a.contra) return;
+    if (S.contraAsk && S.contraAsk.until > Date.now()) {
+        notice('One action at a time: wait for the game to answer the last contraception click.', 'warn');
+        return;
+    }
+    if (!setContraception(a.id, true)) {
+        notice(`The contraception for ${a.name} could not be sent.`, 'bad');
+        return;
+    }
+    S.contraAsk = { id: a.id, until: Date.now() + 6000 };
+    breadcrumb('kin_board_contra_advice');
+    notice(`Contraception for ${a.name} ♀: asked. She stays where she is.`, 'ok');
+    setTimeout(queueRender, 6100);
+    renderAll();
 }
 
 // Like the columns: the group strip gets its height in pixels after layout.
@@ -1990,6 +2551,10 @@ function toggleCull(id, leaving) {
             notice(`${a.name} is already on the move.`, 'warn');
             return;
         }
+        if (isPinned(a)) {
+            notice(`${a.name} is pregnant: Thin out never sends her away (the market won't take her until she gives birth). To move her anyway, drag her on the board.`, 'warn');
+            return;
+        }
         if (c.keepIds.has(a.id)) c.keepIds.delete(a.id);
         else c.cullIds.add(a.id);
     }
@@ -2004,7 +2569,7 @@ function useCull() {
     let n = 0;
     for (const m of r.moves) {
         const a = model.animals.get(String(m.id));
-        if (!a || !canMove(a)) continue;
+        if (!a || !canMove(a) || isPinned(a)) continue;
         plan = setMove(model, plan, a.id, TRADE);
         S.reasons.set(a.id, `Thin out: ${m.reason}`);
         n++;
@@ -2234,10 +2799,12 @@ function focusSpecies(species, animalId) {
         S.selected.clear();
         S.scroll.board = 0;
         S.scroll.cols = {};
+        S.storedAll = false;
         S.hoverId = null;
     }
     closeMenu();
     loadDestinations(false);
+    requestStorageCounts([species]);
     if (animalId != null) {
         const model = getKinModel();
         const a = model && model.animals.get(String(animalId).replace(/^animal_/, ''));
@@ -2290,7 +2857,11 @@ function subscribe() {
     S.unsub.push(onKin(() => queueRender()));
     S.unsub.push(onKinSettings(() => queueRender()));
     S.unsub.push(onAssignments(() => queueRender()));
+    S.unsub.push(onMuted(() => queueRender()));
+    S.unsub.push(onStorageCounts(() => queueRender()));
     S.unsub.push(onPlanRun(() => queueRender()));
+    S.unsub.push(onOptimiser(() => queueRender()));
+    S.unsub.push(onDeep(kind => (kind === 'progress' ? renderDeepProgress() : queueRender())));
     S.timer = setInterval(tick, TICK_MS);
 }
 
@@ -2331,10 +2902,18 @@ export function openSpeciesBoard(opts = {}) {
         breadcrumb('kin_board_open');
         requestKinScan('board');
         markKinActive();
+        // live storage counts each time the board opens (the player may have been to the hub)
+        if (!wasOpen && (species || S.species)) requestStorageCounts([species || S.species], { force: true });
+        // stored adults: asked again (past the cache) once the board draws
+        if (!wasOpen) {
+            S.storedTried.clear();
+            S.storedFresh = true;
+        }
         if (species) focusSpecies(species, o.animalId);
         else {
             renderAll();
             loadDestinations(false);
+            if (S.species) requestStorageCounts([S.species]);
         }
         return true;
     }
@@ -2368,6 +2947,7 @@ let installed = false;
 export function installSpeciesBoard() {
     if (installed) return true;
     installed = true;
+    installDeep();
     document.addEventListener('keydown', e => {
         if (!S.open) return;
         if (e.key !== 'Escape' && e.keyCode !== 27) return;

@@ -334,6 +334,28 @@ Hub._AddTraceListener = function(self, oUI)
 			local sName = type(a) == "string" and a or b
 			Core:Mark("js_" .. string.gsub(tostring(sName), "[^%w_]", "_"))
 		end, self)
+		-- the page's detailed log (debuglog.js): lines separated by "\n",
+		-- each written as it is (Core:LogText)
+		oUI:AddEventListener("PZ2QoL_Log", 1, function(a, b)
+			local sText = type(a) == "string" and a or b
+			if type(sText) ~= "string" then
+				return
+			end
+			local n = 0
+			for sLine in string.gmatch(sText, "[^\n]+") do
+				n = n + 1
+				if n > 200 then
+					Core:LogText("js log: more than 200 lines in one batch, rest dropped")
+					break
+				end
+				Core:LogText(sLine)
+			end
+		end, self)
+		-- the page asks whether the log is on (it may have missed the
+		-- PZ2QoL_LogState sent when the view became ready)
+		oUI:AddEventListener("PZ2QoL_LogHello", 0, function()
+			pcall(oUI.TriggerEventAtNextAdvance, oUI, "PZ2QoL_LogState", Core.bLogOff and "off" or "on")
+		end, self)
 	end)
 	cp(bOk and "trace_listener_ok" or "trace_listener_failed")
 end
@@ -402,6 +424,11 @@ Hub._OnModFrontEndReady = function(self, oUI)
 	pcall(function()
 		local Core = global.package.loaded["pz2qol.core"]
 		oUI:TriggerEventAtNextAdvance("PZ2QoL_Hello", Core and Core.sVersion or "?")
+		-- the page's detailed log: on only in debug builds (debuglog.js)
+		oUI:TriggerEventAtNextAdvance("PZ2QoL_LogState", (Core and Core.bTrace and not Core.bLogOff) and "on" or "off")
+		if Core and Core.bTrace then
+			Core:Log("lua", "view_ready", { view = oUI == self.oFrontEndUI and "hub" or "hud", version = Core.sVersion })
+		end
 	end)
 	-- after the greeting: it sends its state straight away
 	local Autosave = global.package.loaded["pz2qol.autosave"]
@@ -412,6 +439,17 @@ Hub._OnModFrontEndReady = function(self, oUI)
 	local StorageSend = global.package.loaded["pz2qol.storagesend"]
 	if StorageSend then
 		pcall(StorageSend.Attach, StorageSend, oUI)
+	end
+	-- trade shortcuts: the park opens the hub, the hub page filters storage
+	local CoreT = global.package.loaded["pz2qol.core"]
+	local TradeJump = (CoreT and CoreT.TradeJump) or global.package.loaded["pz2qol.tradejump"]
+	if TradeJump then
+		pcall(TradeJump.Attach, TradeJump, oUI)
+	end
+	-- "Bring to the trade centre": the park asks, the hub page sends
+	local StorageFetch = (CoreT and CoreT.StorageFetch) or global.package.loaded["pz2qol.storagefetch"]
+	if StorageFetch then
+		pcall(StorageFetch.Attach, StorageFetch, oUI)
 	end
 	-- once per session: remove what the 2026-10-16 persistence probe left
 	-- in the player save (PZ2QoL.Probe and a 12 KB PZ2QoL.Big)

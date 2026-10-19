@@ -333,3 +333,20 @@
 .PZ2QoL_kinToastClose:hover { background-color: var(--qol-chip); }
 .PZ2QoL_kinToastText { margin-top: 0.3rem; font-size: 0.84rem; line-height: 1.2rem; white-space: normal; }
 .PZ2QoL_kinToasts.underPopup { display: none; }
+/* notice levels (kinlife.js): Needs you stands out, Heads-up is the usual card */
+.PZ2QoL_kinToast.lvl_action { border: 0.14rem solid var(--kin-risk); }
+.PZ2QoL_kinToast.lvl_action .PZ2QoL_kinToastStripe { width: 0.55rem; background-color: var(--kin-risk); }
+.PZ2QoL_kinToast.sev_future .PZ2QoL_kinCardIcon { background-color: var(--kin-future); }
+.PZ2QoL_kinToastKicker {
+  align-self: flex-start;
+  margin-bottom: 0.25rem;
+  padding: 0.05rem 0.4rem;
+  border-radius: 0.3rem;
+  font-size: 0.66rem;
+  font-weight: bold;
+  letter-spacing: 0.06rem;
+  text-transform: uppercase;
+  background-color: var(--qol-chip);
+  color: var(--qol-ink-soft);
+}
+.PZ2QoL_kinToast.lvl_action .PZ2QoL_kinToastKicker { background-color: var(--kin-risk); color: #FFFFFF; }

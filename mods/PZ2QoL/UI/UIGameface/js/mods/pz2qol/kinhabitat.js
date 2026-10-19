@@ -15,6 +15,7 @@ import {
 import { openKinPlanner } from '/js/mods/pz2qol/kinplanner.js';
 import { h } from '/js/mods/pz2qol/ui.js';
 import { reportError } from '/js/mods/pz2qol/errors.js';
+import { speciesName } from '/js/mods/pz2qol/speciesnames.js';
 
 function openFor(animal) {
     openKinPlanner({ habitatId: animal.hab || undefined, animalId: animal.id });
@@ -35,7 +36,7 @@ function speciesLine(model, habId, species) {
     const sp = species ? s.species.find(x => x.species === species) : null;
     const counts = Object.assign({}, sp ? sp.counts : s.counts);
     const worst = worstOfCounts(counts);
-    const text = worst ? riskSummaryText(counts) : (sp ? `No related ${species} pairs` : 'No related breeding pairs');
+    const text = worst ? riskSummaryText(counts) : (sp ? `No related ${speciesName(species)} pairs` : 'No related breeding pairs');
     const build = pinned => habitatCardContent(model, habId, { pinned, species: sp ? species : null, openPlanner: () => openKinPlanner({ habitatId: String(habId), species: sp ? species : undefined }) });
     return lineVNode(worst, text, { build, extraClass: 'habitatPanel' });
 }

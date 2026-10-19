@@ -36,6 +36,11 @@
 // breeders with no group: the search may bring them into a habitat
 // (option useTradeCentre, on by default).
 //
+// Pregnant breeders are pinned where they are (she can't be sold and has to
+// give birth first): they still count in their group and can anchor it (the
+// search brings partners to her), but no step ever moves one. Each pregnant
+// female gets contraception advice (contraceptionAdvice, below).
+//
 // Search (solveLayout), the same answer every time for the same zoo:
 //   - few breeders (up to exactLimit layouts): every layout is scored, the
 //     best wins (ties: fewer moves);
@@ -50,12 +55,27 @@
 //     female as a new group). Simulated annealing decides whether to keep
 //     each round, and the best layout seen is kept. A seeded random source,
 //     an evaluation budget, and a time cap as a safety net.
+// One line for the detailed log: the make-up, its limits and each group
+// (`kin prog_*_done`: the room and targets the plan was made with).
+export function programmeLogData(r) {
+    if (!r || !r.rule) return {};
+    const rule = r.rule;
+    return {
+        makeup: ratioKey(rule), source: rule.source, system: rule.system, maxM: rule.maxMales, maxF: rule.maxFemales,
+        groups: (r.groups || []).map(g => `${g.hab}:${g.males}m${g.females}f/${g.capacity == null ? '-' : g.capacity}+${g.staying || 0}`).join(' '),
+        moves: r.moves ? r.moves.length : 0, score: Math.round(r.score * 1000) / 1000,
+    };
+}
+
+// The deep engine (opts.engine 'deep', solveDeep below) runs the same steps
+// from many starts after the Classic plan, with exact repairs; the player
+// picks how many starts and how long (the board's Optimiser options).
 // Then every move the result does not need is undone (an equal layout with
 // fewer moves wins). A habitat's score is cached by who lives there, and a
 // step only scores again the habitats it changes. Checked against every
 // layout on small zoos and against long runs on big ones
 // (tests/kinprogramme.test.mjs).
-import { predictOffspring, Sex } from './kincore.js';
+import { predictOffspring, Sex, fertileNow, ownGrades, relationWord } from './kincore.js';
 import { TRADE, normalizeAssignments, assignedHabitatsOf, habitatAllowedFor } from './kinboardcore.js';
 
 export const PROGRAMME_DEFAULTS = Object.freeze({
@@ -63,8 +83,12 @@ export const PROGRAMME_DEFAULTS = Object.freeze({
     bondBreakCost: 0.15,     // separating two current mates
     outsiderCost: 0.02,      // joining a habitat that already has this species
     relatedPenalty: 2,       // per related fertile pair living together
-    overCapacityPenalty: 1,  // per adult over capacity
-    structurePenalty: 1,     // per breeder over the group make-up or the game's most per sex
+    // Room and make-up are hard limits in practice: each penalty is well
+    // above the best pair's value (0..1) and the line bonus, so no layout
+    // gains by going over (2026-10-18: 1 let a third Sumatran tiger in once
+    // Best genetics had no move cost).
+    overCapacityPenalty: 2,  // per adult over capacity
+    structurePenalty: 2,     // per breeder over the group make-up or the game's most per sex
     lineBonus: 0.01,         // per distinct family line in a habitat (future flexibility)
     maxEvaluations: 600000,  // search budget: layout changes scored (about 0.4 s for 100 breeders)
     timeBudgetMs: 1500,      // safety net: stop searching after this long
@@ -73,6 +97,19 @@ export const PROGRAMME_DEFAULTS = Object.freeze({
     useTradeCentre: true,    // breeders waiting at the trade centre may join a group
     ratio: 'auto',           // the player's group make-up (RATIO_CHOICES); 'auto': the game's
     seed: 0,                 // mixed into the zoo's own seed (tests)
+    // the engine: 'classic' (one search, a few seconds) or 'deep' (many
+    // starts and exact repairs, as long as the player allows)
+    engine: 'classic',
+    starts: 12,              // deep: searched starts (after the Classic plan, start 0)
+    effort: 1,               // deep: rounds per start, times the classic search's
+    patience: 0,             // deep: stop after this many rounds (of 4 starts) without a better plan (0: never)
+    repair: 'light',         // deep: exact repairs, 'off' | 'light' | 'strong'
+    warm: null,              // deep: the Classic plan's moves [{id, to}] (start 0)
+    resume: null,            // deep: { round, base: [{id, to}] } from a stopped run (Continue)
+    classic: { maxEvaluations: 3000000, timeBudgetMs: 6000 }, // deep: start 0 when no warm plan
+    wallLimitMs: Infinity,   // deep: wall-clock limit
+    stop: null,              // deep: () => true ends the search (the best so far is kept)
+    onStart: null,           // deep: ({ done, planned, bestStart, total, ms }) after each start
 });
 
 const MATING = new Set(['monogamy', 'polygyny', 'polyandry', 'mixed']);
@@ -211,11 +248,15 @@ export function groupRule(info = {}, choice = 'auto') {
     const caps = info && info.sexMax && typeof info.sexMax === 'object' ? info.sexMax : {};
     const allGroups = (info && Array.isArray(info.groups) ? info.groups : []).filter(g => g && typeof g === 'object');
     const solitary = allGroups.length > 0 && allGroups.every(g => !(g.m > 0 && g.f > 0));
+    // without the game's most per sex: at most the group size less one (the
+    // other sex must fit too); a group of 2 (tigers) is one male and one female
+    const social = info && info.social && info.social.max >= 2 ? Math.floor(info.social.max) : null;
+    const derived = social != null ? social - 1 : null;
     const out = (r, source) => ({
         m: r ? r.m : null,
         f: r ? r.f : null,
-        maxMales: caps.male > 0 ? Math.floor(caps.male) : null,
-        maxFemales: caps.female > 0 ? Math.floor(caps.female) : null,
+        maxMales: caps.male > 0 ? Math.floor(caps.male) : derived,
+        maxFemales: caps.female > 0 ? Math.floor(caps.female) : derived,
         source,
         system,
         solitary,
@@ -494,6 +535,8 @@ function makeBudget(opts) {
             if (b.evals - checked >= 200) {
                 checked = b.evals;
                 if (clock() - t0 > opts.timeBudgetMs) b.timedOut = true;
+                // the player's Stop (deep search)
+                if (typeof opts.stop === 'function' && opts.stop()) b.timedOut = b.stopped = true;
             }
             return b.timedOut;
         },
@@ -553,13 +596,17 @@ function makeContext(model, info, opts, breeders, all, habitats, home) {
     ctx.allowedPlace = placeKeys.map(k => allowed.has(k));
     ctx.groupPlaces = placeKeys.map((k, p) => p).filter(p => groupPlace[p] && allowed.has(placeKeys[p]));
     // where each breeder may go: the allowed habitats, the trade centre, home
+    // pregnant breeders stay where they are (pinned): home is their only place
+    // pregnant, or away from its habitat for now (vet, quarantine): stays
+    ctx.pinned = Uint8Array.from(breeders.map(a => (a.preg || a.away ? 1 : 0)));
     ctx.targetsOf = ctx.all.map(i => {
+        if (ctx.pinned[i]) return [ctx.home[i]];
         const t = new Set(ctx.groupPlaces);
         t.add(trade);
         t.add(ctx.home[i]);
         return Array.from(t).sort((x, y) => x - y);
     });
-    ctx.canGo = (i, p) => p === ctx.home[i] || p === trade || (groupPlace[p] && allowed.has(placeKeys[p]));
+    ctx.canGo = (i, p) => p === ctx.home[i] || (!ctx.pinned[i] && (p === trade || (groupPlace[p] && allowed.has(placeKeys[p]))));
     // the pair's value, male m with female f (indices): -1 = related
     ctx.pv = (m, f) => {
         const k = m * n + f;
@@ -720,7 +767,12 @@ function restore(ctx, st, place) {
 function evaluate(ctx, st, changes) {
     ctx.budget.evals++;
     const moved = new Map();
-    for (const [i, q] of changes) if (st.place[i] !== q) moved.set(i, q);
+    for (const [i, q] of changes) {
+        if (st.place[i] === q) continue;
+        // a pinned (pregnant) breeder never leaves home
+        if (ctx.pinned[i] && q !== ctx.home[i]) return null;
+        moved.set(i, q);
+    }
     if (!moved.size) return null;
     const lists = new Map();
     for (const [i, q] of moved) {
@@ -757,6 +809,7 @@ function evaluate(ctx, st, changes) {
 }
 
 function apply(st, ev) {
+    if (!ev) return;
     for (const [i, q] of ev.moved) st.place[i] = q;
     for (const [p, list] of ev.lists) {
         st.members[p] = list;
@@ -808,7 +861,7 @@ function layoutCount(ctx, limit) {
     return n;
 }
 
-const progress = ctx => Math.min(0.99, ctx.budget.evals / ctx.budget.limit);
+const progress = ctx => (ctx.progressOf ? ctx.progressOf() : Math.min(0.99, ctx.budget.evals / ctx.budget.limit));
 
 // Improve until no step helps: move one breeder (to its best place), swap
 // two in different places, move a male and a female together into a
@@ -912,12 +965,21 @@ function ruinRecreate(ctx, st, rnd) {
     // breeders waiting without a group join in now and then
     const waiting = st.members[ctx.trade];
     if (waiting.length && rnd() < 0.5) for (let t = 0; t < 2; t++) out.add(pick(waiting));
-    let list = shuffle(Array.from(out), rnd);
+    let list = shuffle(Array.from(out).filter(i => !ctx.pinned[i]), rnd);
     const most = Math.max(6, Math.ceil(n * 0.4));
     if (list.length > most) list = list.slice(0, most);
     const ev = evaluate(ctx, st, list.map(i => [i, ctx.trade]));
     if (ev) apply(st, ev);
+    for (const _ of placeBack(ctx, st, list)) { /* run to the end */ }
+    return list;
+}
+
+// Put breeders back one at a time, each where it does the most good; a
+// male and a female still out may go in together (a new group). Yields
+// now and then (the deep search's rebuilds put back every breeder).
+function* placeBack(ctx, st, list) {
     const left = new Set(list);
+    let placed = 0;
     for (const i of list) {
         if (!left.has(i)) continue;
         left.delete(i);
@@ -943,8 +1005,8 @@ function ruinRecreate(ctx, st, rnd) {
             apply(st, best);
             if (partner >= 0 && best.moved.has(partner)) left.delete(partner);
         }
+        if ((++placed & 7) === 0) yield progress(ctx);
     }
-    return list;
 }
 
 // The sexes the search places all at once (reassign): the plentiful one
@@ -964,7 +1026,8 @@ function plentifulSides(ctx) {
 // bonds are left to the exact score: the result is a proposal, scored and
 // kept only if the zoo is better. side: 'F' or 'M'. -> evaluate() or null.
 function reassign(ctx, st, side) {
-    const movers = ctx.all.filter(i => ctx.sex[i] === (side === 'F' ? Sex.Female : Sex.Male));
+    // pinned (pregnant) breeders stay: they are partners, never movers
+    const movers = ctx.all.filter(i => ctx.sex[i] === (side === 'F' ? Sex.Female : Sex.Male) && !ctx.pinned[i]);
     if (!movers.length) return null;
     const isMover = new Uint8Array(ctx.n);
     for (const i of movers) isMover[i] = 1;
@@ -1049,7 +1112,7 @@ function reassign(ctx, st, side) {
 function reassignScarce(ctx, st, side) {
     const r = ctx.rule;
     if (!r || r.m == null || (r.m === 1 && r.f === 1)) return null;
-    const movers = ctx.all.filter(i => ctx.sex[i] === (side === 'M' ? Sex.Male : Sex.Female));
+    const movers = ctx.all.filter(i => ctx.sex[i] === (side === 'M' ? Sex.Male : Sex.Female) && !ctx.pinned[i]);
     if (!movers.length) return null;
     const isMover = new Uint8Array(ctx.n);
     for (const i of movers) isMover[i] = 1;
@@ -1229,6 +1292,268 @@ function* solveLayout(ctx) {
     return { place: Int32Array.from(st.place), exact: false };
 }
 
+// ------------------------------------------------------------ deep search
+//
+// The deep engine (opts.engine 'deep'): start 0 is the Classic plan; then
+// `starts` more searches, in rounds of four. Each start rebuilds part or all
+// of the best layout of the rounds before it and runs the classic search's
+// steps for `effort` times its rounds, with exact repairs (the breeders of
+// two or three habitats placed again in every possible way). A round's
+// starts depend only on the layout it began with, so they could run side by
+// side, and a stopped search continues where it stopped with the same
+// result. Never worse than Classic: its plan is the first best. Measured
+// against an exact solver (MILP, 2026-10-18): Classic is 2.6 % short on
+// average for 70-100 breeders (up to 14 %), 30 s of deep search 0.6 %
+// (docs/RESEARCH-breeding-optimisation.md).
+
+const DEEP_ROUND = 4;
+const REPAIR = { off: null, light: { habitats: 2, limit: 2000 }, strong: { habitats: 3, limit: 20000 } };
+
+// Every way of placing a few breeders among a few places (the repair's
+// core): a depth-first walk that keeps the best. -> true if it improved.
+function* exactPlace(ctx, st, movers, placesOf) {
+    const n = movers.length;
+    const startTotal = st.total;
+    let best = { total: st.total, place: movers.map(i => st.place[i]) };
+    let leaves = 0;
+    function* rec(k) {
+        if (ctx.budget.out()) return;
+        if (k === n) {
+            if (st.total > best.total + EPS) best = { total: st.total, place: movers.map(i => st.place[i]) };
+            if ((++leaves & 1023) === 0) yield progress(ctx);
+            return;
+        }
+        const i = movers[k];
+        for (const q of placesOf[k]) {
+            const from = st.place[i];
+            if (q === from) {
+                yield* rec(k + 1);
+                continue;
+            }
+            const ev = evaluate(ctx, st, [[i, q]]);
+            if (!ev) continue;
+            apply(st, ev);
+            yield* rec(k + 1);
+            apply(st, evaluate(ctx, st, [[i, from]]));
+        }
+    }
+    yield* rec(0);
+    if (best.total > startTotal + EPS) {
+        const ev = evaluate(ctx, st, movers.map((i, k) => [i, best.place[k]]));
+        if (ev) apply(st, ev);
+        return true;
+    }
+    return false;
+}
+
+// The exact repair: the breeders of a few habitats (half the time, plus an
+// empty habitat to found a group in) and up to two from the trade centre
+// placed again in every possible way among those places, the trade centre
+// and their homes, within the strength's layout limit (the breeders with
+// the most choices are left where they are until it fits).
+function* repairExact(ctx, st, rnd) {
+    const R = REPAIR[ctx.opts.repair];
+    if (!R) return false;
+    const used = ctx.groupPlaces.filter(p => st.members[p].length);
+    if (!used.length) return false;
+    shuffle(used, rnd);
+    const chosen = used.slice(0, Math.min(used.length, R.habitats));
+    const empty = ctx.groupPlaces.filter(p => !st.members[p].length);
+    if (empty.length && rnd() < 0.5) chosen.push(empty[Math.floor(rnd() * empty.length)]);
+    const places = new Set(chosen);
+    places.add(ctx.trade);
+    let movers = [];
+    for (const p of chosen) movers.push(...st.members[p]);
+    const waiting = st.members[ctx.trade];
+    for (let t = 0; t < 2 && waiting.length; t++) movers.push(waiting[Math.floor(rnd() * waiting.length)]);
+    movers = shuffle(Array.from(new Set(movers)), rnd);
+    const opts = movers.map(i => ctx.targetsOf[i].filter(q => places.has(q) || q === ctx.home[i] || q === st.place[i]));
+    let count = opts.reduce((c, o) => c * o.length, 1);
+    while (count > R.limit && movers.length > 1) {
+        let k = 0;
+        for (let t = 1; t < movers.length; t++) if (opts[t].length > opts[k].length) k = t;
+        count /= opts[k].length;
+        movers.splice(k, 1);
+        opts.splice(k, 1);
+    }
+    if (count <= 1) return false;
+    ctx.budget.evals++;
+    return yield* exactPlace(ctx, st, movers, opts);
+}
+
+// A start built afresh: a share of the breeders (all: frac 1) taken out
+// and put back one at a time where they do the most good.
+function* rebuild(ctx, st, rnd, frac) {
+    const free = ctx.all.filter(i => ctx.targetsOf[i].length > 1);
+    if (!free.length) return;
+    const list = shuffle(free, rnd).slice(0, Math.max(1, Math.round(free.length * frac)));
+    const ev = evaluate(ctx, st, list.map(i => [i, ctx.trade]));
+    if (ev) apply(st, ev);
+    yield* placeBack(ctx, st, list);
+}
+
+// One start: a settle, then rounds of a kick, a ruin and recreate or an
+// exact repair, kept or not by simulated annealing (cooling over the
+// start's rounds). -> the start's best { total, place }.
+function* deepStart(ctx, st, rnd, rounds) {
+    const B = ctx.budget;
+    yield* localSearch(ctx, st);
+    if (intensify(ctx, st)) yield* localSearch(ctx, st);
+    const best = { total: st.total, place: Int32Array.from(st.place) };
+    const T0 = 0.03, T1 = 0.001;
+    const cool = Math.pow(T1 / T0, 1 / Math.max(1, rounds));
+    const repair = !!REPAIR[ctx.opts.repair];
+    let T = T0;
+    for (let it = 0; it < rounds && !B.out(); it++) {
+        const snap = Int32Array.from(st.place);
+        const before = st.total;
+        const r = rnd();
+        let list = [];
+        if (repair && r < 0.1) yield* repairExact(ctx, st, rnd);
+        else list = r < 0.8 ? kick(ctx, st, rnd) : ruinRecreate(ctx, st, rnd);
+        const touched = new Set(list);
+        for (const i of list) for (const j of st.members[st.place[i]]) touched.add(j);
+        if (touched.size) yield* localSearch(ctx, st, { swaps: false, pairs: false, only: Array.from(touched) });
+        const d = st.total - before;
+        if (d > -EPS || rnd() < Math.exp(d / T)) {
+            if (st.total > best.total + EPS) {
+                best.total = st.total;
+                best.place = Int32Array.from(st.place);
+            }
+        }
+        else restore(ctx, st, snap);
+        T *= cool;
+        if ((it & 3) === 3) yield progress(ctx);
+    }
+    restore(ctx, st, best.place);
+    intensify(ctx, st);
+    yield* localSearch(ctx, st);
+    if (st.total > best.total + EPS) {
+        best.total = st.total;
+        best.place = Int32Array.from(st.place);
+    }
+    return best;
+}
+
+// Moves [{id, to}] -> a layout (from home): moves of animals that are not
+// breeders here, to unknown places or to places they may not go, are left
+// out (a plan from an older scan, a breeder now pinned).
+function layoutFromMoves(ctx, moves) {
+    const place = Int32Array.from(ctx.home);
+    const index = new Map(ctx.B.map((a, i) => [String(a.id), i]));
+    for (const m of moves || []) {
+        const i = index.get(String(m.id));
+        const p = ctx.placeOf.get(m.to);
+        if (i != null && p != null && ctx.canGo(i, p)) place[i] = p;
+    }
+    return place;
+}
+
+const movesOf = (ctx, place) => ctx.B.map((a, i) => (place[i] === ctx.home[i] ? null : { id: a.id, to: ctx.placeKeys[place[i]] })).filter(Boolean);
+
+// The deep engine. -> { place, exact, starts (searched), bestStart,
+// stopped ('time' | 'stop' | null), resume ({ round, base } to continue,
+// or null when it finished), msPerStart }.
+function* solveDeep(ctx) {
+    const O = ctx.opts;
+    const st = makeState(ctx, Int32Array.from(ctx.home));
+    const count = layoutCount(ctx, O.exactLimit);
+    if (count <= O.exactLimit) return { place: yield* exhaustive(ctx, st, count), exact: true, starts: 0, bestStart: 0 };
+    const wall = makeBudget({ maxEvaluations: Infinity, timeBudgetMs: O.wallLimitMs > 0 ? O.wallLimitMs : Infinity, clock: wallClock, stop: O.stop });
+    const K = Math.max(1, Math.floor(O.starts));
+    const roundsOfStarts = Math.ceil(K / DEEP_ROUND);
+    let round = 0, base;
+    if (O.resume && Array.isArray(O.resume.base) && O.resume.round >= 0) {
+        round = Math.min(roundsOfStarts, Math.floor(O.resume.round));
+        base = layoutFromMoves(ctx, O.resume.base);
+    }
+    else if (Array.isArray(O.warm)) base = layoutFromMoves(ctx, O.warm);
+    else {
+        // start 0: the Classic search, with the board's budget
+        ctx.budget = makeBudget(Object.assign({}, O, O.classic, { stop: null }));
+        base = (yield* solveLayout(ctx)).place;
+    }
+    ctx.budget = wall;
+    restore(ctx, st, base);
+    // shown: the best seen (the plan); best: the best at the start of the round
+    let best = { total: st.total, place: Int32Array.from(base) };
+    let shown = best, bestStart = 0, done = round * DEEP_ROUND, quiet = 0;
+    if (O.resume && Array.isArray(O.resume.base)) {
+        // Continue: the plan shown when it stopped stays the plan unless a
+        // start beats it; the quiet rounds count on (Stop early)
+        quiet = Math.max(0, Math.floor(O.resume.quiet || 0));
+        bestStart = Math.max(0, Math.floor(O.resume.bestStart || 0));
+        if (Array.isArray(O.resume.shown)) {
+            restore(ctx, st, layoutFromMoves(ctx, O.resume.shown));
+            if (st.total > shown.total + EPS) shown = { total: st.total, place: Int32Array.from(st.place) };
+            restore(ctx, st, base);
+        }
+    }
+    const steps = Math.max(50, Math.round(Math.min(6000, 300 + 40 * ctx.n) * Math.max(0.1, O.effort)));
+    const time = Number.isFinite(O.wallLimitMs) && O.wallLimitMs > 0 ? O.wallLimitMs : null;
+    ctx.progressOf = () => Math.min(0.99, Math.max(done / K, time ? wall.ms() / time : 0));
+    let stopped = null, resume = null;
+    for (; round < roundsOfStarts; round++) {
+        const roundBase = best;
+        let roundBest = roundBase;
+        for (let k = 0; k < DEEP_ROUND; k++) {
+            const s = round * DEEP_ROUND + k + 1;
+            if (s > K) break;
+            if (wall.out()) break;
+            const rnd = randomSource(hashSeed(`${ctx.seedKey}|start ${s}`));
+            restore(ctx, st, roundBase.place);
+            yield* rebuild(ctx, st, rnd, s % 2 ? 0.25 + 0.25 * rnd() : 1);
+            const r = yield* deepStart(ctx, st, rnd, steps);
+            if (wall.out()) {
+                // cut short: keep what it found for the plan, not for Continue
+                if (r.total > shown.total + EPS) shown = { total: r.total, place: Int32Array.from(r.place) };
+                break;
+            }
+            done++;
+            if (r.total > roundBest.total + EPS) roundBest = { total: r.total, place: Int32Array.from(r.place), s };
+            if (r.total > shown.total + EPS) {
+                shown = { total: r.total, place: Int32Array.from(r.place) };
+                bestStart = s;
+            }
+            // the page's progress text (start 5 of 32, best at 3)
+            if (typeof O.onStart === 'function') {
+                try {
+                    O.onStart({ done, planned: K, bestStart, total: shown.total, ms: wall.ms() });
+                }
+                catch (e) {
+                    // the page's business
+                }
+            }
+            yield progress(ctx);
+        }
+        if (wall.out()) {
+            stopped = wall.stopped ? 'stop' : 'time';
+            resume = { round, base: movesOf(ctx, roundBase.place), shown: movesOf(ctx, shown.place), quiet, bestStart };
+            break;
+        }
+        quiet = roundBest === roundBase ? quiet + 1 : 0;
+        best = roundBest;
+        if (O.patience > 0 && quiet >= O.patience) break;
+    }
+    // a last polish of exact repairs on the best layout
+    restore(ctx, st, shown.place);
+    if (!stopped && REPAIR[O.repair]) {
+        const rnd = randomSource(hashSeed(`${ctx.seedKey}|polish`));
+        let calm = 0;
+        for (let t = 0; t < 4 * ctx.groupPlaces.length && calm < ctx.groupPlaces.length && !wall.out(); t++) {
+            if (yield* repairExact(ctx, st, rnd)) {
+                calm = 0;
+                yield* localSearch(ctx, st);
+            }
+            else calm++;
+        }
+        intensify(ctx, st);
+        yield* localSearch(ctx, st);
+    }
+    const place = st.total > shown.total + EPS ? Int32Array.from(st.place) : shown.place;
+    return { place, exact: false, starts: done, bestStart, stopped, resume, msPerStart: done ? Math.round(wall.ms() / Math.max(1, done - (O.resume ? O.resume.round * DEEP_ROUND : 0))) : null };
+}
+
 // Undo every move the layout does not need: alone, then two at a time.
 function prune(ctx, place) {
     const st = makeState(ctx, Int32Array.from(place));
@@ -1273,7 +1598,9 @@ function prepare(model, species, info, destinations, assignments, options) {
     const all = Array.from(model.animals.values()).filter(a => a.species === species && !a.exhibit && a.alive !== false);
     const canMoveA = a => !a.moving && (a.lt === 'habitat' || a.lt === 'trade' || (!a.lt && !!a.hab));
     const inTrade = a => a.lt === 'trade' && !a.hab;
-    const breeders = all.filter(a => isBreeder(a, info) && canMoveA(a) && (opts.useTradeCentre || !inTrade(a)));
+    // an animal away for a while (vet, quarantine, transit) breeds in its
+    // assigned habitat: a breeder there, pinned (it can't be moved now)
+    const breeders = all.filter(a => isBreeder(a, info) && (canMoveA(a) || (a.away && a.hab)) && (opts.useTradeCentre || !inTrade(a)));
     const tradeWaiting = all.filter(a => inTrade(a) && isBreeder(a, info) && canMoveA(a)).length;
     const home = new Map(all.map(a => [a.id, a.hab || (a.lt === 'trade' ? TRADE : AWAY)]));
     // where the species may live
@@ -1294,8 +1621,10 @@ function prepare(model, species, info, destinations, assignments, options) {
     const infoX = Object.assign({}, info);
     if (!infoX.spacePerAdult) infoX.spacePerAdult = estimateSpacePerAdult(info);
     const ctx = makeContext(model, infoX, opts, breeders, all, habitats, home);
+    // the deep engine has its own budgets (solveDeep)
     ctx.budget = makeBudget(opts);
-    ctx.rnd = randomSource(hashSeed(`${species}|${breeders.map(a => a.id).join(',')}|${opts.seed}`));
+    ctx.seedKey = `${species}|${breeders.map(a => a.id).join(',')}|${opts.seed}`;
+    ctx.rnd = randomSource(hashSeed(ctx.seedKey));
     return { ctx, opts, breeders, habitats, tradeWaiting };
 }
 
@@ -1321,7 +1650,8 @@ function* programmeSteps(model, species, info, destinations, assignments, option
     if (!prep) return null;
     const { ctx, opts, breeders, habitats, tradeWaiting } = prep;
     const start = Int32Array.from(ctx.home);
-    const solved = breeders.length ? yield* solveLayout(ctx) : { place: start, exact: true };
+    const deep = opts.engine === 'deep';
+    const solved = breeders.length ? yield* (deep ? solveDeep(ctx) : solveLayout(ctx)) : { place: start, exact: true };
     const place = prune(ctx, solved.place);
     // the reported numbers scored afresh (the cache's keys are hashes)
     ctx.memo.clear();
@@ -1339,6 +1669,10 @@ function* programmeSteps(model, species, info, destinations, assignments, option
         system: ctx.rule.system,
         rule: ctx.rule,
         moves,
+        // pregnant breeders: they stay where they are (never in moves)
+        pinned: breeders.filter((a, i) => ctx.pinned[i]).map(a => a.id),
+        // pregnant females who should get contraception, and why
+        contraception: contraceptionAdvice(model, species, { moves, info: ctx.info, rule: ctx.rule }),
         // breeders taken out of the trade centre / waiting there (and usable)
         fromTrade: moves.filter(m => m.fromTrade).length,
         tradeWaiting,
@@ -1346,6 +1680,13 @@ function* programmeSteps(model, species, info, destinations, assignments, option
         score: finalState.total,
         startScore: startState.total,
         exact: solved.exact,
+        engine: deep ? 'deep' : 'classic',
+        starts: solved.starts != null ? solved.starts : 1,
+        bestStart: solved.bestStart || 0,
+        startsPlanned: deep ? Math.max(1, Math.floor(opts.starts)) : 1,
+        stopped: solved.stopped || null,
+        resume: solved.resume || null,
+        msPerStart: solved.msPerStart || null,
         evaluations: ctx.budget.evals,
         timedOut: ctx.budget.timedOut,
         searchMs: Math.round(ctx.budget.ms()),
@@ -1375,11 +1716,37 @@ export function planProgramme(model, species, info = {}, destinations = null, { 
 }
 
 
-// The same, in slices of about sliceMs, so the page stays responsive.
-// onProgress(0..1) after each slice; isCancelled() -> true stops it (the
-// promise then gives null). The time cap counts only the time spent
-// searching.
-export function planProgrammeAsync(model, species, info = {}, destinations = null, { assignments = null, options = {}, sliceMs = 24, onProgress = null, isCancelled = null } = {}) {
+// What a search of this species reads, as one string: a deep result
+// stays good while it is the same (problemSig below). Same arguments as
+// planProgramme.
+export function programmeProblemSig(model, species, info = {}, destinations = null, { assignments = null, options = {} } = {}) {
+    const prep = prepare(model, species, info, destinations, assignments, options);
+    if (!prep) return '';
+    return problemSig(prep.ctx);
+}
+
+// The breeders (where they are, pinned, mates), the adults that only count
+// towards room, each place's room, the make-up and the facts the pair
+// values use; not the juveniles or the game's raw habitat data, so a birth
+// or a habitat that finishes measuring with the same room changes nothing.
+function problemSig(ctx) {
+    const rows = ctx.B.map((a, i) => [a.id, ctx.placeKeys[ctx.home[i]], a.sex, ctx.pinned && ctx.pinned[i] ? 1 : 0,
+        (a.mates || []).slice().sort().join('+'), (a.fert && a.fert.state) || '',
+        a.genes ? ['F', 'I', 'S', 'L'].map(k => a.genes[k] || '').join('/') : ''].join(','));
+    rows.sort();
+    const places = ctx.placeKeys.map((k, p) => `${k}:${ctx.cap[p] == null ? '' : ctx.cap[p]}:${ctx.fixed[p]}:${ctx.allowedPlace[p] ? 1 : 0}`).sort();
+    const r = ctx.rule;
+    const facts = [ratioKey(r), r.maxMales, r.maxFemales, r.system, JSON.stringify(ctx.info.fertilityAges || null), JSON.stringify(ctx.info.conception || null)].join('|');
+    return `${rows.join(';')}#${places.join(';')}#${facts}`;
+}
+
+// The same, in slices of about sliceMs with restMs between them (CPU use),
+// so the page stays responsive. onProgress(0..1) after each slice;
+// isCancelled() -> true drops it (the promise then gives null; the deep
+// engine's options.stop instead ends it with the best so far). Classic's
+// time cap counts only the time spent searching, the deep engine's
+// wallLimitMs the wall clock.
+export function planProgrammeAsync(model, species, info = {}, destinations = null, { assignments = null, options = {}, sliceMs = 24, restMs = 0, onProgress = null, isCancelled = null } = {}) {
     let busy = 0, sliceStart = 0, running = false;
     const clock = () => busy + (running ? wallClock() - sliceStart : 0);
     const gen = programmeSteps(model, species, info, destinations, assignments, Object.assign({}, options, { clock }));
@@ -1412,7 +1779,7 @@ export function planProgrammeAsync(model, species, info = {}, destinations = nul
                     // the page's business
                 }
             }
-            setTimeout(slice, 0);
+            setTimeout(slice, Math.max(0, restMs));
         };
         setTimeout(slice, 0);
     });
@@ -1473,4 +1840,114 @@ function groupsOf(ctx, place) {
             target: hab === TRADE || capacity == null ? null : groupTarget(ctx.rule, capacity - staying),
         };
     });
+}
+
+// ------------------------------------------------- contraception advice
+//
+// A pregnant female stays where she is (plans never move her), so the
+// programme says instead whether she should get contraception once she has
+// given birth. The game lets contraception be set during a pregnancy
+// (AnimalInfoPopUp sets canHaveContraceptives = true for every animal and
+// its toggle has no pregnancy check); whether it touches the pregnancy
+// itself is native and not known, so the advice reads "after birth".
+//
+// The rule, for each pregnant female of the species in a habitat, not on
+// contraception (first match wins; never applied, only shown):
+//   1. no mate:     no male (unisex: any partner) in her habitat, now or
+//                   after the plan, that breeds now or matures within
+//                   futureMateYears (a juvenile whose maturity is unknown
+//                   counts as a mate: no advice on a guess);
+//   2. related:     there are such mates, but every one is related to her
+//                   (the game's rule or close kin);
+//   3. genes:       her own gene score (mean of her gene grades, 0..100) is
+//                   at least geneMargin below the median of the other
+//                   breeding females in her habitat after the plan (at least
+//                   minPeers of them with gene data);
+//   4. surplus:     more breeding females there after the plan than its
+//                   breeding males can take under the make-up (1:1, 1:3...)
+//                   and hers is the lowest gene score of them (at least one
+//                   other with gene data).
+// Rules 3 and 4 need her gene data; without it there is no gene advice.
+export const CONTRA_ADVICE = Object.freeze({
+    geneMargin: 10,       // points (0..100) below the other females' median
+    minPeers: 2,          // other breeding females with gene data, for rule 3
+    futureMateYears: 2,   // a young male maturing within this counts as a mate
+});
+
+// Her own gene score, 0..100 (null without gene data): the mean of the
+// game's gene grades (kincull.js geneScore, x100).
+export function ownGeneScore(a) {
+    const g = ownGrades(a && a.genes);
+    const v = Object.values(g).filter(x => typeof x === 'number' && isFinite(x));
+    return v.length ? Math.round(v.reduce((s, x) => s + x, 0) / v.length * 100) : null;
+}
+
+function medianOf(list) {
+    const s = list.slice().sort((x, y) => x - y);
+    if (!s.length) return null;
+    const m = Math.floor(s.length / 2);
+    return s.length % 2 ? s[m] : Math.round((s[m - 1] + s[m]) / 2);
+}
+
+// -> [{ id, name, hab, kind: 'nomate'|'related'|'genes'|'surplus', reason,
+//       text ("Contraception after birth: ..."), score, median }]
+// options: moves (the plan, [{ id, to }]), info (isBreeder), rule
+// (groupRule; null: mixed), limits (CONTRA_ADVICE overrides).
+export function contraceptionAdvice(model, species, { moves = [], info = {}, rule = null, limits = null } = {}) {
+    if (!model || !model.animals || !species) return [];
+    const L = Object.assign({}, CONTRA_ADVICE, limits || {});
+    const all = Array.from(model.animals.values()).filter(a => a.species === species && !a.exhibit && a.alive !== false);
+    const moved = new Map((moves || []).map(m => [String(m.id), String(m.to)]));
+    const after = a => (moved.has(a.id) ? moved.get(a.id) : a.hab);
+    const per = partnersPer(rule);
+    const out = [];
+    for (const f of all) {
+        if (!f.preg || f.contra || f.sex !== Sex.Female || !f.hab) continue;
+        const hab = f.hab;
+        // her mates: now in her habitat or there after the plan
+        const around = all.filter(b => b.id !== f.id && (b.hab === hab || after(b) === hab));
+        const mateOf = b => {
+            if (b.contra || !(b.sex === Sex.Male || b.sex === Sex.Unisex)) return false;
+            if (fertileNow(b)) return true;
+            const st = b.fert && b.fert.state;
+            if (b.juv || st === 'juvenile' || st === 'young') {
+                const y = b.fert ? b.fert.yearsToMature : null;
+                return y == null || y <= L.futureMateYears;
+            }
+            return false;
+        };
+        const mates = around.filter(mateOf);
+        const related = mates.filter(b => relatedPair(model, f, b));
+        const add = (kind, reason, extra = {}) => out.push(Object.assign({ id: f.id, name: f.name, hab, kind, reason, text: `Contraception after birth: ${reason}`, score: null, median: null }, extra));
+        if (!mates.length) {
+            add('nomate', all.some(b => b.sex === Sex.Unisex) ? 'no partner here, now or after the plan' : 'no male here, now or after the plan');
+            continue;
+        }
+        if (related.length === mates.length) {
+            const names = related.slice(0, 2).map(b => {
+                const rel = f.guid && b.guid ? model.ped.relation(f.guid, b.guid) : null;
+                const word = rel ? relationWord(rel, b.sex) : '';
+                return word ? `${b.name}, her ${word}` : b.name;
+            });
+            add('related', `only related mates here (${names.join('; ')}${related.length > 2 ? '…' : ''})`);
+            continue;
+        }
+        // the genes: against the other breeding females there after the plan
+        const score = ownGeneScore(f);
+        if (score == null) continue;
+        const peers = all.filter(b => b.id !== f.id && b.sex === Sex.Female && after(b) === hab && !b.contra && (b.preg || isBreeder(b, info)));
+        const known = peers.map(ownGeneScore).filter(v => v != null);
+        const median = medianOf(known);
+        const weakest = known.length > 0 && known.every(v => score <= v);
+        if (known.length >= L.minPeers && median != null && score <= median - L.geneMargin) {
+            add('genes', `${weakest ? 'weakest genes in the group' : 'genes well below the group'} (${score} vs median ${median})`, { score, median });
+            continue;
+        }
+        const males = all.filter(b => b.sex === Sex.Male && after(b) === hab && !b.contra && fertileNow(b)).length;
+        const females = peers.length + 1;
+        if (males > 0 && per.male !== Infinity && females > males * per.male && weakest) {
+            add('surplus', `weakest genes of ${females} females for ${males} male${males === 1 ? '' : 's'} (${score} vs median ${median})`, { score, median });
+        }
+    }
+    return out;
 }

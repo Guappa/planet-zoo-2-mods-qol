@@ -1,0 +1,84 @@
+/* "Bring to the trade centre" (storagefetch.js): the Species board's button
+   in the pinned trade column, and the hub card (the Find-a-habitat card's
+   look, pz2qol_storagesend.css). */
+
+.PZ2QoL_kbFetch, .PZ2QoL_kbFetch * { display: flex; }
+.PZ2QoL_kb .PZ2QoL_kbFetch {
+  flex-shrink: 0;
+  flex-direction: column;
+  margin-top: 0.45rem;
+  padding-top: 0.4rem;
+  border-top: 0.1rem dashed rgba(114, 91, 74, 0.25);
+}
+.PZ2QoL_kb .PZ2QoL_kbFetchBtn {
+  flex-shrink: 0;
+  flex-direction: row;
+  align-self: stretch;
+  align-items: center;
+  justify-content: center;
+  min-height: 1.6rem;
+  padding: 0.15rem 0.6rem;
+  border-radius: 0.8rem;
+  background-color: #596943;
+  color: #FFFFFF;
+  font-size: 0.72rem;
+  font-weight: bold;
+  text-align: center;
+  white-space: normal;
+  cursor: pointer;
+}
+.PZ2QoL_kbFetchBtn:hover { background-color: #6B7D52; }
+.PZ2QoL_kbFetchBtn:active { transform: translateY(0.05rem); }
+.PZ2QoL_kbFetchBtn.disabled { opacity: 0.45; cursor: default; }
+.PZ2QoL_kbFetchBtn.disabled:hover { background-color: #596943; }
+.PZ2QoL_kbFetchBtn.disabled:active { transform: none; }
+.PZ2QoL_kbFetchBtn .PZ2QoL_icon { flex-shrink: 0; margin-right: 0.35rem; }
+.PZ2QoL_kbFetchBtn span { flex-shrink: 1; min-width: 0; }
+.PZ2QoL_kb .PZ2QoL_kbFetchNote {
+  flex-shrink: 0;
+  align-self: stretch;
+  margin: 0.25rem 0.1rem 0 0.1rem;
+  font-size: 0.64rem;
+  line-height: 0.85rem;
+  white-space: normal;
+  color: rgba(114, 91, 74, 0.72);
+}
+.PZ2QoL_kbFetchNote.warn { color: #BF5A50; }
+
+/* the hub: a curtain over Animal Storage while the mod works there, the
+   card in the middle (the Find-a-habitat card's look) */
+.PZ2QoL_sfCurtain, .PZ2QoL_sfCurtain * { display: flex; }
+.PZ2QoL_sfCurtain {
+  position: fixed;
+  z-index: 60;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  align-items: center;
+  justify-content: center;
+  background-color: rgba(44, 36, 28, 0.97);
+}
+.PZ2QoL_sfCurtain .PZ2QoL_ssCard.PZ2QoL_sfCard {
+  position: relative;
+  top: auto;
+  left: auto;
+  transform: none;
+  width: 28rem;
+}
+.PZ2QoL_ssCard.PZ2QoL_sfCard .PZ2QoL_ssHead { align-items: center; }
+.PZ2QoL_ssCard.PZ2QoL_sfCard .PZ2QoL_ssItem { white-space: normal; }
+.PZ2QoL_sfSpinner {
+  flex-shrink: 0;
+  width: 1.1rem;
+  height: 1.1rem;
+  margin-right: 0.6rem;
+  border-radius: 50%;
+  border: 0.18rem solid rgba(89, 105, 67, 0.25);
+  border-top-color: #596943;
+  animation: PZ2QoL_sfSpin 0.9s linear infinite;
+}
+@keyframes PZ2QoL_sfSpin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}

@@ -11,8 +11,12 @@
 --  Layout:
 --    tData.PZ2QoL.Assign[<zoo key>] = { S = "<seq>", N = "<parts>",
 --                                       P1 = "<= 4000 chars", P2 = ... }
+--    tData.PZ2QoL.Prefs = { S = "<seq>", N = "<parts>", P1 = ... }
 --  The zoo key is short ASCII (Kin._ZooKey). S orders the zoos by last
 --  write: past the total cap the oldest other zoos are dropped.
+--  Prefs holds the player-wide settings (one set across zoos, the UI's
+--  prefs.js), capped on its own at 4000 characters: a separate area, so
+--  the zoos' cap and trim never touch it.
 --  Writes stay in memory (the game's own player table) and the save is
 --  requested a few seconds after the last change; the game also saves the
 --  player when a park closes.
@@ -34,6 +38,8 @@ PlayerStore.sRoot = "PZ2QoL"
 PlayerStore.sArea = "Assign"
 PlayerStore.nChunk = 4000        -- characters per stored string
 PlayerStore.nCap = 65536         -- characters over all zoos
+PlayerStore.sPrefsArea = "Prefs"
+PlayerStore.nPrefsCap = 4000     -- characters of the player-wide settings
 PlayerStore.nSaveDelay = 4       -- seconds after the last change
 PlayerStore.nSaveMaxDelay = 30   -- seconds after the first unsaved change
 PlayerStore.nDirtySince = nil
@@ -248,6 +254,86 @@ PlayerStore.Write = function(self, sZoo, sText, nNow)
 		return false, "failed"
 	end
 	self:_Mark("assign_store_written")
+	self:_Changed(nNow)
+	return true
+end
+
+-- the player-wide settings' text, "" when nothing is kept; nil +
+-- "noplayer" without a player
+PlayerStore.ReadPrefs = function(self)
+	local tPlayer = self:_Player()
+	if tPlayer == nil then
+		return nil, "noplayer"
+	end
+	self:Cleanup()
+	local tRoot = get(tPlayer, self.sRoot)
+	if type(tRoot) ~= "table" or tRoot[self.sPrefsArea] == nil then
+		return ""
+	end
+	local sText = entryText(tRoot[self.sPrefsArea])
+	if sText == nil then
+		trace("unreadable prefs")
+		return ""
+	end
+	return sText
+end
+
+-- Replaces the player-wide settings ("" or "{}" removes them). Returns
+-- true, or false + why: bad | toobig | noplayer | failed.
+PlayerStore.WritePrefs = function(self, sText, nNow)
+	local bOk, sWhy = self:_WritePrefs(sText, nNow)
+	self:_Mark(bOk and "prefs_written" or "prefs_refused")
+	if not bOk then
+		trace("prefs refused: " .. tostring(sWhy))
+	end
+	return bOk, sWhy
+end
+
+PlayerStore._WritePrefs = function(self, sText, nNow)
+	if type(sText) ~= "string" then
+		return false, "bad"
+	end
+	local bRemove = sText == "" or sText == "{}"
+	if not bRemove and not validText(sText) then
+		return false, "bad"
+	end
+	if #sText > self.nPrefsCap then
+		return false, "toobig"
+	end
+	local tPlayer = self:_Player()
+	if tPlayer == nil then
+		return false, "noplayer"
+	end
+	self:Cleanup()
+	local tRoot = get(tPlayer, self.sRoot)
+	if tRoot ~= nil and type(tRoot) ~= "table" then
+		-- something else under the mod's key: replaced, never anything outside it
+		if not set(tPlayer, {}, self.sRoot) then
+			return false, "failed"
+		end
+		tRoot = {}
+	end
+	local tOld = type(tRoot) == "table" and tRoot[self.sPrefsArea] or nil
+	if bRemove then
+		if tOld == nil then
+			return true
+		end
+		if not set(tPlayer, nil, self.sRoot, self.sPrefsArea) then
+			return false, "failed"
+		end
+		self:_Changed(nNow)
+		return true
+	end
+	local nSeq = type(tOld) == "table" and tonumber(tOld.S) or 0
+	local tEntry = { S = tostring(math.floor(nSeq + 1)) }
+	local nParts = math.max(1, math.ceil(#sText / self.nChunk))
+	tEntry.N = tostring(nParts)
+	for i = 1, nParts do
+		tEntry["P" .. i] = string.sub(sText, (i - 1) * self.nChunk + 1, i * self.nChunk)
+	end
+	if not set(tPlayer, tEntry, self.sRoot, self.sPrefsArea) then
+		return false, "failed"
+	end
 	self:_Changed(nNow)
 	return true
 end

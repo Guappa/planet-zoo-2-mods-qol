@@ -231,6 +231,25 @@ export function buildMatrix(model, habId, species, { includeYoung = true } = {})
     };
 }
 
+// Everything a matrix shows, as one string: the planner rebuilds the
+// squares only when this changes (a scan every few seconds usually changes
+// nothing in the habitat on screen). `extra`: settings and the like.
+export function matrixSig(m, extra = null) {
+    if (!m) return '';
+    const animal = a => JSON.stringify(a, (k, v) => (k === 'genes' || k === 'par' ? undefined : v));
+    const parts = [m.habId, m.species, m.unisex, m.total, m.hiddenYoung, JSON.stringify(extra)];
+    for (const a of m.rows) parts.push('r' + animal(a));
+    for (const a of m.cols) parts.push('c' + animal(a));
+    for (const row of m.cells) {
+        for (const c of row) {
+            parts.push(c.self ? 's' : [c.severity, c.tier, c.word, c.kinship, c.mated ? 1 : 0, c.score,
+                c.pair && c.pair.held ? JSON.stringify(c.pair.held) : ''].join(','));
+        }
+    }
+    for (const [id, sev] of m.worst) parts.push(id + '=' + sev);
+    return parts.join('|');
+}
+
 // --------------------------------------------------------------- mates
 
 export const MATE_SECTIONS = [

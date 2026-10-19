@@ -87,7 +87,7 @@ export function skipReason(facts) {
     if (facts.lt === 'habitat' && facts.assigned) return 'already in a habitat';
     const habs = Array.isArray(facts.habitats) ? facts.habitats : [];
     if (!habs.length) return 'this zoo has no finished habitat';
-    if (!habs.some(hb => hb && hb.ok)) return `no habitat accepts ${facts.species || 'this species'}`;
+    if (!habs.some(hb => hb && hb.ok)) return `no habitat accepts ${facts.speciesName || facts.species || 'this species'}`;
     if (!rankHabitats(facts).length) return 'no keeper can reach a suitable habitat';
     return '';
 }

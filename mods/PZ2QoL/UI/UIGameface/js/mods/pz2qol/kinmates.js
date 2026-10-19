@@ -7,6 +7,9 @@
 //    and shows the expected young;
 //  - the offspring box gets one line for the chosen pair, including the
 //    relatives the game does not warn about (cousins, aunts...);
+//  - in a Franchise park the game also lists the player's stored adults
+//    (id type 2): they are matched through the stored adults of the
+//    species (kinmoves requestStoredAdults), so they get badges too;
 //  - an optional "Unrelated first" order for the candidate lists. It only
 //    groups the game's own order (the game sorts by `sortField`; this keeps
 //    that order inside each group), and is off by default.
@@ -29,6 +32,8 @@ import { refreshList, registerListFilter } from '/js/mods/pz2qol/listfilter.js';
 import { childrenOf, contextKey, locationName } from '/js/mods/pz2qol/game.js';
 import { h as dom, icon } from '/js/mods/pz2qol/ui.js';
 import { reportError } from '/js/mods/pz2qol/errors.js';
+import { cachedStoredAdults, isAskingStored, requestStoredAdults } from '/js/mods/pz2qol/kinmoves.js';
+import { withStored } from '/js/mods/pz2qol/kincore.js';
 
 const MOD_ALB = '/js/project/components/AnimalListButton.js';
 const MOD_OFFSPRING = '/js/project/modules/PopupActions/Components/OffspringDisplay.js';
@@ -188,15 +193,47 @@ function selectedFor(list) {
     return list === 'mothers' ? rowId('fathers', mates.father) : rowId('mothers', mates.mother);
 }
 
+// In a Franchise park Compare Mates also lists the player's stored adults
+// (id type 2, not in the park model). They are found through the stored
+// adults of the species (kinmoves requestStoredAdults: asked once, cached a
+// minute); until the answer is in, such rows simply get no badge.
+function storedView(model, species) {
+    if (!model || !species || !isHudPage()) return null;
+    const c = cachedStoredAdults(species);
+    if (c) return c.error || !c.animals.length ? null : withStored(model, c);
+    if (!isAskingStored(species)) {
+        // not from inside a render: ask on the next tick
+        setTimeout(() => {
+            requestStoredAdults(species).then(v => {
+                if (!v || v.error || !v.animals.length) return;
+                changed();
+                if (unrelatedFirst) refreshMateLists();
+            }).catch(() => {});
+        }, 0);
+    }
+    return null;
+}
+
 // How the candidate `candId` is related to the chosen `selId`, in the
 // model (park, or storage in the hub) that knows both.
 function matePair(selId, candId) {
     const s = parseMateId(selId);
     const c = parseMateId(candId);
     if (!s || !c) return null;
-    for (const model of [getKinModel(), getStorageKinModel()]) {
-        const a = findInModel(model, s);
-        const b = findInModel(model, c);
+    const park = getKinModel();
+    for (const found of [park, getStorageKinModel()]) {
+        let model = found;
+        let a = findInModel(model, s);
+        let b = findInModel(model, c);
+        // one side is a stored adult (type 2) the park does not know
+        if (model && model === park && (a || b) && ((!a && s.type === ID_GUID) || (!b && c.type === ID_GUID))) {
+            const view = storedView(model, (a || b).species);
+            if (view) {
+                model = view;
+                a = a || findInModel(view, s);
+                b = b || findInModel(view, c);
+            }
+        }
         if (!a || !b) continue;
         if (!a.guid || !b.guid) return { model, a, b, rel: null, unknown: true };
         const rel = model.ped.relation(a.guid, b.guid);

@@ -2,7 +2,7 @@
 // imports, so they run under Node tests.
 //
 // A "listing" is { id, species, gender, maturity, isShoal, isExhibit, score,
-// medal, appeal, price, isCC, source: 'market' | 'history', seenAt }. Its id is listingKey(),
+// medal, colormorph, price, isCC, source: 'market' | 'history', seenAt }. Its id is listingKey(),
 // not the game's row id: market and history rows reuse the same row ids on
 // every page (they are screen slots), so keying by them kept only one page.
 import { Gender, geneScore, Maturity } from './scores.js';
@@ -37,24 +37,6 @@ export function medalOf(a) {
 
 export function medalLabel(m) {
     return MEDAL_LABEL[m] || '';
-}
-
-// The Appeal column (row field `appeal`) is a formatted string, not a number:
-// the game's schema generator gives "[SEPERATED_INT_VALUE:Value={12345}]",
-// the exe has "[AnimalList_AppealValue:Value=(...)]", and a plain "12,345"
-// is possible. undefined when missing or not positive.
-export function parseAppeal(v) {
-    if (typeof v === 'number') return isFinite(v) && v > 0 ? v : undefined;
-    if (typeof v !== 'string' || !v) return undefined;
-    const tok = v.match(/Value=[({]\s*([^)}]*)[)}]/);
-    // inside a token the value is raw (maybe a decimal point); a plain display
-    // string only has digits and thousands separators (',' '.' or a space)
-    const n = tok ? Number(tok[1].replace(/[^\d.-]/g, '')) : Number(v.replace(/[^\d]/g, '') || NaN);
-    return isFinite(n) && n > 0 ? n : undefined;
-}
-
-export function appealOf(a) {
-    return a ? parseAppeal(a.appeal) : undefined;
 }
 
 // "1,240": thousands separators without toLocaleString (unsure in Gameface).
@@ -109,7 +91,7 @@ const MIN_COMPS = 3;
 
 // Guessed price of each medal relative to Bronze, used only for a medal step
 // the price book has no ratio for. Guesses, not measured: Silver about 1.6x
-// and Gold about 3x Bronze (the medal is the animal's appeal state, the most
+// and Gold about 3x Bronze (the medal is the game's genetic rating, the most
 // visible quality signal in the market list), Unranked a little under Bronze.
 export const DEFAULT_MEDAL_VALUE = Object.freeze({ none: 0.8, bronze: 1, silver: 1.6, gold: 3 });
 const DEFAULT_SOURCE = 'default guess';
@@ -186,6 +168,87 @@ export function medalRatio(from, to, groups, allListings) {
     return b > a ? up : Object.assign({}, up, { ratio: 1 / up.ratio });
 }
 
+// ------------------------------------------------------------ colour morphs
+// Market, history and storage rows carry `colormorphLabel`: what the game's
+// info panel shows under "Colour morph" (it translates it, so it may be a
+// loc token). Its values are not known yet (guess): '' or a "normal"-like
+// word for an animal without a morph, else the morph's name ("Albino").
+// The game has no field for a carried (hidden) morph.
+const NORMAL_MORPH_WORDS = /\b(normal|default|standard|regular|none|no colou?r ?morph|no colou?r ?variant)\b/i;
+const MORPH_TOKEN = /_variation_colou?rmorph\d/i;
+export const DEFAULT_MORPH_PREMIUM = 2;
+
+export function morphLabelOf(a) {
+    const v = a && a.colormorph;
+    return typeof v === 'string' ? v.trim() : '';
+}
+
+// The label most of a species' listings carry, when clearly dominant (60 %+
+// of all its listings, labelled or not; a colour morph is rare: about 1 in
+// 40 young): that one is "normal" whatever it says. '' when unclear.
+export function normalMorphLabel(species, listings) {
+    const counts = new Map();
+    let total = 0;
+    for (const l of listings || []) {
+        if (l.species != species) continue;
+        const label = morphLabelOf(l);
+        total++;
+        // listings without a label (or recorded before labels) count against
+        if (!label || MORPH_TOKEN.test(label)) continue;
+        counts.set(label, (counts.get(label) || 0) + 1);
+    }
+    let best = '', n = 0;
+    for (const [label, c] of counts) {
+        if (c > n) {
+            best = label;
+            n = c;
+        }
+    }
+    return n >= 3 && n / total >= 0.6 ? best : '';
+}
+
+// '' for no colour morph (normal), else the morph's label. `normal`: the
+// species' usual label (normalMorphLabel), which counts as normal too.
+export function morphOf(a, normal = '') {
+    const label = morphLabelOf(a);
+    if (!label) return '';
+    if (MORPH_TOKEN.test(label)) return label;
+    if (normal && label === normal) return '';
+    if (NORMAL_MORPH_WORDS.test(label.replace(/[[\]_|]/g, ' '))) return '';
+    return label;
+}
+
+function morphRatioIn(list, normal) {
+    const morphP = list.filter(l => morphOf(l, normal) !== '').map(l => l.price);
+    const normalP = list.filter(l => morphOf(l, normal) === '').map(l => l.price);
+    if (morphP.length < 2 || normalP.length < 2) return null;
+    const r = median(morphP) / median(normalP);
+    return isFinite(r) && r > 0 ? Math.max(1, Math.min(10, r)) : null;
+}
+
+// How much more a colour morph sells for than a normal animal: median morph
+// price over median normal price, in this species (2+ of each), else the
+// median of that over all species, else DEFAULT_MORPH_PREMIUM (guessed).
+export function morphPremium(species, listings) {
+    const bySpecies = new Map();
+    for (const l of listings || []) {
+        if (!l.isCC || !(l.price > 0)) continue;
+        if (!bySpecies.has(l.species)) bySpecies.set(l.species, []);
+        bySpecies.get(l.species).push(l);
+    }
+    const ratioOf = sp => morphRatioIn(bySpecies.get(sp) || [], normalMorphLabel(sp, bySpecies.get(sp) || []));
+    const own = ratioOf(species);
+    if (own != null) return { ratio: own, source: 'this species', guessed: false };
+    const all = [];
+    for (const sp of bySpecies.keys()) {
+        if (sp == species) continue;
+        const r = ratioOf(sp);
+        if (r != null) all.push(r);
+    }
+    if (all.length) return { ratio: median(all), source: 'all species', guessed: false };
+    return { ratio: DEFAULT_MORPH_PREMIUM, source: DEFAULT_SOURCE, guessed: true };
+}
+
 // The listings that are comparable to `animal`, best first. Always the same
 // species, CC, shoal or not, and never the animal's own listing.
 //   When the animal's medal and some listings' medals are known:
@@ -199,7 +262,43 @@ export function medalRatio(from, to, groups, allListings) {
 //     tier 1: same gender and life stage; tier 2: same gender; tier 3: any.
 // Scaled entries are copies with the scaled `price`, the listed `rawPrice`
 // and `medalFactor`.
+// Colour morphs first: a normal animal is compared with normal listings
+// only; a morph with 3+ listings of the same morph, else 3+ of any morph,
+// else normal listings x morphPremium() (morphMode 'same' | 'anyMorph' |
+// 'scaled'). Listings recorded without a label count as normal.
 export function comparables(animal, listings) {
+    const normal = normalMorphLabel(animal.species, listings);
+    const morph = morphOf(animal, normal);
+    const own = l => l.species == animal.species;
+    const cls = l => morphOf(l, normal);
+    const ownKey = listingKey(animal);
+    const usable = l => own(l) && l.isCC && l.price > 0 && l.id != animal.id && l.id != ownKey && !!l.isShoal == !!animal.isShoal;
+    const normalPool = listings.filter(l => !own(l) || cls(l) === '');
+    if (!morph) {
+        // a normal animal: colour-morph listings would lift its price
+        const comp = comparablesIn(animal, normalPool);
+        const left = listings.filter(l => usable(l) && cls(l) !== '').length;
+        if (left) comp.morphLeftOut = left;
+        return comp;
+    }
+    const sameN = listings.filter(l => usable(l) && cls(l) === morph).length;
+    if (sameN >= MIN_COMPS) {
+        return Object.assign(comparablesIn(animal, listings.filter(l => !own(l) || cls(l) === morph)), { morph, morphMode: 'same', morphCount: sameN });
+    }
+    const anyN = listings.filter(l => usable(l) && cls(l) !== '').length;
+    if (anyN >= MIN_COMPS) {
+        return Object.assign(comparablesIn(animal, listings.filter(l => !own(l) || cls(l) !== '')),
+            { morph, morphMode: 'anyMorph', morphCount: anyN, sameMorphCount: sameN });
+    }
+    // too few colour-morph listings: normal ones, scaled by the morph premium
+    const comp = comparablesIn(animal, normalPool);
+    const premium = morphPremium(animal.species, listings);
+    comp.list = comp.list.map(l => Object.assign({}, l, { price: l.price * premium.ratio, rawPrice: l.rawPrice ?? l.price, morphScale: premium.ratio }));
+    return Object.assign(comp, { morph, morphMode: 'scaled', morphFactor: premium, sameMorphCount: sameN });
+}
+
+// comparables() among one pool of listings (one colour-morph class).
+function comparablesIn(animal, listings) {
     const stage = lifeStage(animal.maturity);
     // A storage animal that is already listed shows up on the market too.
     const ownKey = listingKey(animal);
@@ -262,23 +361,6 @@ function scaledComparables(animal, medal, pool, ratioGroups, allListings) {
     };
 }
 
-// Within one medal, more Appeal sells for more. Compares the animal's appeal
-// with the unscaled comparables that show one (its own medal when medals are
-// known): a Theil-Sen fit of price on appeal with 4+ of them, else half the
-// relative difference to their median appeal (guess). Factor 0.75..1.33.
-export function appealAdjustment(animal, list) {
-    const mine = appealOf(animal);
-    if (mine == undefined) return null;
-    const pts = list.filter(l => l.medalFactor == undefined && appealOf(l) != undefined && l.price > 0);
-    if (pts.length < 2) return null;
-    const medAppeal = median(pts.map(appealOf));
-    const medPrice = median(pts.map(l => l.price));
-    const fit = fitPrice(pts, appealOf, Math.max(1, medAppeal * 0.03));
-    let factor = fit && medPrice > 0 ? fit.predict(mine) / medPrice : 1 + 0.5 * (mine / medAppeal - 1);
-    factor = Math.max(0.75, Math.min(4 / 3, factor));
-    return { factor, appeal: mine, medianAppeal: medAppeal, count: pts.length, how: fit ? 'fit' : 'ratio' };
-}
-
 // "Silver adult females", "Gold adult animals", "adult animals". scope: 1
 // same sex and age group, 2 same age group, 3 any sex or age.
 function groupName(animal, medal, scope = 1) {
@@ -317,9 +399,21 @@ export function speciesMarketSummary(species, listings) {
             .map(([m, list]) => [m, Object.assign(groupSummary(list), {
                 males: list.filter(l => l.gender == Gender.Male).length,
                 females: list.filter(l => l.gender == Gender.Female).length,
-                medianAppeal: median(list.map(appealOf)),
             })])),
+        // colour morphs listed now: { label: { count, median } } (normal left out)
+        byMorph: morphSummary(live, normalMorphLabel(species, listings)),
     };
+}
+
+function morphSummary(live, normal) {
+    const by = new Map();
+    for (const l of live) {
+        const m = morphOf(l, normal);
+        if (!m) continue;
+        if (!by.has(m)) by.set(m, []);
+        by.get(m).push(l.price);
+    }
+    return Object.fromEntries(Array.from(by, ([m, prices]) => [m, { count: prices.length, median: median(prices) }]));
 }
 
 export const PRICING_DEFAULTS = Object.freeze({
@@ -337,13 +431,13 @@ export function offsetLabel(offset) {
 
 // Recommends a CC price.
 //   animal: plain animal (scores.js shape) with id/species/gender/maturity/genes,
-//           and medal/appeal when the row shows them
+//           and medal when the row shows it
 //   listings: price book entries
 //   game: { defaultPrice, min, max } from the game's trade listing data
 //   opts: overrides for PRICING_DEFAULTS, e.g. { offset: -0.1 }
 // The market price is the median of the comparables (scaled to the animal's
-// medal when needed), adjusted for appeal within the medal when appeal is
-// known, else for gene score, kept within 25% of what the comparables span,
+// medal when needed), adjusted for gene score (appeal is left out: it is the
+// species' value less the seller's welfare and viewing time, not the animal's), kept within 25% of what the comparables span,
 // blended with the game's value while data is thin, then the player's
 // offset, rounding, and the game's min/max.
 export function recommendPrice(animal, listings, game = {}, options = {}) {
@@ -356,15 +450,9 @@ export function recommendPrice(animal, listings, game = {}, options = {}) {
     const medScore = median(list.map(l => l.score));
     let marketPrice = null;
     let method = 'none';
-    let appealAdj = null;
     if (list.length > 0) {
-        appealAdj = appealAdjustment(animal, list);
-        const fit = !appealAdj && score != null ? fitPriceVsScore(list) : null;
-        if (appealAdj) {
-            marketPrice = med * appealAdj.factor;
-            method = 'appeal';
-        }
-        else if (fit) {
+        const fit = score != null ? fitPriceVsScore(list) : null;
+        if (fit) {
             marketPrice = fit.predict(score);
             method = 'fit';
         }
@@ -407,7 +495,7 @@ export function recommendPrice(animal, listings, game = {}, options = {}) {
     };
     basePrice = clamp(basePrice);
     price = clamp(unclamped);
-    const parts = reasonParts(animal, comp, { med, medScore, method, appealAdj });
+    const parts = reasonParts(animal, comp, { med, medScore, method, morphName: typeof opts.morphName === 'function' ? opts.morphName : null });
     if (gameValue != null) parts.push(`game value ${gameValue} CC (weight ${Math.round((1 - weight) * 100)}%)`);
     if (offset) parts.push(`your offset ${offsetLabel(offset)} (${basePrice} CC before it)`);
     if (price < unclamped) parts.push(`capped at the game's maximum ${fmt(game.max)} CC`);
@@ -421,8 +509,7 @@ export function recommendPrice(animal, listings, game = {}, options = {}) {
         reason: parts.join('; ') || 'game value only',
         comps: comp,
         medal: medalOf(animal),
-        appeal: appealOf(animal),
-        appealAdj,
+        morph: comp.morph || '',
         score,
         gameValue,
         marketPrice: marketPrice != null ? Math.round(marketPrice) : null,
@@ -441,13 +528,45 @@ function confidenceOf(comp, fullAt) {
         const cap = comp.guessed ? 'low' : 'medium';
         if (CONF_ORDER.indexOf(c) > CONF_ORDER.indexOf(cap)) c = cap;
     }
+    // a colour morph priced from other morphs or from normal listings
+    if (comp.morphMode == 'anyMorph' || comp.morphMode == 'scaled') {
+        const cap = comp.morphMode == 'scaled' && comp.morphFactor && comp.morphFactor.guessed ? 'low' : 'medium';
+        if (CONF_ORDER.indexOf(c) > CONF_ORDER.indexOf(cap)) c = cap;
+    }
     return c;
 }
 
+// "Albino" from a label, translated when the caller can (opts.morphName).
+export function morphText(label, morphName) {
+    let t = label;
+    if (morphName) {
+        try {
+            t = morphName(label) || label;
+        }
+        catch (e) {
+            t = label;
+        }
+    }
+    return String(t).replace(/^\[|\]$/g, '');
+}
+
 // The text the lister shows under the price: what was compared and how.
-function reasonParts(animal, comp, { med, medScore, method, appealAdj }) {
+function reasonParts(animal, comp, { med, medScore, method, morphName }) {
     const parts = [];
     const list = comp.list;
+    if (comp.morph) {
+        const name = morphText(comp.morph, morphName);
+        if (comp.morphMode == 'same') parts.push(`${name}: ${comp.morphCount} ${name} listing${comp.morphCount == 1 ? '' : 's'}`);
+        else if (comp.morphMode == 'anyMorph') parts.push(`${name}: ${comp.sameMorphCount ? `only ${comp.sameMorphCount}` : 'no'} ${name} listed; ${comp.morphCount} colour-morph listings`);
+        else if (comp.morphMode == 'scaled') {
+            const f = comp.morphFactor;
+            const from = f.guessed ? 'guessed ratio' : `ratio from ${f.source}`;
+            parts.push(`${name}: ${comp.sameMorphCount ? `only ${comp.sameMorphCount}` : 'no'} ${name} listed; normal × ${f.ratio.toFixed(1)} (${from})`);
+        }
+    }
+    else if (comp.morphLeftOut) {
+        parts.push(`${comp.morphLeftOut} colour-morph listing${comp.morphLeftOut == 1 ? '' : 's'} left out`);
+    }
     const at = `median ${fmt(med)} CC at gene ${medScore ?? '–'}`;
     if (comp.medalMode == 'same') {
         parts.push(`${list.length} ${groupName(animal, comp.medal, comp.tier)}: ${at}`);
@@ -465,11 +584,6 @@ function reasonParts(animal, comp, { med, medScore, method, appealAdj }) {
     else if (list.length) {
         parts.push(`${list.length} listings (${comp.label}), ${at}`);
     }
-    if (method == 'appeal') {
-        const pct = Math.round((appealAdj.factor - 1) * 100);
-        const of = comp.medal != undefined ? ` ${medalLabel(comp.medal)}` : '';
-        parts.push(`appeal ${fmt(appealAdj.appeal)} vs median ${fmt(appealAdj.medianAppeal)} of ${appealAdj.count}${of}: ${pct >= 0 ? '+' : '−'}${Math.abs(pct)}%`);
-    }
     if (method == 'fit') parts.push('price fitted to gene score');
     return parts;
 }
@@ -486,9 +600,9 @@ export function mergeListings(book, observed, now, maxAgeMs = 12 * 3600 * 1000) 
         const k = l.source + ':' + l.id;
         const prev = byId.get(k);
         const next = Object.assign({}, l, { seenAt: now });
-        // a row read before the game filled its medal or appeal keeps the known one
+        // a row read before the game filled its medal keeps the known one
         if (next.medal == undefined && prev && prev.medal != undefined) next.medal = prev.medal;
-        if (next.appeal == undefined && prev && prev.appeal != undefined) next.appeal = prev.appeal;
+        if (!next.colormorph && prev && prev.colormorph) next.colormorph = prev.colormorph;
         byId.set(k, next);
     }
     return Array.from(byId.values());

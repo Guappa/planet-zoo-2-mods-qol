@@ -15,13 +15,18 @@
 // for the game's confirmation, pause (the player's 'moves' pace), next.
 // Failures are skipped and the run carries on; only Stop ends it. In a
 // Franchise zoo it only runs when the player allowed it (off by default).
+// The same hand-over serves "Bring to the trade centre" (storagefetch.js):
+// armed for target 'trade', the park page sends each arrival to the trade
+// centre instead (storagefetchcore.js runTradeArrivals).
 import { loadCSS } from '/js/common/util/CSSUtil.js';
 import { breadcrumb, reportError } from '/js/mods/pz2qol/errors.js';
 import { findVNode, gameModule, h as vh, isFrontendPage, isHudPage, unwrapUntil } from '/js/mods/pz2qol/kinhooks.js';
 import { isFranchise } from '/js/mods/pz2qol/lister.js';
 import { getPaceMs } from '/js/mods/pz2qol/pace.js';
+import { speciesName } from '/js/mods/pz2qol/speciesnames.js';
 import { h, setClass, setText } from '/js/mods/pz2qol/ui.js';
 import { blockedReason, parseIdList, runPlacement, sendButtonLabel, summarize, summaryText } from '/js/mods/pz2qol/storagesendcore.js';
+import { runTradeArrivals, tradeSummary, tradeSummaryText } from '/js/mods/pz2qol/storagefetchcore.js';
 
 const MOD_PANEL = '/js/project/modules/AnimalMarket/Components/AnimalStorageInfoPanel.js';
 const SEND_LABEL = '[AnimalExchange_SendToZoo]';
@@ -66,11 +71,23 @@ function startSend(inst, keys) {
     if (typeof engine === 'undefined' || !keys.length) return;
     breadcrumb('send_start');
     // the count first, so Lua knows these animals before the game sends them
-    engine.trigger('PZ2QoL_SendArm', keys.length, allowOnline === true);
+    engine.trigger('PZ2QoL_SendArm', keys.length, allowOnline === true, 'habitat');
     ourSendAt = Date.now();
     // the game's own Send to Zoo button handler for this selection
     if (inst && typeof inst.onSelectSendToZoo === 'function') inst.onSelectSendToZoo();
     else engine.trigger('AnimalStorage_SendToZoo', keys);
+}
+
+// Arms Lua for these animals (target 'habitat' or 'trade'), then the game's
+// own Send to Zoo event for exactly these list keys (the selection's own
+// selectedAnimalIDs). One game action. Used by storagefetch.js.
+export function armAndSend(keys, target) {
+    if (typeof engine === 'undefined' || !Array.isArray(keys) || !keys.length) return false;
+    breadcrumb(target === 'trade' ? 'fetch_send' : 'send_start');
+    engine.trigger('PZ2QoL_SendArm', keys.length, true, target === 'trade' ? 'trade' : 'habitat');
+    ourSendAt = Date.now();
+    engine.trigger('AnimalStorage_SendToZoo', keys.slice());
+    return true;
 }
 
 function rerender(inst) {
@@ -215,16 +232,28 @@ export function askFacts(id) {
     return ask('PZ2QoL_SendFacts', null, String(id));
 }
 
-export function askMove(id, habId) {
-    return ask('PZ2QoL_SendMove', { ok: false, detail: 'the game did not answer' }, String(id), String(habId));
+export function askMove(id, habId, seq = '') {
+    return ask('PZ2QoL_SendMove', { ok: false, detail: 'the game did not answer' }, String(id), String(habId), seq === '' ? '' : Number(seq));
 }
 
-let run = null; // { seq, state, stopping }
+// The game's own Move screen for these arrivals (Lua opens it on its next
+// SelectMode tick). -> { ok, detail }
+function askOpenMove(ids) {
+    return ask('PZ2QoL_SendOpenMove', { ok: false, detail: 'noanswer' }, ids.join(','));
+}
+
+let run = null; // { seq, state, stopping, target, ids, openMove }
 let lastSeq = null;
 let card = null;
 
 export function getSendRun() {
-    return run ? Object.assign({}, run.state, { stopping: run.stopping }) : null;
+    return run ? Object.assign({}, run.state, { stopping: run.stopping, target: run.target }) : null;
+}
+
+// Is this animal part of a run that is still going? (kinboxed.js: arrivals
+// wait boxed while the run works through them)
+export function isInSendRun(id) {
+    return !!(run && run.state.running && Array.isArray(run.ids) && run.ids.includes(String(id)));
 }
 
 export function stopSendRun() {
@@ -269,6 +298,57 @@ function openBoard() {
         .catch(e => reportError('ui', 'Species board could not open', e));
 }
 
+// The game's own Move screen for the animals the run could not place.
+function openGameMove(ids) {
+    if (!run || !ids.length || run.openMove === 'asking') return;
+    run.openMove = 'asking';
+    breadcrumb('fetch_open_move');
+    render();
+    askOpenMove(ids).then(r => {
+        if (!run) return;
+        run.openMove = r && r.ok ? 'done' : 'failed';
+        if (r && r.ok) closeCard();
+        else render();
+    }, e => reportError('mod', 'Opening the Move screen failed', e));
+}
+
+function renderTrade(s) {
+    const sum = tradeSummary(s, run.ids);
+    card.appendChild(h('div.PZ2QoL_ssHead', null,
+        h('div.PZ2QoL_ssTitle', { text: 'Bring to trade centre' }),
+        h('div.PZ2QoL_ssSub', { text: `${s.total} animal${s.total === 1 ? '' : 's'} from storage` })));
+    const pct = s.total ? Math.round((s.log.length / s.total) * 100) : 0;
+    const fill = h('div.PZ2QoL_ssFill');
+    fill.style.width = `${pct}%`;
+    card.appendChild(h('div.PZ2QoL_ssBar', null, fill));
+    card.appendChild(h('div.PZ2QoL_ssCounts', null,
+        h('div.PZ2QoL_ssCount.ok', { text: `In trade centre ${sum.already + sum.sent}` }),
+        h('div.PZ2QoL_ssCount.skip', { text: `Skipped ${sum.skipped}` }),
+        h('div.PZ2QoL_ssCount', { text: `${s.log.length} / ${s.total}` })));
+    if (s.running) {
+        const c = s.current;
+        const text = run.stopping ? 'Stopping after this animal…'
+            : c && c.name ? `${c.name} → the trade centre` : `Checking animal ${s.index} of ${s.total}…`;
+        card.appendChild(h('div.PZ2QoL_ssLine', { text }));
+        card.appendChild(h('div.PZ2QoL_ssButtons', null, cardButton(run.stopping ? 'Stopping…' : 'Stop', stopSendRun, 'stop')));
+        return;
+    }
+    card.appendChild(h('div.PZ2QoL_ssLine.done', { text: tradeSummaryText(sum) + '.' }));
+    const list = h('div.PZ2QoL_ssList');
+    if (sum.already) list.appendChild(h('div.PZ2QoL_ssItem.ok', { text: `${sum.already} already waiting in the trade centre` }));
+    if (sum.sent) list.appendChild(h('div.PZ2QoL_ssItem.ok', { text: `${sum.sent} sent to the trade centre` }));
+    sum.reasons.slice(0, 5).forEach(x => list.appendChild(h('div.PZ2QoL_ssItem.skip', { text: `${x.n} skipped: ${x.text}` })));
+    if (run.openMove === 'failed') list.appendChild(h('div.PZ2QoL_ssItem.skip', { text: "The game's Move screen did not open; use Move on each animal." }));
+    if (list.firstChild) card.appendChild(list);
+    const buttons = [];
+    if (sum.leftIds.length && run.openMove !== 'done') {
+        const n = sum.leftIds.length;
+        buttons.push(cardButton(run.openMove === 'asking' ? 'Opening…' : `Open the game's Move screen for ${n}`, () => openGameMove(sum.leftIds)));
+    }
+    buttons.push(cardButton('Species board', openBoard), cardButton('Close', closeCard));
+    card.appendChild(h('div.PZ2QoL_ssButtons', null, ...buttons));
+}
+
 function render() {
     if (!run) return;
     if (!card) {
@@ -277,6 +357,10 @@ function render() {
     }
     const s = run.state;
     while (card.firstChild) card.removeChild(card.firstChild);
+    if (run.target === 'trade' && !s.blocked) {
+        renderTrade(s);
+        return;
+    }
     const sum = summarize(s.log, s.total);
     card.appendChild(h('div.PZ2QoL_ssHead', null,
         h('div.PZ2QoL_ssTitle', { text: 'Find a habitat' }),
@@ -297,7 +381,7 @@ function render() {
     if (s.running) {
         const c = s.current;
         const text = run.stopping ? 'Stopping after this animal…'
-            : c && c.habitat ? `${c.name || 'Animal ' + c.id}${c.species ? ' (' + c.species + ')' : ''} → ${c.habitat}, ${c.why}`
+            : c && c.habitat ? `${c.name || 'Animal ' + c.id}${c.species ? ' (' + speciesName(c.species) + ')' : ''} → ${c.habitat}, ${c.why}`
                 : `Checking animal ${s.index} of ${s.total}…`;
         card.appendChild(h('div.PZ2QoL_ssLine', { text }));
         card.appendChild(h('div.PZ2QoL_ssButtons', null, cardButton(run.stopping ? 'Stopping…' : 'Stop', stopSendRun, 'stop')));
@@ -311,16 +395,20 @@ function render() {
     card.appendChild(h('div.PZ2QoL_ssButtons', null, cardButton('Species board', openBoard), cardButton('Close', closeCard)));
 }
 
-async function startRun(seq, csv, allowed) {
+async function startRun(seq, csv, allowed, target) {
     const ids = parseIdList(csv);
     if (!ids.length) return;
     if (run && run.state.running) return; // one run at a time
     if (card) closeCard();
-    run = { seq, stopping: false, state: { running: true, total: ids.length, index: 0, current: null, log: [], finished: false } };
+    run = { seq, stopping: false, target: target === 'trade' ? 'trade' : 'habitat', ids, state: { running: true, total: ids.length, index: 0, current: null, log: [], finished: false } };
     render();
-    breadcrumb('send_run_start');
+    breadcrumb(run.target === 'trade' ? 'fetch_run_start' : 'send_run_start');
     const first = await askFacts(ids[0]);
     const online = !first || first.mode !== 'offline';
+    if (run.target === 'trade') {
+        await tradeRun(ids, seq, online);
+        return;
+    }
     if (online && !allowed) {
         // Lua only hands animals over when allowed; never run online without it
         run.state = Object.assign({}, run.state, { running: false, finished: true, blocked: 'This is a Franchise zoo and "Find a habitat" is not allowed there. The animals are in the zoo; place them with the Species board or the game\'s own Move.' });
@@ -350,19 +438,48 @@ async function startRun(seq, csv, allowed) {
     import('/js/mods/pz2qol/kin.js').then(m => m.requestKinScan && m.requestKinScan('move', { force: true, delay: 500 })).catch(() => {});
 }
 
+// "Bring to the trade centre": each arrival to the trade centre, one at a
+// time (the board click was the opt-in; Lua took the Move-screen request
+// only for that zoo).
+async function tradeRun(ids, seq, online) {
+    const final = await runTradeArrivals(ids, {
+        facts: askFacts,
+        move: id => askMove(id, 'trade:arrival', seq),
+        sleep: sleepUnlessStopped,
+        paceMs: () => getPaceMs('moves'),
+        online,
+        isStopped: () => !!(run && run.stopping),
+        onUpdate: st => {
+            if (!run) return;
+            run.state = st;
+            render();
+        },
+    });
+    if (run) {
+        run.state = final;
+        run.stopping = false;
+    }
+    render();
+    breadcrumb('fetch_run_end');
+    import('/js/mods/pz2qol/kin.js').then(m => m.requestKinScan && m.requestKinScan('move', { force: true, delay: 500 })).catch(() => {});
+}
+
 function installPark() {
     engine.on('PZ2QoL_SendFactsResult', (reqId, json) => {
         let v = null;
         try {
             v = JSON.parse(json);
+            // the game's name, for the skip reason ("no habitat accepts …")
+            if (v && v.species) v.speciesName = speciesName(v.species);
         }
         catch (e) {
-            v = null;
+            v = v || null;
         }
         answer(reqId, v);
     });
     engine.on('PZ2QoL_SendMoveResult', (reqId, ok, detail) => answer(reqId, { ok: ok === true, detail: detail ? String(detail) : '' }));
-    engine.on('PZ2QoL_SendArrived', (seq, csv, allowed) => {
+    engine.on('PZ2QoL_SendOpenMoveResult', (reqId, ok, detail) => answer(reqId, { ok: ok === true, detail: detail ? String(detail) : '' }));
+    engine.on('PZ2QoL_SendArrived', (seq, csv, allowed, target) => {
         try {
             engine.trigger('PZ2QoL_SendAck', seq);
         }
@@ -371,7 +488,7 @@ function installPark() {
         }
         if (seq === lastSeq) return;
         lastSeq = seq;
-        startRun(seq, csv, allowed === true).catch(e => reportError('mod', '"Find a habitat" run failed', e));
+        startRun(seq, csv, allowed === true, target).catch(e => reportError('mod', target === 'trade' ? '"Bring to the trade centre" run failed' : '"Find a habitat" run failed', e));
     });
     // a reloaded page picks up animals that arrived meanwhile
     try {

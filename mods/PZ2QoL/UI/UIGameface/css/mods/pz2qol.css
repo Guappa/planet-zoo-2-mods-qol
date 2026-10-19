@@ -219,6 +219,9 @@
 .PZ2QoL_switchLabel { margin-left: 0.5rem; font-size: 0.86rem; font-weight: bold; }
 
 .PZ2QoL_stats { flex-direction: row; align-items: center; }
+/* stats with the one-species chip above them (trade shortcuts) */
+.PZ2QoL_bar > .PZ2QoL_statsCol { flex-shrink: 0; flex-direction: column; align-items: flex-end; justify-content: center; }
+.PZ2QoL_statsCol > .PZ2QoL_chip { margin-bottom: 0.15rem; }
 .PZ2QoL_stat { flex-direction: row; align-items: baseline; margin-left: 0.8rem; }
 .PZ2QoL_statValue { font-size: 0.95rem; font-weight: bold; margin-right: 0.2rem; }
 .PZ2QoL_statLabel { font-size: 0.74rem; color: var(--qol-ink-soft); }
@@ -517,6 +520,7 @@
 .PZ2QoL_medalPill.gold, .PZ2QoL_medalDot.gold { background-color: #C9A227; }
 .PZ2QoL_medalPill.silver, .PZ2QoL_medalDot.silver { background-color: #9AA3AB; }
 .PZ2QoL_medalPill.bronze, .PZ2QoL_medalDot.bronze { background-color: #B0703C; }
+.PZ2QoL_medalPill.morph { background-color: #7A5C9E; }
 .PZ2QoL_medalRow { flex-direction: row; flex-wrap: wrap; align-items: center; margin-top: 0.4rem; }
 .PZ2QoL_medalChip {
   flex-direction: row;

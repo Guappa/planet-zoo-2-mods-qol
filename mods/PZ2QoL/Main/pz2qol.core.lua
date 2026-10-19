@@ -15,7 +15,7 @@ local ipairs   = global.ipairs
 
 local Core = module(...)
 
-Core.sVersion = "2.1.0"
+Core.sVersion = "3.0.0"
 Core.bBooted = false
 
 -- lower-cased module name -> list of patch functions(tModule)
@@ -81,6 +81,203 @@ Core.Mark = function(self, sName)
 	if fn then
 		pcall(fn)
 	end
+end
+
+-----------------------------------------------------------------------
+-- Detailed log (debug builds; reference/debugging.md "Detailed log").
+-- One free-text line per event in dbg\trace.log:
+--   <time> tid=<n> LOG lua#<seq> <area> <event> k=v k=v ...
+-- The game exports no Lua C API, so the line is spelled one byte at a time
+-- through dbg\lg_<hex>.dll "mark" functions (lg_clr first, lg_end writes
+-- it; tools/trace/pz2_trace.c). Release builds have no dbg\, so this is a
+-- no-op; anything missing turns it off for the session. Never raises.
+-----------------------------------------------------------------------
+Core.nLogMax = 900            -- characters per line (the DLL keeps 1500)
+Core.nLogValueMax = 160       -- characters per value
+Core.nLogSeq = 0
+Core.tLogFns = {}             -- byte or "clr"/"end" -> mark function or false
+Core.bLogOff = false          -- the lg_* files are missing: stop trying
+Core.bLogOk = false
+
+-- keys never written (no account, session or personal data in the log)
+local function sensitiveKey(sKey)
+	local s = string.lower(sKey)
+	return string.find(s, "token", 1, true) or string.find(s, "password", 1, true) or string.find(s, "account", 1, true)
+		or string.find(s, "steam", 1, true) or string.find(s, "session", 1, true) or string.find(s, "email", 1, true)
+		or string.find(s, "user", 1, true) or string.find(s, "auth", 1, true)
+end
+
+local function logNumber(n)
+	if n ~= n or n == global.math.huge or n == -global.math.huge then
+		return "nan"
+	end
+	if global.math.type(n) == "integer" then
+		return string.format("%d", n)
+	end
+	if n == global.math.floor(n) and global.math.abs(n) < 2 ^ 53 then
+		return string.format("%d", n)
+	end
+	return string.format("%.4g", n)
+end
+
+local logValue
+logValue = function(v, nDepth)
+	local t = type(v)
+	local s
+	if t == "string" then
+		s = v
+	elseif t == "number" then
+		return logNumber(v)
+	elseif t == "boolean" then
+		return v and "true" or "false"
+	elseif v == nil then
+		return "nil"
+	elseif t == "table" and (nDepth or 0) < 1 then
+		local tParts, n = {}, 0
+		if #v > 0 then
+			for i = 1, #v do
+				n = n + 1
+				if n > 12 then
+					tParts[#tParts + 1] = "..."
+					break
+				end
+				tParts[#tParts + 1] = logValue(v[i], 1)
+			end
+		else
+			local tKeys = {}
+			for k in global.pairs(v) do
+				tKeys[#tKeys + 1] = tostring(k)
+			end
+			global.table.sort(tKeys)
+			for _, k in ipairs(tKeys) do
+				n = n + 1
+				if n > 12 then
+					tParts[#tParts + 1] = "..."
+					break
+				end
+				if not sensitiveKey(k) then
+					tParts[#tParts + 1] = k .. ":" .. logValue(v[k], 1)
+				end
+			end
+		end
+		s = "[" .. global.table.concat(tParts, ",") .. "]"
+		t = "list"
+	elseif t == "table" then
+		return "[...]"
+	else
+		s = tostring(v)
+	end
+	s = string.gsub(s, "[%c]", " ")
+	if #s > Core.nLogValueMax then
+		s = string.sub(s, 1, Core.nLogValueMax) .. "~"
+	end
+	if t == "string" and (s == "" or string.find(s, "[%s=\"]")) then
+		s = '"' .. string.gsub(s, '"', "'") .. '"'
+	end
+	return s
+end
+
+-- These lead each line (an animal's run and GUID first), the rest sorted.
+local tLogLead = { "run", "i", "guid", "key", "step" }
+
+-- " k=v k=v" for a table (nil values left out), " <text>" for anything else.
+Core.FormatLogData = function(tData)
+	if tData == nil then
+		return ""
+	end
+	if type(tData) ~= "table" then
+		return " " .. logValue(tData)
+	end
+	local tOut, tDone = {}, {}
+	for _, k in ipairs(tLogLead) do
+		if tData[k] ~= nil then
+			tOut[#tOut + 1] = k .. "=" .. logValue(tData[k])
+			tDone[k] = true
+		end
+	end
+	local tKeys = {}
+	for k in global.pairs(tData) do
+		if type(k) == "string" and not tDone[k] then
+			tKeys[#tKeys + 1] = k
+		end
+	end
+	global.table.sort(tKeys)
+	for _, k in ipairs(tKeys) do
+		if sensitiveKey(k) then
+			tOut[#tOut + 1] = k .. "=[redacted]"
+		else
+			tOut[#tOut + 1] = k .. "=" .. logValue(tData[k])
+		end
+	end
+	if #tOut == 0 then
+		return ""
+	end
+	return " " .. global.table.concat(tOut, " ")
+end
+
+Core._LogFn = function(self, vByte)
+	local fn = self.tLogFns[vByte]
+	if fn == nil then
+		local sName = type(vByte) == "number" and string.format("lg_%02x", vByte) or ("lg_" .. tostring(vByte))
+		local bOk, f = pcall(global.package.loadlib, self.sTraceDir .. sName .. ".dll", "mark")
+		fn = (bOk and type(f) == "function") and f or false
+		self.tLogFns[vByte] = fn
+	end
+	return fn
+end
+
+-- Writes one line as it is (printable ASCII; anything else becomes '?').
+Core.LogText = function(self, sText)
+	if not self.bTrace or self.bLogOff or type(sText) ~= "string" or sText == "" then
+		return
+	end
+	local bOk = pcall(function()
+		local fnEnd = self:_LogFn("end")
+		local fnClr = self:_LogFn("clr")
+		if not fnEnd or not fnClr then
+			self.bLogOff = true
+			self:Checkpoint("log_channel_missing")
+			return
+		end
+		local s = sText
+		if #s > self.nLogMax then
+			s = string.sub(s, 1, self.nLogMax) .. "~"
+		end
+		local tFns = self.tLogFns
+		fnClr()
+		for i = 1, #s do
+			local b = string.byte(s, i)
+			if b < 32 or b > 126 then
+				b = 63
+			end
+			local fn = tFns[b]
+			if fn == nil then
+				fn = self:_LogFn(b)
+			end
+			if fn then
+				fn()
+			end
+		end
+		fnEnd()
+		if not self.bLogOk then
+			self.bLogOk = true
+			self:Checkpoint("log_channel_ok")
+		end
+	end)
+	if not bOk then
+		self.bLogOff = true
+	end
+end
+
+-- Core:Log("lister", "send", { run = 3, guid = "123", price = 1200 })
+Core.Log = function(self, sArea, sEvent, tData)
+	if not self.bTrace or self.bLogOff then
+		return
+	end
+	pcall(function()
+		self.nLogSeq = self.nLogSeq + 1
+		self:LogText("lua#" .. self.nLogSeq .. " " .. tostring(sArea) .. " " .. tostring(sEvent) .. Core.FormatLogData(tData))
+	end)
 end
 
 Core.AddModulePatch = function(self, sModuleName, fnPatch)
@@ -218,7 +415,7 @@ Core.Boot = function(self)
 	self:Checkpoint("require_hook")
 	self:AddModulePatch("Environment.Environment", function(t) self:_PatchEnvironment(t) end)
 	self:AddModulePatch("GameHelpers.ModeHelper", function(t) self:_PatchModeHelper(t) end)
-	for _, sFeature in ipairs({ "PZ2QoL.Errors", "PZ2QoL.Hub", "PZ2QoL.MarketPeek", "PZ2QoL.Lister", "PZ2QoL.PlayerStore", "PZ2QoL.Kin", "PZ2QoL.Guards", "PZ2QoL.SaveTrace", "PZ2QoL.Autosave", "PZ2QoL.StorageSend" }) do
+	for _, sFeature in ipairs({ "PZ2QoL.Errors", "PZ2QoL.Hub", "PZ2QoL.MarketPeek", "PZ2QoL.Lister", "PZ2QoL.PlayerStore", "PZ2QoL.Kin", "PZ2QoL.Guards", "PZ2QoL.SaveTrace", "PZ2QoL.Autosave", "PZ2QoL.StorageSend", "PZ2QoL.TradeJump", "PZ2QoL.StorageFetch" }) do
 		local bOk, sErr = pcall(function()
 			global.require(sFeature):Init(self)
 		end)

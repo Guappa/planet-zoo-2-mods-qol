@@ -89,6 +89,8 @@ export function normalizeSnapshot(raw) {
         contra: !!a.contra,
         infertile: !!a.infertile,
         preg: !!a.preg,
+        // at the vet, in a quarantine or carried, but assigned to `hab`
+        away: a.away ? String(a.away) : '',
         alive: a.alive !== false,
         hab: a.hab != null && a.hab !== '' && a.hab !== 0 ? String(a.hab) : '',
         loc: a.loc != null ? String(a.loc) : '',
@@ -96,6 +98,11 @@ export function normalizeSnapshot(raw) {
         // where it is: 'habitat' | 'trade' | 'transit' | 'quarantine' | 'vet' | 'escaped' | 'other'
         lt: a.lt != null ? String(a.lt) : (a.hab != null && a.hab !== '' ? 'habitat' : ''),
         moving: !!a.moving,
+        // in a transport box (the game's bBoxed); kinboxed.js
+        boxed: !!a.boxed,
+        // sick or injured, and passed quarantine (kinmoves.js, kinquarantine.js)
+        sick: !!a.sick,
+        qReady: !!a.qReady,
         age: typeof a.age === 'number' ? a.age : undefined,
         // the game's age quarter for the UI: 0 child, 1 young adult, 2 adult, 3 elderly
         ageQ: typeof a.ageQ === 'number' ? a.ageQ : undefined,
@@ -103,6 +110,12 @@ export function normalizeSnapshot(raw) {
         mates: asArray(a.mates).map(String),
         bond: normalizeBond(a.bond),
         genes: a.genes && typeof a.genes === 'object' ? a.genes : null,
+        // growing up (kinlife.js): a juvenile's adult age and years left
+        // (undefined when the game did not answer); an adult the group does
+        // not accept: 'pop' | 'mat' | 'sex' | 'yes' (null: none, or unknown)
+        adultAge: typeof a.adultAge === 'number' && isFinite(a.adultAge) ? a.adultAge : undefined,
+        adultIn: typeof a.adultIn === 'number' && isFinite(a.adultIn) ? a.adultIn : undefined,
+        out: a.out === 'pop' || a.out === 'mat' || a.out === 'sex' || a.out === 'yes' ? a.out : null,
     }));
     const anc = {};
     if (snap.anc && typeof snap.anc === 'object') {
@@ -119,6 +132,12 @@ export function normalizeSnapshot(raw) {
             if (!f || typeof f !== 'object') continue;
             const num = v => (typeof v === 'number' && isFinite(v) ? v : null);
             speciesFacts[sp] = { maturity: num(f.maturity), infertility: num(f.infertility), life: num(f.life), collective: f.collective === true };
+            // growing up (kinlife.js): the game's adults per habitat and its
+            // maturation rule ('males' | 'females' | 'all' | 'none'); null: unknown
+            const social = f.social && typeof f.social === 'object' && num(f.social.max) != null ? { min: num(f.social.min), max: num(f.social.max) } : null;
+            const maturation = ['males', 'females', 'all', 'none'].includes(f.maturation) ? f.maturation : null;
+            speciesFacts[sp].social = social;
+            speciesFacts[sp].maturation = maturation;
         }
     }
     for (const a of animals) a.fert = fertilityOf(a, speciesFacts[a.species]);
@@ -255,7 +274,10 @@ export function fertileNow(a) {
 // ------------------------------------------------------------- pedigree
 
 export class Pedigree {
-    constructor(snapshot) {
+    // prev: an earlier Pedigree. When the parentage is the same (every scan
+    // without a birth, death or arrival; every simulated plan), its
+    // ancestor and kinship caches are taken over: they depend on nothing else.
+    constructor(snapshot, prev = null) {
         this.parents = new Map();   // guid -> [guid...]
         this.byGuid = new Map();    // guid -> animal (present ones)
         this.names = new Map();     // guid -> name (present + known ancestors)
@@ -267,8 +289,46 @@ export class Pedigree {
             this.byGuid.set(a.guid, a);
             this.names.set(a.guid, a.name);
         }
-        this._anc = new Map();
-        this._kin = new Map();
+        this._ancRef = snapshot.anc;
+        this._sig = null;
+        if (prev instanceof Pedigree && this.sameParentage(prev)) {
+            this._anc = prev._anc;
+            this._kin = prev._kin;
+            this._sig = prev._sig;
+            this.reused = true;
+        }
+        else {
+            this._anc = new Map();
+            this._kin = new Map();
+            this.reused = false;
+        }
+    }
+
+    // Every guid's parent list, in one string (sorted, so order never matters).
+    parentage() {
+        if (this._sig == null) {
+            const parts = [];
+            for (const [g, p] of this.parents) parts.push(g + ':' + (Array.isArray(p) ? p.join(',') : ''));
+            parts.sort();
+            this._sig = parts.join(';');
+        }
+        return this._sig;
+    }
+
+    sameParentage(prev) {
+        if (prev.parents.size !== this.parents.size) return false;
+        // fast: the same ancestor table and the very same parent lists
+        if (prev._ancRef === this._ancRef) {
+            let same = true;
+            for (const [g, p] of this.parents) {
+                if (prev.parents.get(g) !== p) {
+                    same = false;
+                    break;
+                }
+            }
+            if (same) return true;
+        }
+        return prev.parentage() === this.parentage();
     }
 
     parentsOf(g) {
@@ -660,7 +720,7 @@ export function buildKinModel(raw, opts = {}) {
     // scan's bond data
     const bondHolds = opts.bondHolds !== false;
     const useBonds = bondHolds && snap.bondsOk === true;
-    const ped = new Pedigree(snap);
+    const ped = new Pedigree(snap, opts.ped || null);
     const animals = new Map();
     const byKey = new Map();
     const byGuid = ped.byGuid;
@@ -697,11 +757,13 @@ export function buildKinModel(raw, opts = {}) {
                 for (let j = i + 1; j < list.length; j++) {
                     const x = list[i], y = list[j];
                     if (!compatibleSexes(x, y) || !x.guid || !y.guid) continue;
-                    const rel = ped.relation(x.guid, y.guid);
+                    // one relation per pair, already male first (kinship and
+                    // the game's rule are the same both ways)
+                    const [m, f] = ordered(x, y);
+                    const rel = ped.relation(m.guid, f.guid);
                     if (!rel) continue;
                     const tier = rel.game ? 'game' : rel.kinship >= closeKinship - 1e-9 ? 'close' : 'distant';
-                    const [m, f] = ordered(x, y);
-                    const relMF = m === x ? rel : ped.relation(m.guid, f.guid);
+                    const relMF = rel;
                     const base = pairSeverity(m, f, tier);
                     const held = useBonds && (base === 'risk' || base === 'kin') ? bondHold(animals, m, f) : null;
                     const p = {
@@ -899,18 +961,116 @@ export function habitatsAtRisk(model) {
 
 // --------------------------------------------------------- mate finder
 
+// ------------------------------------------------- stored adults (Franchise)
+
+// The game's EAnimalMaturity on a stored animal: 0 infant, 1 young adult,
+// 2 adult, 3 elderly, 4/5/6 the same but infertile.
+function storedFert(maturity) {
+    const m = typeof maturity === 'number' ? maturity : 2;
+    const state = m === 4 ? 'young' : m === 5 ? 'sterile' : m === 6 ? 'old' : m === 0 ? 'juvenile' : 'fertile';
+    return { state, yearsLeft: null, yearsToMature: null, elderly: m === 3 || m === 6, forLife: false };
+}
+
+// The player's stored adults of one species, as Lua sends them
+// (Kin.StoredAdults: PZ2QoL_KinStored). They are never put in model.animals
+// (the board, programme, Thin out, badges and alerts all loop over that);
+// only the mate finder looks at them, through withStored().
+// -> { species, animals, anc, error, capped }
+export function normalizeStored(raw) {
+    const r = raw && typeof raw === 'object' ? raw : {};
+    const animals = asArray(r.animals).filter(a => a && known(a.guid)).map(a => {
+        const maturity = typeof a.maturity === 'number' ? a.maturity : null;
+        const g = a.grades && typeof a.grades === 'object' ? a.grades : null;
+        return {
+            id: a.id != null ? String(a.id) : 's' + a.guid,
+            key: a.id != null ? String(a.id) : 's' + a.guid,
+            guid: String(a.guid),
+            name: a.name != null && a.name !== '' ? String(a.name) : '?',
+            species: a.species != null ? String(a.species) : String(r.species || ''),
+            sex: typeof a.sex === 'number' ? a.sex : Sex.Unisex,
+            juv: maturity === 0,
+            // the game reports no contraception for stored animals (type 2)
+            contra: false,
+            infertile: maturity != null && maturity >= 4,
+            preg: false,
+            alive: true,
+            hab: '',
+            loc: 'Animal Storage',
+            exhibit: false,
+            lt: 'storage',
+            moving: false,
+            stored: true,
+            maturity,
+            forSale: a.forSale === true,
+            rating: a.rating != null ? String(a.rating) : null,
+            par: asArray(a.par).filter(known).map(String),
+            mates: [],
+            bond: null,
+            genes: a.genes && typeof a.genes === 'object' ? a.genes : null,
+            grades: g,
+            fert: storedFert(maturity),
+        };
+    });
+    const anc = {};
+    if (r.anc && typeof r.anc === 'object') {
+        for (const g in r.anc) if (known(g)) anc[String(g)] = asArray(r.anc[g]).filter(known).map(String);
+    }
+    return {
+        species: r.species != null ? String(r.species) : '',
+        animals,
+        anc,
+        error: r.error ? String(r.error) : null,
+        capped: r.capped === true,
+        time: typeof r.time === 'number' ? r.time : 0,
+    };
+}
+
+// A read-only view of the model that also knows the stored adults: a
+// pedigree over park + stored animals (park data wins), `stored` (id ->
+// animal) and a merged `byGuid`. model.animals is unchanged. Cached per
+// model and stored answer.
+const storedViews = new WeakMap();
+export function withStored(model, stored) {
+    if (!model || !stored || !stored.animals || !stored.animals.length) return model;
+    let per = storedViews.get(model);
+    if (!per) storedViews.set(model, per = new WeakMap());
+    const hit = per.get(stored);
+    if (hit) return hit;
+    const snap = model.snapshot || { anc: {}, names: {}, animals: Array.from(model.animals.values()) };
+    const parkGuids = new Set();
+    for (const a of snap.animals) if (a.guid) parkGuids.add(a.guid);
+    const extra = stored.animals.filter(a => !parkGuids.has(a.guid));
+    const ped = new Pedigree({
+        anc: Object.assign({}, stored.anc, snap.anc),
+        names: snap.names || {},
+        animals: snap.animals.concat(extra),
+    });
+    const view = Object.assign({}, model, {
+        ped,
+        byGuid: ped.byGuid,
+        stored: new Map(extra.map(a => [a.id, a])),
+        storedInfo: stored,
+    });
+    per.set(stored, view);
+    return view;
+}
+
 // Every possible mate for `id` in the zoo: same species, compatible sex,
 // alive, not itself. Ranked: safest relation first, then the best expected
 // offspring genes. { animal, rel, kinship, game, pred, score, sameHabitat }
-export function mateCandidates(model, id, { includeJuveniles = false } = {}) {
+// With `stored` (normalizeStored), the player's stored adults count too
+// (stored: true); on a tie a park animal comes first.
+export function mateCandidates(model, id, { includeJuveniles = false, stored = null } = {}) {
     const self = model && model.animals.get(String(id));
     if (!self) return [];
     const out = [];
-    for (const other of model.animals.values()) {
+    const view = stored ? withStored(model, stored) : model;
+    const pool = view.stored ? Array.from(model.animals.values()).concat(Array.from(view.stored.values())) : model.animals.values();
+    for (const other of pool) {
         if (other === self || other.species !== self.species || !other.alive) continue;
         if (!compatibleSexes(self, other)) continue;
         if (other.juv && !includeJuveniles) continue;
-        const rel = self.guid && other.guid ? model.ped.relation(self.guid, other.guid) : null;
+        const rel = self.guid && other.guid ? view.ped.relation(self.guid, other.guid) : null;
         const kinship = rel ? rel.kinship : 0;
         const game = rel ? rel.game : false;
         const pred = predictOffspring(self.genes, other.genes);
@@ -925,6 +1085,8 @@ export function mateCandidates(model, id, { includeJuveniles = false } = {}) {
             sameHabitat: !!self.hab && self.hab === other.hab,
             // 'now' | 'later' (young) | 'never' (too old or infertile)
             breeds: fertileNow(other) ? 'now' : notYet(other) ? 'later' : 'never',
+            // in the player's Animal Storage (only with `stored`)
+            ...(other.stored ? { stored: true } : {}),
         });
     }
     const tierRank = { none: 0, distant: 1, close: 2, game: 3 };
@@ -933,6 +1095,7 @@ export function mateCandidates(model, id, { includeJuveniles = false } = {}) {
         || breedRank[p.breeds] - breedRank[q.breeds]
         || (q.score ?? -1) - (p.score ?? -1)
         || (q.sameHabitat - p.sameHabitat)
+        || (!!p.stored - !!q.stored)
         || (p.animal.name < q.animal.name ? -1 : 1));
     return out;
 }
@@ -941,7 +1104,7 @@ export function mateCandidates(model, id, { includeJuveniles = false } = {}) {
 
 // Pairs that are at risk now and were not at risk before (or did not
 // exist). With `includeKin`, close-kin pairs count too.
-export function newRisks(prev, next, { includeKin = false } = {}) {
+export function newRisks(prev, next, { includeKin = false, muted = null } = {}) {
     if (!next) return [];
     const watched = s => s === 'risk' || (includeKin && s === 'kin');
     // by pair, not by habitat: a pair that moves together is not new
@@ -960,6 +1123,7 @@ export function newRisks(prev, next, { includeKin = false } = {}) {
     const out = [];
     for (const p of next.pairs) {
         if (!watched(p.severity)) continue;
+        if (muted && muted.has(p.species)) continue; // the player muted this species' alerts
         const was = before.get(p.key);
         if (watched(was)) continue;
         if (was === 'held' && noBondNews) continue;
@@ -974,6 +1138,35 @@ export function newRisks(prev, next, { includeKin = false } = {}) {
         out.push(p);
     }
     return out;
+}
+
+// Pair counts like model.counts, without the species in `muted` (a Set):
+// what the alerts talk about. Badges and panels keep model.counts.
+export function countsExcluding(model, muted) {
+    const counts = { risk: 0, kin: 0, future: 0, held: 0, covered: 0, distant: 0 };
+    if (!model) return counts;
+    for (const p of model.pairs) {
+        if (muted && muted.has(p.species)) continue;
+        counts[p.severity] = (counts[p.severity] || 0) + 1;
+    }
+    return counts;
+}
+
+// Habitats with inbreeding risks among species not in `muted`, most first:
+// [{ id, name, risk }].
+export function riskHabitatsExcluding(model, muted) {
+    if (!model) return [];
+    const by = new Map();
+    for (const p of model.pairs) {
+        if (p.severity !== 'risk' || (muted && muted.has(p.species))) continue;
+        let e = by.get(p.hab);
+        if (!e) {
+            const h = model.habitats.get(p.hab);
+            by.set(p.hab, e = { id: p.hab, name: (h && h.name) || p.hab, risk: 0 });
+        }
+        e.risk++;
+    }
+    return Array.from(by.values()).sort((x, y) => y.risk - x.risk || (x.name < y.name ? -1 : x.name > y.name ? 1 : 0));
 }
 
 // ------------------------------------------------------- storage (hub)

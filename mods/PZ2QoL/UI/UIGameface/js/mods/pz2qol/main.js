@@ -2,6 +2,7 @@
 // Frontend.js, so it shares the game's module instances.
 import { loadCSS } from '/js/common/util/CSSUtil.js';
 import { breadcrumb, installErrorCapture, reportError } from '/js/mods/pz2qol/errors.js';
+import { installDebugLog } from '/js/mods/pz2qol/debuglog.js';
 import { installListFilter, installSelectAllGuard } from '/js/mods/pz2qol/listfilter.js';
 import { installBadges } from '/js/mods/pz2qol/badges.js';
 import { installBars } from '/js/mods/pz2qol/bars.js';
@@ -15,10 +16,14 @@ import { installKinMates } from '/js/mods/pz2qol/kinmates.js';
 import { installKinStorage } from '/js/mods/pz2qol/kinstorage.js';
 import { installKinPlanner } from '/js/mods/pz2qol/kinplanner.js';
 import { installKinAlerts } from '/js/mods/pz2qol/kinalerts.js';
+import { installBoxedAlerts } from '/js/mods/pz2qol/kinboxed.js';
+import { installQuarantineAlerts } from '/js/mods/pz2qol/kinquarantine.js';
 import { installHudLauncher } from '/js/mods/pz2qol/hudlauncher.js';
 import { installStorageSend } from '/js/mods/pz2qol/storagesend.js';
+import { installTradeJump } from '/js/mods/pz2qol/tradejump.js';
+import { installStorageFetch } from '/js/mods/pz2qol/storagefetch.js';
 
-export const VERSION = '2.1.0';
+export const VERSION = '3.0.0';
 
 // Debug builds: tell Lua how far the page got (written to dbg/trace.log).
 const trace = breadcrumb;
@@ -38,6 +43,8 @@ function step(name, fn) {
 }
 
 step('Error capture', installErrorCapture);
+// debug builds: the detailed log (dbg/trace.log); a no-op otherwise
+step('Debug log', installDebugLog);
 step('Styles', () => {
     loadCSS('mods/pz2qol');
     loadCSS('mods/pz2qol_kin');
@@ -60,9 +67,14 @@ step('Kin in Compare Mates and Genealogy', installKinMates);
 step('Kin in Animal Storage', installKinStorage);
 step('Kin planner', installKinPlanner);
 step('Kin alerts', installKinAlerts);
+step('Boxed animal alerts', installBoxedAlerts);
+step('Quarantine notices', installQuarantineAlerts);
 // in the park: one-click Species board and the autosave control
 step('Park launcher', installHudLauncher);
 step('Find a habitat', installStorageSend);
+// Species board / Kin planner -> the hub's Animal Storage or Market for one species
+step('Trade shortcuts', installTradeJump);
+step('Bring to the trade centre', installStorageFetch);
 // Species board: loaded on its own, so a missing or broken board never
 // stops the rest of the mod
 step('Species board', () => {

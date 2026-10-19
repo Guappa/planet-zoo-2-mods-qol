@@ -14,12 +14,19 @@
 --  module takes that one Move-screen request instead (the same state as the
 --  player leaving the Move screen at once) and hands the animals to the
 --  park page, which places them one at a time:
---    JS -> Lua  PZ2QoL_SendArm(nCount, bOnline)   (hub, before Send to Zoo)
+--    JS -> Lua  PZ2QoL_SendArm(nCount, bOnline, sTarget)   (hub, before Send to Zoo)
+--               sTarget "habitat" (Find a habitat) or "trade" (Bring to the
+--               trade centre, PZ2QoL.StorageFetch: also the zoo of the click)
 --    JS -> Lua  PZ2QoL_SendDisarm()               (the game's own button)
---    Lua -> JS  PZ2QoL_SendArrived(nSeq, ids, bOnline)   (park HUD)
+--    Lua -> JS  PZ2QoL_SendArrived(nSeq, ids, bOnline, sTarget)   (park HUD)
 --    JS -> Lua  PZ2QoL_SendAck(nSeq) / PZ2QoL_SendHello()
 --    JS -> Lua  PZ2QoL_SendFacts(req, id) -> PZ2QoL_SendFactsResult(req, json)
---    JS -> Lua  PZ2QoL_SendMove(req, id, habitat) -> PZ2QoL_SendMoveResult(req, ok, detail)
+--    JS -> Lua  PZ2QoL_SendMove(req, id, habitat, nSeq) -> PZ2QoL_SendMoveResult(req, ok, detail)
+--               habitat "trade:arrival": the Move screen's own trade-centre
+--               sequence, only for the animals of arrival nSeq
+--    JS -> Lua  PZ2QoL_SendOpenMove(req, ids) -> PZ2QoL_SendOpenMoveResult(req, ok, detail)
+--               the game's own Move screen for those arrivals (on the next
+--               SelectMode.Advance, where the game itself opens it)
 --  A move is PZ2QoL.Kin's Move: the game's own Move sequence for ONE animal.
 --  Fail soft: anything unexpected leaves the game's own Move screen alone.
 -----------------------------------------------------------------------
@@ -37,8 +44,11 @@ local table    = global.table
 local StorageSend = module(...)
 
 StorageSend.nArmSeconds = 600   -- an arm older than this is ignored
-StorageSend.tArm = nil          -- { nCount, nTime, bOnline }
-StorageSend.tArrived = nil      -- { nSeq, sIds, bOnline, bAcked }
+StorageSend.tArm = nil          -- { nCount, nTime, bOnline, sTarget, sZoo, sZooMode }
+StorageSend.tArrived = nil      -- { nSeq, sIds, tIds (set), bOnline, bAcked, sTarget }
+StorageSend.tOpenMove = nil     -- { sReq, tIDs, nTime, oUI }: the game's Move screen, next SelectMode tick
+StorageSend.nOpenMoveSeconds = 30
+StorageSend.fnSetNewMode = nil  -- the game's own BaseUIMode.SetNewMode (unwrapped)
 StorageSend.nSeq = 0
 StorageSend.tViews = global.setmetatable({}, { __mode = "k" })
 
@@ -90,6 +100,13 @@ end
 
 local function known(v)
 	return v ~= nil and v ~= 0 and v ~= "" and v ~= "0"
+end
+
+local function log(sEvent, tData)
+	local Core = global.package.loaded["pz2qol.core"]
+	if Core and Core.Log then
+		pcall(Core.Log, Core, "send", sEvent, tData)
+	end
 end
 
 local function entityName(e)
@@ -154,8 +171,13 @@ StorageSend._TryTake = function(self, tParams)
 		tOut[#tOut + 1] = idString(e)
 	end
 	-- Franchise (or unknown): online moves only with the player's consent
-	if self:_GameMode() ~= "offline" and not tArm.bOnline then
+	local sMode = self:_GameMode()
+	if sMode ~= "offline" and not tArm.bOnline then
 		mark("send_online_not_allowed")
+		return false
+	end
+	local sTarget = tArm.sTarget == "trade" and "trade" or "habitat"
+	if sTarget == "trade" and not self:_SameZoo(tArm, sMode) then
 		return false
 	end
 	local oUI = self:_ParkUI()
@@ -164,11 +186,44 @@ StorageSend._TryTake = function(self, tParams)
 		return false
 	end
 	self.nSeq = self.nSeq + 1
-	self.tArrived = { nSeq = self.nSeq, sIds = table.concat(tOut, ","), bOnline = tArm.bOnline == true, bAcked = false }
+	local tSet = {}
+	for _, s in ipairs(tOut) do
+		tSet[s] = true
+	end
+	self.tArrived = { nSeq = self.nSeq, sIds = table.concat(tOut, ","), tIds = tSet, bOnline = tArm.bOnline == true, bAcked = false, sTarget = sTarget }
 	self:_Deliver(oUI)
 	mark("send_taken")
-	trace("took " .. #tOut .. " animals from the Move screen")
+	if sTarget == "trade" then
+		mark("fetch_taken")
+	end
+	log("taken", { n = #tOut, target = sTarget, seq = self.nSeq })
+	trace("took " .. #tOut .. " animals from the Move screen (" .. sTarget .. ")")
 	return true
+end
+
+-- "trade": only in the zoo the player clicked in. A Franchise (or unknown
+-- mode) zoo needs both keys; an offline park may not know its key yet.
+StorageSend._SameZoo = function(self, tArm, sMode)
+	local Kin = kin()
+	local sNow = nil
+	pcall(function()
+		sNow = Kin:_ZooKey(api.world.GetWorldAPIs(), 1e9)
+	end)
+	local sThen = tArm.sZoo
+	if sNow ~= nil and sThen ~= nil then
+		if sNow ~= sThen then
+			mark("send_zoo_mismatch")
+			log("zoo", { same = false })
+			return false
+		end
+		return true
+	end
+	if sMode == "offline" and tArm.sZooMode == "offline" then
+		return true
+	end
+	mark("send_zoo_unknown")
+	log("zoo", { unknown = true, now = sNow ~= nil, click = sThen ~= nil, mode = sMode })
+	return false
 end
 
 StorageSend._Deliver = function(self, oUI)
@@ -178,7 +233,7 @@ StorageSend._Deliver = function(self, oUI)
 	end
 	oUI = oUI or self:_ParkUI()
 	if oUI ~= nil then
-		pcall(oUI.TriggerEventAtNextAdvance, oUI, "PZ2QoL_SendArrived", t.nSeq, t.sIds, t.bOnline)
+		pcall(oUI.TriggerEventAtNextAdvance, oUI, "PZ2QoL_SendArrived", t.nSeq, t.sIds, t.bOnline, t.sTarget or "habitat")
 	end
 end
 
@@ -189,6 +244,7 @@ StorageSend._PatchBaseUIMode = function(self, BaseUIMode)
 		mark("send_patch_missing")
 		return
 	end
+	self.fnSetNewMode = fnSetNewMode
 	BaseUIMode.SetNewMode = function(sMode, tParams, ...)
 		if sMode == "AnimalMovementMode" and self.tArm ~= nil then
 			local bOk, bTaken = pcall(self._TryTake, self, tParams)
@@ -252,6 +308,16 @@ StorageSend.Facts = function(self, oUI, sReq, sId)
 	tOut.moving = type(tTransport) == "table" and tTransport.bHasTransportJob == true
 	local nAssigned = call(animals, "GetAssignedHabitatEntityID", e)
 	tOut.assigned = known(nAssigned) and idString(nAssigned) or ""
+	-- the trade centre (Bring to the trade centre)
+	tOut.boxed = call(animals, "IsAnimalBoxed", e) == true
+	tOut.claimed = call(animals, "IsBoxingClaimed", e) == true
+	local tTC = nil
+	pcall(function() tTC = Kin:_TradeCentre(tAPIs) end)
+	tOut.tc = type(tTC) == "table" and tostring(tTC.id) or ""
+	local nMax, nNow = call(tAPIs.park, "GetTradeCentreMaxCapacity"), call(tAPIs.park, "GetNumberOfAnimalsInTradeCentre")
+	if type(nMax) == "number" then tOut.tcMax = nMax end
+	if type(nNow) == "number" then tOut.tcNow = nNow end
+	self:_NoteArrival(sId, tOut.lt)
 	-- the game is still waiting on a Franchise server request
 	local bBusy = call(tAPIs.franchise, "IsDatabaseOperationInProgress")
 	tOut.busy = bBusy == true
@@ -312,8 +378,80 @@ StorageSend.Facts = function(self, oUI, sReq, sId)
 	answer(tOut)
 end
 
+-- Where each arrival of a "trade" run was when the page first asked
+-- (open: where do storage arrivals wait?). Once per animal.
+StorageSend._NoteArrival = function(self, sId, sLt)
+	local t = self.tArrived
+	local sKey = tostring(sId)
+	if t == nil or t.sTarget ~= "trade" or t.tIds == nil or not t.tIds[sKey] then
+		return
+	end
+	t.tNoted = t.tNoted or {}
+	if t.tNoted[sKey] then
+		return
+	end
+	t.tNoted[sKey] = true
+	local sKind = tostring(sLt or "other")
+	if not string.find(sKind, "^[%w_]+$") then
+		sKind = "other"
+	end
+	mark("fetch_arrival_lt_" .. sKind)
+	log("arrival", { id = sKey, lt = sKind })
+end
+
+-- One of the animals the mod took from the Move screen for a "trade" run
+-- (that run, when nSeq is given)?
+StorageSend._IsArrival = function(self, sId, nSeq)
+	local t = self.tArrived
+	return t ~= nil and t.sTarget == "trade" and t.tIds ~= nil and t.tIds[tostring(sId)] == true
+		and (nSeq == nil or nSeq == "" or tonumber(nSeq) == t.nSeq)
+end
+
+-- ONE arrival to the trade centre the way the game's Move screen does it
+-- when the player picks the trade centre (AnimalMovementEditMode.
+-- HabitatAnimalDestinationSelected, 1.0.5): VerifyHabitatAnimal (alive; not
+-- escaped unless boxed), room, then AttemptToSendToTradeCentre. Unlike the
+-- info panel's Send to Trade Centre there is no CanSendAnimalToTradeCentre
+-- check (that one refuses boxed animals, and arrivals may be boxed).
+-- -> bMoved, sDetail
+StorageSend._ArrivalToTrade = function(self, sId)
+	local Kin = kin()
+	local tAPIs = Kin and Kin:_ParkWorld() or nil
+	if tAPIs == nil or tAPIs.animals == nil then
+		return false, "No park is loaded."
+	end
+	local animals = tAPIs.animals
+	local e = tonumber(sId)
+	if e == nil then
+		return false, "Unknown animal."
+	end
+	if call(animals, "IsAlive", e) == false then
+		return false, "This animal is no longer alive."
+	end
+	if call(animals, "IsEscaped", e) == true and call(animals, "IsAnimalBoxed", e) ~= true then
+		return false, "This animal has escaped."
+	end
+	local tTransport = call(animals, "GetAnimalTransportData", e)
+	if (type(tTransport) == "table" and tTransport.bHasTransportJob == true) or call(animals, "IsBoxingClaimed", e) == true then
+		return false, "This animal is already being moved."
+	end
+	local tTC = nil
+	pcall(function() tTC = Kin:_TradeCentre(tAPIs) end)
+	if tTC == nil then
+		return false, "There is no trade centre in this zoo."
+	end
+	local nMax, nNow = call(tAPIs.park, "GetTradeCentreMaxCapacity"), call(tAPIs.park, "GetNumberOfAnimalsInTradeCentre")
+	if type(nMax) == "number" and type(nNow) == "number" and nNow >= nMax then
+		return false, "The trade centre is full (" .. nNow .. " of " .. nMax .. ")."
+	end
+	if call(animals, "AttemptToSendToTradeCentre", e) ~= true then
+		return false, "The game refused to send it to the trade centre."
+	end
+	return true, ""
+end
+
 -- ONE move: PZ2QoL.Kin's Move (the game's own Move sequence for one animal).
-StorageSend.Move = function(self, oUI, sReq, sId, sHab)
+StorageSend.Move = function(self, oUI, sReq, sId, sHab, nSeq)
 	local function answer(bOk, sDetail)
 		mark(bOk and "send_move_ok" or "send_move_failed")
 		pcall(oUI.TriggerEventAtNextAdvance, oUI, "PZ2QoL_SendMoveResult", sReq, bOk == true, sDetail or "")
@@ -322,7 +460,21 @@ StorageSend.Move = function(self, oUI, sReq, sId, sHab)
 	if Kin == nil then
 		return answer(false, "The mod's move code is not loaded.")
 	end
-	if tonumber(sHab) == nil then
+	sHab = tostring(sHab or "")
+	if sHab == "trade:arrival" then
+		if self:_IsArrival(sId, nSeq) then
+			local bOk, bMoved, sDetail = pcall(self._ArrivalToTrade, self, tostring(sId))
+			if not bOk then
+				bMoved, sDetail = false, "The move failed: " .. tostring(bMoved)
+			end
+			mark(bMoved and "fetch_move_ok" or "fetch_move_failed")
+			log("arrival_move", { id = tostring(sId), ok = bMoved == true, detail = sDetail })
+			return answer(bMoved == true, sDetail)
+		end
+		-- not (or no longer) one of this run's arrivals: the strict path
+		sHab = "trade:auto"
+	end
+	if tonumber(sHab) == nil and string.sub(sHab, 1, 6) ~= "trade:" then
 		return answer(false, "Unknown habitat.")
 	end
 	local bAnswered = false
@@ -339,8 +491,107 @@ StorageSend.Move = function(self, oUI, sReq, sId, sHab)
 end
 
 -----------------------------------------------------------------------
+-- The game's own Move screen for arrivals the run could not place
+-----------------------------------------------------------------------
+StorageSend.OpenMove = function(self, oUI, sReq, sIds)
+	local function answer(bOk, sDetail)
+		pcall(oUI.TriggerEventAtNextAdvance, oUI, "PZ2QoL_SendOpenMoveResult", sReq, bOk == true, sDetail or "")
+	end
+	local Kin = kin()
+	local tAPIs = Kin and Kin:_ParkWorld() or nil
+	if tAPIs == nil or tAPIs.animals == nil then
+		return answer(false, "nopark")
+	end
+	if self.fnSetNewMode == nil then
+		return answer(false, "nomode")
+	end
+	local animals = tAPIs.animals
+	local t = self.tArrived
+	local tIDs = {}
+	for sId in string.gmatch(tostring(sIds or ""), "[^,]+") do
+		local e = tonumber(sId)
+		-- only animals the mod took from the Move screen, alive and not
+		-- already moving (the Move screen's VerifyAnimals would fail)
+		if e ~= nil and t ~= nil and t.tIds ~= nil and t.tIds[sId] then
+			local tTransport = call(animals, "GetAnimalTransportData", e)
+			local bMoving = type(tTransport) == "table" and tTransport.bHasTransportJob == true
+			if call(animals, "IsAlive", e) ~= false and not bMoving then
+				tIDs[#tIDs + 1] = e
+			end
+		end
+	end
+	if #tIDs == 0 then
+		return answer(false, "none")
+	end
+	self.tOpenMove = { sReq = sReq, tIDs = tIDs, nTime = now(), oUI = oUI }
+	mark("fetch_open_move_asked")
+end
+
+-- From SelectMode.Advance: the same per-frame place where the game opens
+-- its Move screen for animals sent from storage (selectmode.lua 1.0.5).
+StorageSend._OpenMoveTick = function(self)
+	local t = self.tOpenMove
+	if t == nil then
+		return
+	end
+	self.tOpenMove = nil
+	local function answer(bOk, sDetail)
+		mark(bOk and "fetch_open_move_ok" or "fetch_open_move_failed")
+		pcall(t.oUI.TriggerEventAtNextAdvance, t.oUI, "PZ2QoL_SendOpenMoveResult", t.sReq, bOk == true, sDetail or "")
+	end
+	if now() - t.nTime > self.nOpenMoveSeconds then
+		return answer(false, "expired")
+	end
+	-- the game's own SetNewMode (not the wrap: these must not be taken again)
+	local bOk, sErr = pcall(self.fnSetNewMode, "AnimalMovementMode", { tSelectedAnimals = t.tIDs })
+	if not bOk then
+		trace("open move failed: " .. tostring(sErr))
+	end
+	answer(bOk, bOk and "" or "failed")
+end
+
+StorageSend._PatchSelectMode = function(self, SelectMode)
+	local fnAdvance = SelectMode.Advance
+	if type(fnAdvance) ~= "function" then
+		mark("fetch_select_patch_missing")
+		return
+	end
+	SelectMode.Advance = function(oMode, ...)
+		local tRes = table.pack(fnAdvance(oMode, ...))
+		if self.tOpenMove ~= nil then
+			local bOk, sErr = pcall(self._OpenMoveTick, self)
+			if not bOk then
+				self.tOpenMove = nil
+				trace("open move tick failed: " .. tostring(sErr))
+			end
+		end
+		return table.unpack(tRes, 1, tRes.n)
+	end
+end
+
+-----------------------------------------------------------------------
 -- Wiring
 -----------------------------------------------------------------------
+-- The hub page's arm, just before it presses the game's Send to Zoo.
+StorageSend.Arm = function(self, nCount, bOnline, sTarget)
+	local n = tonumber(nCount)
+	if n == nil or n <= 0 then
+		return
+	end
+	local tArm = { nCount = n, nTime = now(), bOnline = bOnline == true, sTarget = sTarget == "trade" and "trade" or "habitat" }
+	if tArm.sTarget == "trade" then
+		-- the zoo the player clicked "Bring to the trade centre" in
+		local Fetch = (self.Core and self.Core.StorageFetch) or global.package.loaded["pz2qol.storagefetch"]
+		local tClick = Fetch and Fetch.tLastClick or nil
+		if type(tClick) == "table" then
+			tArm.sZoo, tArm.sZooMode = tClick.sZoo, tClick.sMode
+		end
+	end
+	self.tArm = tArm
+	mark("send_armed")
+	log("armed", { n = n, target = tArm.sTarget, zoo = tArm.sZoo ~= nil })
+end
+
 StorageSend.Attach = function(self, oUI)
 	if oUI == nil or self.tViews[oUI] then
 		return
@@ -355,12 +606,8 @@ StorageSend.Attach = function(self, oUI)
 		end
 	end
 	local bOk, sErr = pcall(function()
-		oUI:AddEventListener("PZ2QoL_SendArm", 2, guard("arm", function(nCount, bOnline)
-			local n = tonumber(nCount)
-			if n ~= nil and n > 0 then
-				self.tArm = { nCount = n, nTime = now(), bOnline = bOnline == true }
-				mark("send_armed")
-			end
+		oUI:AddEventListener("PZ2QoL_SendArm", 3, guard("arm", function(nCount, bOnline, sTarget)
+			self:Arm(nCount, bOnline, sTarget)
 		end), self)
 		oUI:AddEventListener("PZ2QoL_SendDisarm", 0, guard("disarm", function()
 			self.tArm = nil
@@ -376,8 +623,11 @@ StorageSend.Attach = function(self, oUI)
 		oUI:AddEventListener("PZ2QoL_SendFacts", 2, guard("facts", function(sReq, sId)
 			self:Facts(oUI, sReq, sId)
 		end), self)
-		oUI:AddEventListener("PZ2QoL_SendMove", 3, guard("move", function(sReq, sId, sHab)
-			self:Move(oUI, sReq, sId, sHab)
+		oUI:AddEventListener("PZ2QoL_SendMove", 4, guard("move", function(sReq, sId, sHab, nSeq)
+			self:Move(oUI, sReq, sId, sHab, nSeq)
+		end), self)
+		oUI:AddEventListener("PZ2QoL_SendOpenMove", 2, guard("openmove", function(sReq, sIds)
+			self:OpenMove(oUI, sReq, sIds)
 		end), self)
 	end)
 	if not bOk then
@@ -389,4 +639,5 @@ end
 StorageSend.Init = function(self, Core)
 	self.Core = Core
 	Core:AddModulePatch("Editors.Shared.BaseUIMode", function(t) self:_PatchBaseUIMode(t) end)
+	Core:AddModulePatch("Editors.Select.SelectMode", function(t) self:_PatchSelectMode(t) end)
 end

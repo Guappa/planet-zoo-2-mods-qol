@@ -12,6 +12,9 @@
 // PZ2QoL_StoreReset follows). The store is the truth once read: changes
 // made before that are kept as operations and applied again on top of it.
 import { breadcrumb, reportError } from '/js/mods/pz2qol/errors.js';
+import { asciiJson, readMirror as readMirrorKey, writeMirror as writeMirrorKey, parseStored, replayChanges, callAll } from '/js/mods/pz2qol/storecore.js';
+
+export { asciiJson };
 
 const MIRROR_KEY = 'PZ2QoL.userdata.v1';
 const ANSWER_TIMEOUT_MS = 6000;
@@ -31,39 +34,15 @@ let epoch = 0; // counts reads of the store: a new zoo load gives a new one
 const listeners = new Set();
 
 function readMirror() {
-    try {
-        const raw = window.localStorage && window.localStorage.getItem(MIRROR_KEY);
-        const v = raw ? JSON.parse(raw) : {};
-        return v && typeof v === 'object' && !Array.isArray(v) ? v : {};
-    }
-    catch (e) {
-        return {};
-    }
+    return readMirrorKey(MIRROR_KEY);
 }
 
 function writeMirror() {
-    try {
-        if (window.localStorage) window.localStorage.setItem(MIRROR_KEY, JSON.stringify(data));
-    }
-    catch (e) {
-        // the file is the real store
-    }
-}
-
-// JSON with every non-ASCII character as \uXXXX (the Lua side keeps it as is)
-export function asciiJson(value) {
-    return JSON.stringify(value).replace(/[\u007f-￿]/g, c => '\\u' + ('0000' + c.charCodeAt(0).toString(16)).slice(-4));
+    writeMirrorKey(MIRROR_KEY, data);
 }
 
 function notify() {
-    listeners.forEach(fn => {
-        try {
-            fn(status);
-        }
-        catch (e) {
-            // a listener never breaks the store
-        }
-    });
+    callAll(listeners, status);
 }
 
 function setStatus(s) {
@@ -86,27 +65,16 @@ function finishLoad(ok, text) {
     reason = '';
     let fromFile = {};
     try {
-        const v = text ? JSON.parse(text) : {};
-        if (v && typeof v === 'object' && !Array.isArray(v)) fromFile = v;
+        fromFile = parseStored(text);
     }
     catch (e) {
         reportError('mod', 'PZ2QoL park data could not be read; starting from this session\'s data', e, { silent: true });
     }
     // the store is this zoo's truth: what the session held before (another
     // zoo's data, a mirror) is not carried over, only this view's changes
-    const merged = Object.assign({}, fromFile);
     const needSave = pending.length > 0;
     // this session's changes, again on top of the file
-    for (const [k, fn] of pending) {
-        try {
-            const v = fn(merged[k]);
-            if (v === undefined) delete merged[k];
-            else merged[k] = v;
-        }
-        catch (e) {
-            // one bad change never loses the file
-        }
-    }
+    const merged = replayChanges(fromFile, pending);
     pending = [];
     data = merged;
     writeMirror();

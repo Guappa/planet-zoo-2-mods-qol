@@ -56,8 +56,12 @@ export function readAnimal(context) {
         name: get(context, 'name'),
         // genetics medal of the Rating column: 'none'|'bronze'|'silver'|'gold'
         medal: get(context, 'ratings'),
-        // the Appeal column, a formatted string; parse with appealOf() (pricing.js)
-        appeal: get(context, 'appeal'),
+        // what the info panel shows under "Colour morph" (a label or loc
+        // token, maybe a "normal" word); see morphOf() in pricing.js
+        colormorph: get(context, 'colormorphLabel'),
+        // where it came from ("[AnimalExchange_Source_Description:Value=|Frontier Zoo|]"):
+        // a Frontier zoo means the market won't take it (marketdesk Quick trade)
+        source: get(context, 'source'),
         key: childKey(context),
         genes: {
             size: gene(context, 'size'),

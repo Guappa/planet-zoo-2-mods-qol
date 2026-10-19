@@ -281,6 +281,7 @@
 .PZ2QoL_kpMainSub { font-size: 0.78rem; line-height: 1.05rem; color: var(--qol-ink-soft); }
 .PZ2QoL_kpMainTools { flex-shrink: 0; align-items: center; }
 .PZ2QoL_kpMainTools .PZ2QoL_kpSwitch { margin-left: 0.6rem; }
+.PZ2QoL_kpMainTitles .PZ2QoL_kpAct.kpShowPlace { align-self: flex-start; flex-shrink: 0; margin-top: 0.3rem; }
 .PZ2QoL_kpHint { flex-shrink: 0; margin-top: 0.45rem; font-size: 0.74rem; color: var(--qol-ink-soft); }
 
 .PZ2QoL_kpTabs { flex-shrink: 0; flex-wrap: wrap; margin-bottom: 0.55rem; }
@@ -410,6 +411,8 @@
 .PZ2QoL_kpTag.old { background-color: rgba(122, 104, 86, 0.24); color: #6E5A48; }
 .PZ2QoL_kpTag.ending { background-color: rgba(201, 150, 64, 0.22); color: #8A6420; }
 .PZ2QoL_kpTag.preg { background-color: rgba(231, 124, 152, 0.2); color: #B4536C; }
+.PZ2QoL_kpTag.storage { background-color: rgba(84, 120, 150, 0.18); color: #3F6684; }
+.PZ2QoL_kpTag.listed { background-color: rgba(201, 150, 64, 0.22); color: #8A6420; }
 
 /* ------------------------------------------------------------ matrix */
 
@@ -753,6 +756,12 @@
 }
 .PZ2QoL_kpSelfName { font-size: 1.1rem; font-weight: bold; white-space: nowrap; overflow: hidden; }
 .PZ2QoL_kpMateHead { flex-shrink: 0; align-items: center; margin-top: 0.9rem; }
+.PZ2QoL_kpMateStoreRow > .PZ2QoL_kpSwitch { flex-shrink: 0; margin-left: 0.6rem; }
+/* Find a mate: the Animal Storage line under the head (Franchise) */
+.PZ2QoL_kpMateStoreRow { flex-shrink: 0; align-items: center; margin-top: 0.25rem; }
+.PZ2QoL_kpMateStore { flex-shrink: 1; min-width: 0; font-size: 0.74rem; line-height: 1.25; color: #3F6684; }
+.PZ2QoL_kpMateStore.off { color: var(--qol-ink-faint); }
+.PZ2QoL_kpMate.stored { background-color: #F6F9FB; }
 .PZ2QoL_kpMateSection {
   flex-shrink: 0;
   align-items: center;
@@ -867,7 +876,7 @@
   top: 2.5rem;
   right: 0;
   z-index: 10;
-  width: 19rem;
+  width: 20.5rem; /* fits "Species names in the game's language" */
   flex-direction: column;
   padding: 0.55rem 0.8rem 0.7rem 0.8rem;
   border-radius: 0.8rem;
@@ -878,6 +887,12 @@
 .PZ2QoL_kpPopover.open { display: flex; }
 .PZ2QoL_kpPopHead { margin: 0.45rem 0 0.2rem 0; font-size: 0.66rem; font-weight: bold; letter-spacing: 0.07rem; text-transform: uppercase; color: var(--qol-ink-faint); }
 .PZ2QoL_kpPopNote { margin-top: 0.35rem; font-size: 0.72rem; line-height: 1rem; color: var(--qol-ink-soft); white-space: normal; }
+.PZ2QoL_kpPopLabel { margin: 0.3rem 0 0.2rem 0; font-size: 0.74rem; color: var(--qol-ink-soft); }
+.PZ2QoL_kpPopSub { margin-top: 0.35rem; font-size: 0.78rem; color: var(--qol-ink-soft); }
+.PZ2QoL_kpMutedList { flex-wrap: wrap; margin-top: 0.2rem; }
+.PZ2QoL_kpMutedChip { align-items: center; height: 1.5rem; margin: 0.12rem 0.25rem 0.12rem 0; padding: 0 0.55rem; border-radius: 0.75rem; background-color: var(--qol-chip); font-size: 0.78rem; color: var(--qol-ink); cursor: pointer; }
+.PZ2QoL_kpMutedChip:hover { background-color: var(--qol-chip-hover); }
+.PZ2QoL_kpMutedX { margin-left: 0.4rem; font-size: 0.68rem; color: var(--qol-ink-faint); }
 .PZ2QoL_kpSeg { align-self: flex-start; align-items: center; padding: 0.15rem; border-radius: 0.9rem; background-color: var(--qol-chip); }
 .PZ2QoL_kpSegItem { align-items: center; height: 1.5rem; padding: 0 0.85rem; border-radius: 0.75rem; font-size: 0.82rem; color: var(--qol-ink-soft); cursor: pointer; }
 .PZ2QoL_kpSegItem:hover { color: var(--qol-ink); }
@@ -905,6 +920,8 @@
 .PZ2QoL_kpSwitch.on .PZ2QoL_kpSwitchKnob { transform: translateX(0.93rem); }
 .PZ2QoL_kpSwitchLabel { margin-left: 0.5rem; font-size: 0.82rem; font-weight: bold; white-space: nowrap; }
 .PZ2QoL_kpSwitch.disabled { opacity: 0.4; cursor: default; }
+.PZ2QoL_kpSeg.kpBoxedAfter { margin: 0.1rem 0 0.15rem 2.6rem; }
+.PZ2QoL_kpSeg.disabled { opacity: 0.4; }
 
 /* ----------------------------------------------------- minimised bar */
 
@@ -926,3 +943,10 @@
 .PZ2QoL_kpMiniTitles { flex-direction: column; margin-right: 0.4rem; }
 .PZ2QoL_kpMiniTitle { font-size: 0.86rem; font-weight: bold; white-space: nowrap; }
 .PZ2QoL_kpMiniText { font-size: 0.72rem; color: var(--qol-ink-soft); white-space: nowrap; }
+
+/* trade shortcuts in Find a mate (tradejump.js): Storage / Market */
+.PZ2QoL_kp .PZ2QoL_kpTradeRow { display: flex; flex-direction: row; flex-shrink: 0; flex-wrap: wrap; align-items: center; }
+.PZ2QoL_kp .PZ2QoL_kpTradeRow > .PZ2QoL_kpAct { margin-right: 0.4rem; }
+.PZ2QoL_kp .PZ2QoL_tradeNote { flex-shrink: 1; align-items: center; margin-top: 0.3rem; font-size: 0.74rem; color: var(--qol-ink-soft); white-space: normal; }
+.PZ2QoL_kp .PZ2QoL_tradeNote.warn { color: var(--kp-risk-ink); font-weight: bold; }
+.PZ2QoL_kp .PZ2QoL_tradeNote.empty { display: none; }

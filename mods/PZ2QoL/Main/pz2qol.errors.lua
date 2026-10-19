@@ -102,6 +102,8 @@ Errors.Report = function(self, sSource, sTitle, sDetail, bShow)
 	tEntries[#tEntries + 1] = tEntry
 	if self.Core then
 		self.Core:Mark("report_" .. tEntry.sSource)
+		-- the detailed log (debug builds): what was reported, and whether shown
+		pcall(self.Core.Log, self.Core, "lua", "report", { src = tEntry.sSource, title = tEntry.sTitle, detail = tEntry.sDetail, show = tEntry.bShow })
 	end
 	if #tEntries > self.nMaxEntries then
 		table.remove(tEntries, 1)
@@ -175,6 +177,11 @@ Errors.OnDatabaseErrorMessages = function(self, tMessages)
 			local sRequest = enumName(tFranchise, tRequestTypeNames, tMsg.nRequestType) or ("request #" .. tostring(tMsg.nRequestType))
 			local sHint = tDatabaseErrorHints["DatabaseError_" .. sError] or ""
 			if sError ~= "Ok" then
+				-- the detailed log (debug builds): code, name and request
+				if self.Core then
+					pcall(self.Core.Log, self.Core, "server", "error", { code = tMsg.nError, name = sName or "?", req = tMsg.nRequestType,
+						reqName = sRequest, listeners = #self.tServerErrorListeners })
+				end
 				-- first, so a failing report can't hide it (the market desk
 				-- engine waits for its listing's answer)
 				for _, fnListener in ipairs(self.tServerErrorListeners) do

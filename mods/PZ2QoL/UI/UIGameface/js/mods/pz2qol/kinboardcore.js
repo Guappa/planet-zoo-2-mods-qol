@@ -10,7 +10,7 @@
 // Destinations come from the Lua side (the game's own checks):
 //   { bySpecies: { <species>: { <habitatId>: { ok, reason } } },
 //     habitats: [{ id, name }], tradeCentre: { id, name } | null }
-import { buildKinModel, normalizeSnapshot, isCollective, severityRank, offspringScore, predictOffspring, fertileNow, fertilityText, Sex } from './kincore.js';
+import { buildKinModel, normalizeSnapshot, isCollective, severityRank, offspringScore, predictOffspring, fertileNow, fertilityText, Sex, withStored, pairSeverity, compatibleSexes } from './kincore.js';
 
 export const TRADE = 'trade';
 const COUNTED = s => s === 'risk' || s === 'kin' || s === 'future';
@@ -21,6 +21,18 @@ export function canMove(a) {
     return !!a && !a.exhibit && !a.moving && a.alive !== false && (a.lt === 'habitat' || a.lt === 'trade' || (!a.lt && !!a.hab));
 }
 
+// A pregnant animal stays where she is: she can't be sold and has to give
+// birth first. Kin's own plans (Suggest fixes, the breeding programme, Thin
+// out) never move her and Execute skips such a move unless the player
+// planned it by hand (the game itself allows moving her: its move
+// preventers are only dead and escaped, RelocateAnimalsPopup
+// g_tMovePreventers).
+export function isPinned(a) {
+    return !!a && !!a.preg;
+}
+
+export const PREGNANT_STAYS = "pregnant: she stays until she gives birth (she can't be sold)";
+
 function emptyCounts() {
     return { risk: 0, kin: 0, future: 0, held: 0, covered: 0 };
 }
@@ -29,7 +41,8 @@ function emptyCounts() {
 
 // Every species in the zoo (not exhibits, shoals or colonies), worst
 // problems first.
-export function speciesList(model) {
+// `muted` (a Set, optional): those species are flagged and listed after the rest.
+export function speciesList(model, { muted = null } = {}) {
     if (!model) return [];
     const map = new Map();
     for (const a of model.animals.values()) {
@@ -47,8 +60,8 @@ export function speciesList(model) {
         const s = map.get(p.species);
         if (s && p.severity in s.counts) s.counts[p.severity]++;
     }
-    return Array.from(map.values()).map(s => Object.assign(s, { habitats: Array.from(s.habitats) }))
-        .sort((x, y) => y.counts.risk - x.counts.risk || y.counts.kin - x.counts.kin || y.counts.future - x.counts.future
+    return Array.from(map.values()).map(s => Object.assign(s, { habitats: Array.from(s.habitats), muted: !!(muted && muted.has(s.species)) }))
+        .sort((x, y) => (x.muted - y.muted) || y.counts.risk - x.counts.risk || y.counts.kin - x.counts.kin || y.counts.future - x.counts.future
             || y.animals - x.animals || (x.species < y.species ? -1 : 1));
 }
 
@@ -94,7 +107,8 @@ function modelOptsOf(model) {
 export function simulatePlan(model, plan, destinations) {
     if (!model) return null;
     if (!plan || !plan.length) return model;
-    return buildKinModel(plannedSnapshot(model, plan, destinations), modelOptsOf(model));
+    // a plan never changes parentage: the model's pedigree caches carry over
+    return buildKinModel(plannedSnapshot(model, plan, destinations), Object.assign({}, modelOptsOf(model), { ped: model.ped || null }));
 }
 
 // What a plan changes: pairs it removes and pairs it creates (counted
@@ -175,6 +189,13 @@ const DROP_AFTER_MISSES = 3;
 
 function nameKey(s) {
     return String(s || '').trim().toLowerCase();
+}
+
+// May a saved assignment that matches nothing count as "not found this load"?
+// Only when the scan sent its full habitat list (empty habitats too): without
+// it an empty habitat is missing from the model and would age out wrongly.
+export function fullHabitatList(model) {
+    return !!(model && model.snapshot && Array.isArray(model.snapshot.habs) && model.snapshot.habs.length);
 }
 
 // The zoo's habitats as fingerprints: [{ id, name, names, hid, guids }].
@@ -333,10 +354,14 @@ function countsOf(animals) {
 //   columns: [{ id, name, kind: 'habitat' | 'trade' | 'away', dest: { ok, reason } | null,
 //               animals: [{ a, severity, pairs, planned: 'in' | null, from }],
 //               leaving: [{ a, to, toName }], other: [{ species, count }], counts, risk: counts }]
-export function boardColumns(model, species, plan, destinations, { includeEmpty = true, assignments = null } = {}) {
+// `after`: the plan's simulated model when the caller has it already
+// (simulatePlan(model, plan, destinations)); saves building it again.
+// `stored`: the player's stored adults of the species (kincore normalizeStored);
+// the trade column then carries `stored` (storedCards), else an empty list.
+export function boardColumns(model, species, plan, destinations, { includeEmpty = true, assignments = null, after: given = null, stored = null } = {}) {
     if (!model || !species) return [];
     const assign = normalizeAssignments(assignments);
-    const after = simulatePlan(model, plan, destinations);
+    const after = given || simulatePlan(model, plan, destinations);
     const moves = new Map((plan || []).map(m => [String(m.id), m]));
     const columns = new Map();
     const col = (id, name, kind) => {
@@ -375,6 +400,8 @@ export function boardColumns(model, species, plan, destinations, { includeEmpty 
     // the trade centre is always offered: the Lua side finds it when the
     // move is made (the game's own "send to trade centre" does the same)
     col(TRADE, destName(model, TRADE, destinations), 'trade');
+    // the player's stored adults (Franchise): read-only, outside counts and risk
+    col(TRADE, destName(model, TRADE, destinations), 'trade').stored = storedCards(model, species, stored);
     // the other species sharing each habitat, and its risks for this species
     for (const c of columns.values()) {
         c.counts = countsOf(c.animals);
@@ -402,16 +429,69 @@ export function boardColumns(model, species, plan, destinations, { includeEmpty 
         || (y.risk.risk - x.risk.risk) || (y.animals.length - x.animals.length) || (x.name < y.name ? -1 : 1));
 }
 
+// ------------------------------------------------ stored adults (Franchise)
+
+// Stored adults the trade column shows before "N more".
+export const STORED_SHOW = 6;
+const storedCardCache = new WeakMap(); // stored answer -> { model, species, out }
+
+// The player's stored adults of one species for the pinned trade column
+// (kinmoves requestStoredAdults -> kincore normalizeStored). The park scan
+// sees only the stored animals that still have an entity (they are in the
+// trade column already); the rest exist in the park only as hub records,
+// and the game shows the park only the adults among them. Read-only: never
+// in model.animals, counts, risk or a plan. An animal already scanned in the
+// park (same guid or id) is skipped.
+//   -> [{ a, severity, pairs: [{ other, rel, tier, severity }] }]
+// pairs: its relatives among the species' park animals of a compatible sex
+// (merged pedigree, kincore withStored), worst first; distant kin left out.
+export function storedCards(model, species, stored) {
+    if (!model || !species || !stored || stored.error || !Array.isArray(stored.animals) || !stored.animals.length) return [];
+    const hit = storedCardCache.get(stored);
+    if (hit && hit.model === model && hit.species === species) return hit.out;
+    const ids = new Set(), guids = new Set(), park = [];
+    for (const a of model.animals.values()) {
+        ids.add(String(a.id));
+        if (a.guid) guids.add(String(a.guid));
+        if (a.species === species && !a.exhibit && a.alive !== false && a.guid) park.push(a);
+    }
+    const view = withStored(model, stored);
+    const ped = (view && view.ped) || model.ped;
+    const close = typeof model.closeKinship === 'number' ? model.closeKinship : 0.0625;
+    const out = [];
+    for (const a of stored.animals) {
+        if (!a || a.species !== species || ids.has(String(a.id)) || (a.guid && guids.has(String(a.guid)))) continue;
+        const pairs = [];
+        if (a.guid && ped) {
+            for (const o of park) {
+                if (!compatibleSexes(a, o)) continue;
+                const rel = ped.relation(a.guid, o.guid);
+                if (!rel) continue;
+                const tier = rel.game ? 'game' : rel.kinship >= close - 1e-9 ? 'close' : 'distant';
+                if (tier === 'distant') continue;
+                pairs.push({ other: o, rel, tier, severity: pairSeverity(a, o, tier) });
+            }
+        }
+        pairs.sort((p, q) => severityRank(q.severity) - severityRank(p.severity) || q.rel.kinship - p.rel.kinship);
+        out.push({ a, severity: pairs.length ? pairs[0].severity : null, pairs });
+    }
+    out.sort((x, y) => severityRank(y.severity) - severityRank(x.severity) || (x.a.sex - y.a.sex) || (x.a.name < y.a.name ? -1 : x.a.name > y.a.name ? 1 : 0));
+    storedCardCache.set(stored, { model, species, out });
+    return out;
+}
+
 // --------------------------------------------------------- plan editing
 
 // Adds or replaces the move for one animal; moving it back home removes it.
-export function setMove(model, plan, id, to) {
+// byPlayer: the player planned it by hand (drag, Move N here); only such a
+// move of a pregnant animal is run (isPinned).
+export function setMove(model, plan, id, to, { byPlayer = false } = {}) {
     const a = model && model.animals.get(String(id));
     const out = (plan || []).filter(m => String(m.id) !== String(id));
     if (!a) return out;
     const home = a.hab || (a.lt === 'trade' ? TRADE : null);
     if (to == null || String(to) === String(home)) return out;
-    out.push({ id: String(id), to: String(to) });
+    out.push(byPlayer ? { id: String(id), to: String(to), byPlayer: true } : { id: String(id), to: String(to) });
     return out;
 }
 
@@ -437,6 +517,11 @@ export function planProblems(model, plan, destinations, { assignments = null } =
             continue;
         }
         if (!canMove(a)) out.push({ id: m.id, text: `${a.name} cannot be moved right now${a.moving ? ' (already on the move)' : ''}.` });
+        else if (isPinned(a)) {
+            out.push(m.byPlayer
+                ? { id: m.id, warn: true, preg: true, text: `${a.name} is pregnant: the game lets you move her, but she can't be sold and has to give birth first.` }
+                : { id: m.id, preg: true, text: `${a.name} is pregnant: Kin's plans never move her (she has to give birth first). Run skips this move.` });
+        }
         if (m.to !== TRADE) {
             const d = habitatOk(destinations, a.species, m.to);
             if (d && !d.ok) out.push({ id: m.id, text: `${a.name}: ${d.reason || 'not a suitable habitat'}` });
@@ -544,7 +629,7 @@ export function suggestPlan(model, species, destinations, { maxMoves = 12, allow
         }
         const candidates = Array.from(load.entries())
             .map(([id, n]) => ({ a: current.animals.get(id), n }))
-            .filter(x => x.a && canMove(model.animals.get(x.a.id)) && !tried.has(x.a.id) && !plan.some(m => m.id === x.a.id))
+            .filter(x => x.a && canMove(model.animals.get(x.a.id)) && !isPinned(model.animals.get(x.a.id)) && !tried.has(x.a.id) && !plan.some(m => m.id === x.a.id))
             .sort((x, y) => y.n - x.n || (y.a.juv - x.a.juv) || ((y.a.sex === Sex.Male) - (x.a.sex === Sex.Male)) || (x.a.name < y.a.name ? -1 : 1));
         if (!candidates.length) break;
         // the best move among the most loaded animals

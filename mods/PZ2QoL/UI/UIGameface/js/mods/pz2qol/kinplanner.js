@@ -20,17 +20,22 @@ import {
     SEVERITY_INFO, Sex, canLocate, explainRelation, habitatSummary, holdReason, mateCandidates, offspringScore, percent, predictOffspring, relationWord,
 } from '/js/mods/pz2qol/kincore.js';
 import {
-    COUNTED, buildMatrix, countWord, kinshipFraction, mateSections, overviewGroups, plannerHabitats, resolveState,
+    COUNTED, buildMatrix, countWord, kinshipFraction, matrixSig, mateSections, overviewGroups, plannerHabitats, resolveState,
     speciesTabs, stateFromOpen, tierNote, zooCounts,
 } from '/js/mods/pz2qol/kinplannercore.js';
 import {
-    getKinModel, getKinSettings, getKinState, isBreedingHeatmapOn, locateAnimal, markKinActive, onKin, onKinSettings,
+    getKinModel, getKinSettings, getKinState, isBreedingHeatmapOn, locateAnimal, locatePlace, markKinActive, onKin, onKinSettings,
     requestKinScan, setBreedingHeatmap, setContraception, setKinSettings,
 } from '/js/mods/pz2qol/kin.js';
 import { ageWord, hideKinCard, offspringBlock, placeOf, severityTag, sexClass, sexSymbol } from '/js/mods/pz2qol/kinui.js';
 import { fertilityTag, fertilityText } from '/js/mods/pz2qol/kincore.js';
 import { clear, h, icon, setClass, setText, tierOf } from '/js/mods/pz2qol/ui.js';
 import { breadcrumb, reportError } from '/js/mods/pz2qol/errors.js';
+import { cachedStoredAdults, isAskingStored, requestStoredAdults } from '/js/mods/pz2qol/kinmoves.js';
+import { withStored } from '/js/mods/pz2qol/kincore.js';
+import { mutedSpecies, onMuted, setMuted } from '/js/mods/pz2qol/kinmute.js';
+import { BOXED_AFTER_CHOICES } from '/js/mods/pz2qol/kinboxedcore.js';
+import { tradeRow } from '/js/mods/pz2qol/tradejump.js';
 import {
     btn as kitBtn, closeButton, closeOtherPanels, countPills, makeGuard, makeScroll, panelApi, placePanel, refreshBars as kitRefreshBars,
     registerPanel, restoreScroll, speciesName, switchEl as kitSwitch, trunc, wheelScroll,
@@ -63,6 +68,7 @@ const S = {
     popover: false,
     st: { habId: null, species: null, pair: null, animal: null, includeYoung: true },
     mateYoung: false,
+    mateStorage: true,   // Find a mate: stored adults too (Franchise)
     mateAll: false,
     mateOpen: null,      // candidate id expanded in the mate list
     pendingOpen: null,   // open options waiting for the first model
@@ -108,7 +114,7 @@ function ensureRoot() {
     el.heat = btn('Breeding heat map', 'Icon_Heatmap', toggleHeatmap, {
         title: "Shows the game's own inbreeding-risk overlay in the world. The overlay uses the game's rule, which may differ from Kin's.",
     });
-    el.settingsBtn = btn('Settings', 'IconSettings', () => setPopover(!S.popover), { title: 'Alerts and what counts as close kin' });
+    el.settingsBtn = btn('Settings', 'IconSettings', () => setPopover(!S.popover), { title: 'Alerts, names and what counts as close kin' });
     el.popover = h('div.PZ2QoL_kpPopover');
     el.popover.addEventListener('mousedown', e => e.stopPropagation());
     const settingsWrap = h('div.PZ2QoL_kpPopWrap', null, el.settingsBtn, el.popover);
@@ -272,11 +278,31 @@ function renderPopover(settings) {
     }, 'Also alert for close relatives the game does not warn about (cousins, grandparents...)');
     setClass(kin, 'disabled', !settings.alerts);
     p.appendChild(kin);
+    p.appendChild(switchEl('Animals growing up', settings.alertLife !== false, () => setKinSettings({ alertLife: getKinSettings().alertLife === false }),
+        'A note when a young animal will grow up into a problem: group too big, pushed out of its group, or an inbreeding risk. Nothing when it is fine.'));
+    p.appendChild(h('div.PZ2QoL_kpPopLabel', { text: 'Pop up for' }));
+    p.appendChild(h('div.PZ2QoL_kpSeg', null, [
+        { value: 'action', label: 'Needs you', tip: 'Only notices that need you to act pop up; the rest go to the notice log' },
+        { value: 'heads', label: 'Heads-up too', tip: 'Heads-ups pop up as well' },
+    ].map(t => h(`div.PZ2QoL_kpSegItem${(settings.toastLevel === 'action' ? 'action' : 'heads') === t.value ? '.on' : ''}`, {
+        title: t.tip,
+        'data-toast-level': t.value,
+        onClick: guard('Pop up for', () => setKinSettings({ toastLevel: t.value })),
+    }, h('span', { text: t.label })))));
+    renderBoxedSettings(p, settings);
+    p.appendChild(h('div.PZ2QoL_kpPopHead', { text: 'Trade centre' }));
+    p.appendChild(switchEl('Quarantine sick animals first', settings.quarantineSick !== false, () => setKinSettings({ quarantineSick: getKinSettings().quarantineSick === false }),
+        "When the mod sends an infected or injured animal to the trade centre (a plan, Thin out, the Breeding programme), it goes to a quarantine first: the market won't take a sick animal, and the quarantine gets it treated. When it passes, a notice offers to send it on."));
+    renderMutedList(p);
     p.appendChild(h('div.PZ2QoL_kpPopHead', { text: 'Show' }));
     p.appendChild(switchEl('Covered pairs', settings.showCovered, () => setKinSettings({ showCovered: !getKinSettings().showCovered }),
         'Related pairs kept apart by contraception or infertility'));
     p.appendChild(switchEl('Pair bonds count as protection', settings.bondHolds !== false, () => setKinSettings({ bondHolds: getKinSettings().bondHolds === false }),
         'A related pair the game will not let breed because one of them is bonded to another mate (monogamy) shows as Bonded elsewhere, not as a risk. It becomes a risk again when the bond ends.'));
+    p.appendChild(h('div.PZ2QoL_kpPopHead', { text: 'Names' }));
+    p.appendChild(switchEl("Species names in the game's language", settings.gameSpeciesNames !== false,
+        () => setKinSettings({ gameSpeciesNames: getKinSettings().gameSpeciesNames === false }),
+        "On: species names as the game shows them, in your game language. Off: the game's internal species names (e.g. Warthog Common), the same in every language."));
     p.appendChild(h('div.PZ2QoL_kpPopHead', { text: 'Close kin from' }));
     const seg = h('div.PZ2QoL_kpSeg', null, THRESHOLDS.map(t => h(`div.PZ2QoL_kpSegItem${Math.abs(settings.closeKinship - t.value) < 1e-9 ? '.on' : ''}`, {
         title: t.tip,
@@ -284,6 +310,41 @@ function renderPopover(settings) {
     }, h('span', { text: t.label }))));
     p.appendChild(seg);
     p.appendChild(h('div.PZ2QoL_kpPopNote', { text: 'Kinship at or above this counts as close kin. 1/16 is first cousins.' }));
+}
+
+// Boxed with no destination (kinboxed.js): on/off, after how long, trade centre.
+function renderBoxedSettings(p, settings) {
+    const on = settings.boxedAlert !== false;
+    p.appendChild(switchEl('Boxed with nowhere to go', on, () => setKinSettings({ boxedAlert: getKinSettings().boxedAlert === false }),
+        'A Needs-you alert when an animal waits in its transport box with no destination (the game only warns after a long time)'));
+    const after = Number(settings.boxedAfterS) || 10;
+    const seg = h('div.PZ2QoL_kpSeg.kpBoxedAfter', null, BOXED_AFTER_CHOICES.map(sec => h(`div.PZ2QoL_kpSegItem${after === sec ? '.on' : ''}`, {
+        title: `Alert after ${sec} seconds in the box`,
+        'data-boxed-after': String(sec),
+        onClick: guard('Boxed after', () => setKinSettings({ boxedAfterS: sec })),
+    }, h('span', { text: sec < 60 ? `${sec} s` : `${sec / 60} min` }))));
+    setClass(seg, 'disabled', !on);
+    p.appendChild(seg);
+    const trade = switchEl('Trade centre too', settings.boxedIncludeTrade === true, () => {
+        if (getKinSettings().boxedAlert !== false) setKinSettings({ boxedIncludeTrade: getKinSettings().boxedIncludeTrade !== true });
+    }, 'Also alert for animals waiting boxed at the trade centre (off: they are expected to wait there)');
+    setClass(trade, 'disabled', !on);
+    p.appendChild(trade);
+}
+
+// Muted species (no alerts, this zoo): click one to unmute it.
+function renderMutedList(p) {
+    const muted = Array.from(mutedSpecies()).map(sp => ({ sp, name: speciesName(sp) }))
+        .sort((x, y) => (x.name < y.name ? -1 : x.name > y.name ? 1 : 0));
+    p.appendChild(h('div.PZ2QoL_kpPopSub', { text: `Muted species (${muted.length})` }));
+    if (!muted.length) {
+        p.appendChild(h('div.PZ2QoL_kpPopNote', { text: 'None. Mute a species from an alert or the Species board; its badges stay.' }));
+        return;
+    }
+    p.appendChild(h('div.PZ2QoL_kpMutedList', null, muted.map(m => h('div.PZ2QoL_kpMutedChip', {
+        title: `Unmute ${m.name}`,
+        onClick: guard('Unmute', () => setMuted(m.sp, false)),
+    }, h('span', { text: trunc(m.name, 22) }), h('span.PZ2QoL_kpMutedX', { text: 'Unmute' })))));
 }
 
 // The species board for what is on screen here (the habitat's species, or
@@ -370,11 +431,12 @@ function waitingState(settings) {
                 : btn('Rescan', 'Icon_CircleWithArrows', () => requestKinScan('planner', { force: true }), { cls: 'primary', tint: 'white' })));
 }
 
-function mainHead(title, sub, extra) {
+function mainHead(title, sub, extra, below) {
     return h('div.PZ2QoL_kpMainHead', null,
         h('div.PZ2QoL_kpMainTitles', null,
             h('div.PZ2QoL_kpMainTitle', { text: title }),
-            h('div.PZ2QoL_kpMainSub', { text: sub })),
+            h('div.PZ2QoL_kpMainSub', { text: sub }),
+            below || null),
         h('div.PZ2QoL_kpFlex'),
         extra || null);
 }
@@ -449,7 +511,7 @@ function renderHabitat(model, settings) {
     }, 'Show juveniles in the matrix (they are future risks, not current ones)');
     el.appendChild(mainHead(trunc(sum.name || 'Habitat', 34),
         `${sum.kind === 'exhibit' ? 'Exhibit' : 'Habitat'} · ${animals} animal${animals === 1 ? '' : 's'} · ${sum.species.length} species`,
-        h('div.PZ2QoL_kpMainTools', null, countPills(settingsCounts(sum.counts, settings)), young)));
+        h('div.PZ2QoL_kpMainTools', null, countPills(settingsCounts(sum.counts, settings)), young), showPlaceButton(sum)));
     const tabs = speciesTabs(sum, settings.showCovered);
     if (tabs.length > 1) {
         el.appendChild(h('div.PZ2QoL_kpTabs', null, tabs.map(t => {
@@ -469,11 +531,40 @@ function renderHabitat(model, settings) {
         el.appendChild(noPairsState(m));
         return;
     }
-    el.appendChild(matrixEl(m, keep));
+    // the same squares as last time (most scans): keep the built matrix
+    const sig = matrixSig(m, settings);
+    const mc = S.mxCache;
+    if (keep && mc && mc.sig === sig && mc.matrix) {
+        el.appendChild(mc.node);
+        S.boxes.matrix = mc.box;
+        S.matrix = mc.matrix;
+        markSelection();
+        restoreScroll(mc.box, S.scroll.mx || 0, S.scroll.my || 0);
+    }
+    else {
+        const node = matrixEl(m, keep);
+        el.appendChild(node);
+        S.mxCache = { sig, node, box: S.boxes.matrix, matrix: S.matrix };
+    }
     const hints = [m.unisex ? 'Each square: how the column animal is related to the row animal.' : 'Each square: what she is to him.',
         'Click a square for details, a name to find that animal a mate.'];
     if (m.hiddenYoung) hints.push(`${m.hiddenYoung} young hidden.`);
     el.appendChild(h('div.PZ2QoL_kpHint', { text: hints.join(' ') }));
+}
+
+// "Show in park": the camera to this habitat or exhibit and its info panel,
+// as the game's Habitats / Exhibits lists do; the planner shrinks to a bar.
+function showPlaceButton(sum) {
+    if (!sum || sum.id == null) return null;
+    let sample = null;
+    for (const sp of sum.species) if (!sample && sp.animals.length) sample = sp.animals[0];
+    const what = sum.kind === 'exhibit' ? 'exhibit' : 'habitat';
+    return h('div.PZ2QoL_kpAct.kpShowPlace', {
+        title: `Move the camera to this ${what} and open its info panel, to check and move animals there. The planner shrinks to a small bar.`,
+        onClick: guard('Show in park', () => {
+            if (locatePlace(sum.id, sample ? sample.id : '')) minimize(`Showing ${sum.name || 'the ' + what}`);
+        }),
+    }, icon('IconLocation', 'brown', 'xs'), h('span', { text: 'Show in park' }));
 }
 
 function settingsCounts(counts, settings) {
@@ -703,7 +794,7 @@ function renderDetail(model, settings) {
     clear(el);
     let key = 'help';
     if (model && S.st.pair) key = `pair|${S.st.pair.a}|${S.st.pair.b}`;
-    else if (model && S.st.animal != null) key = `animal|${S.st.animal}|${S.mateYoung}|${S.mateAll}`;
+    else if (model && S.st.animal != null) key = `animal|${S.st.animal}|${S.mateYoung}|${S.mateStorage}|${S.mateAll}`;
     const keep = S.keys.detail === key || (key.startsWith('animal|') && S.keys.detail.startsWith(`animal|${S.st.animal}|`));
     S.keys.detail = key;
     const box = makeScroll('detail', { onScroll: (x, y) => { S.scroll.detail = y; } });
@@ -872,20 +963,44 @@ function mateFinder(model, settings) {
         h('div.PZ2QoL_kpSelfName', { text: `${sexSymbol(self.sex)} ${self.name}` }),
         h('div.PZ2QoL_kpDuoLine', { text: animalLine(model, self) })));
     kids.push(h('div.PZ2QoL_kpActRow', null, contraButton(self), locateButton(self)));
+    // trade shortcuts: the hub's Animal Storage / Market for this species (the planner closes)
+    kids.push(tradeRow(self.species, { rowCls: 'PZ2QoL_kpTradeRow', btnCls: 'PZ2QoL_kpAct', onOpened: () => closeKinPlanner() }));
     const bondNote = bondedNote(model, self);
     if (bondNote) kids.push(h('div.PZ2QoL_kpDetText', { text: bondNote }));
-    const cands = mateCandidates(model, self.id, { includeJuveniles: S.mateYoung });
+    // the player's stored adults too (Franchise only, as the game's own
+    // Compare Mates lists them); read once a minute, on demand
+    const store = storedFor(model, self);
+    const view = store.stored ? withStored(model, store.stored) : model;
+    const cands = mateCandidates(model, self.id, { includeJuveniles: S.mateYoung, stored: store.stored || null });
     const want = self.sex === Sex.Male ? 'females' : self.sex === Sex.Female ? 'males' : 'partners';
+    const nStored = cands.filter(c => c.stored).length;
+    const nZoo = cands.length - nStored;
     kids.push(h('div.PZ2QoL_kpMateHead', null,
-        h('div.PZ2QoL_kpSubhead.flat', { text: `${cands.length} possible ${want} in the zoo` }),
+        h('div.PZ2QoL_kpSubhead.flat', { text: store.use ? `${cands.length} possible ${want}` : `${cands.length} possible ${want} in the zoo` }),
         h('div.PZ2QoL_kpFlex'),
         switchEl('Young too', S.mateYoung, () => {
             S.mateYoung = !S.mateYoung;
             renderDetail(getKinModel(), getKinSettings());
             setTimeout(refreshBars, 0);
         }, 'Also list juveniles (they can breed once grown)')));
+    // Franchise: a second row with the storage count and its switch
+    if (model.mode === 'franchise') {
+        let line = null;
+        if (store.use) {
+            const text = store.pending ? `${nZoo} in the zoo · Checking your Animal Storage…`
+                : store.error ? `${nZoo} in the zoo · Animal Storage isn't available here`
+                    : `${nZoo} in the zoo · ${nStored} in your Animal Storage${store.stored.capped ? ` (the first ${store.stored.animals.length} stored)` : ''}`;
+            line = h(`div.PZ2QoL_kpMateStore${store.error ? '.off' : ''}`, { text });
+        }
+        kids.push(h('div.PZ2QoL_kpMateStoreRow', null, line, h('div.PZ2QoL_kpFlex'),
+            switchEl('Storage too', S.mateStorage, () => {
+                S.mateStorage = !S.mateStorage;
+                renderDetail(getKinModel(), getKinSettings());
+                setTimeout(refreshBars, 0);
+            }, "Also list the adults in your own Animal Storage (not the market), as the game's Compare Mates does")));
+    }
     if (!cands.length) {
-        kids.push(h('div.PZ2QoL_kpDetText.faint', { text: `No other ${speciesName(self.species)} ${want} in the zoo${S.mateYoung ? '' : ' (young ones hidden)'}.` }));
+        kids.push(h('div.PZ2QoL_kpDetText.faint', { text: `No other ${speciesName(self.species)} ${want} in the zoo${store.stored ? ' or your Animal Storage' : ''}${S.mateYoung ? '' : ' (young ones hidden)'}.` }));
         return detCard('mates', kids);
     }
     let shown = 0;
@@ -897,7 +1012,7 @@ function mateFinder(model, settings) {
         for (const cand of sec.cands) {
             rank++;
             if (shown >= limit) break;
-            kids.push(mateRow(model, self, cand, rank));
+            kids.push(mateRow(view, self, cand, rank));
             shown++;
         }
     }
@@ -909,6 +1024,29 @@ function mateFinder(model, settings) {
         }) }, h('span', { text: `Show all ${cands.length}` })));
     }
     return detCard('mates', kids);
+}
+
+// Stored adults for the mate finder: { use } (not here, or switched off),
+// { use, pending } (asked, the answer re-renders), { use, error } or
+// { use, stored }.
+function storedFor(model, self) {
+    if (!model || model.mode !== 'franchise' || !S.mateStorage || !self) return { use: false };
+    const c = cachedStoredAdults(self.species);
+    if (c) return c.error ? { use: true, error: c.error } : { use: true, stored: c };
+    if (!isAskingStored(self.species)) {
+        requestStoredAdults(self.species).then(() => {
+            try {
+                if (S.open && !S.minimized && S.st.animal != null) {
+                    renderDetail(getKinModel(), getKinSettings());
+                    setTimeout(refreshBars, 0);
+                }
+            }
+            catch (e) {
+                reportError('ui', 'Kin planner: stored animals failed', e, { silent: true });
+            }
+        });
+    }
+    return { use: true, pending: true };
 }
 
 // A monogamous animal bonded to a mate that lives with it: the game pairs
@@ -925,9 +1063,9 @@ function mateRow(model, self, cand, rank) {
     const a = cand.animal;
     const open = S.mateOpen === a.id;
     const word = cand.rel ? relationWord(cand.rel, a.sex) : '';
-    const place = placeOf(model, a) || 'Not in a habitat';
+    const place = a.stored ? 'Animal Storage' : placeOf(model, a) || 'Not in a habitat';
     const mated = (self.mates || []).includes(a.id) || (a.mates || []).includes(self.id);
-    const row = h(`div.PZ2QoL_kpMate.tier_${cand.tier}${cand.sameHabitat ? '.same' : ''}${open ? '.open' : ''}`);
+    const row = h(`div.PZ2QoL_kpMate.tier_${cand.tier}${cand.sameHabitat ? '.same' : ''}${a.stored ? '.stored' : ''}${open ? '.open' : ''}`);
     const top = h('div.PZ2QoL_kpMateTop', {
         title: open ? 'Click to fold' : 'Click for their expected young',
         onClick: guard('Mate', () => {
@@ -941,6 +1079,8 @@ function mateRow(model, self, cand, rank) {
         h('div.PZ2QoL_kpMateNameLine', null,
             nameSpan(a, { max: 17 }),
             mated ? h('div.PZ2QoL_kpMated.inline', { title: 'Mates now' }, icon('Icon_Heart', 'white', 'xs')) : null,
+            a.stored ? h('span.PZ2QoL_kpTag.storage', { text: 'storage', title: 'In your Animal Storage' }) : null,
+            a.stored && a.forSale ? h('span.PZ2QoL_kpTag.listed', { text: 'listed', title: 'On the market now' }) : null,
             statusTags(a, { short: true })),
         h('div.PZ2QoL_kpMateSub', null,
             cand.sameHabitat ? h('span.PZ2QoL_kpHere', { text: 'same habitat' }) : h('span.PZ2QoL_kpPlace', { text: trunc(place, 22), title: place }),
@@ -950,6 +1090,7 @@ function mateRow(model, self, cand, rank) {
     if (open) {
         const more = h('div.PZ2QoL_kpMateMore');
         more.appendChild(h('div.PZ2QoL_kpDetText', { text: explainRelation(model, self, a) }));
+        if (a.stored) more.appendChild(h('div.PZ2QoL_kpDetText.faint', { text: 'In your Animal Storage. Send it to the zoo from Animal Storage (Find a habitat places it).' }));
         const off = offspringBlock(self, a);
         if (off) more.appendChild(off);
         else more.appendChild(h('div.PZ2QoL_kpDetText.faint', { text: 'Genes not known, so no prediction for their young.' }));
@@ -1020,6 +1161,7 @@ function subscribe() {
     unsubscribe();
     S.unsub.push(onKin(() => queueRender()));
     S.unsub.push(onKinSettings(() => queueRender()));
+    S.unsub.push(onMuted(() => queueRender()));
     S.timer = setInterval(tick, TICK_MS);
 }
 
@@ -1115,6 +1257,7 @@ export function closeKinPlanner() {
         // the next open starts fresh from the overview's scroll positions
         S.boxes = {};
         S.matrix = null;
+        S.mxCache = null;
     }
     catch (e) {
         reportError('ui', 'Kin planner could not close', e, { silent: true });

@@ -21,24 +21,32 @@
 // areas from kinpanel.js.
 import { childrenOf, STORAGE_DATA, STORAGE_LIST, get, readAnimal } from '/js/mods/pz2qol/game.js';
 import {
-    adviceFor, buildOffsetControl, checkMarketFor, checkMarketForAll, fingerprint, getMarketCheck, getMultiMarketCheck, getPriceOffset, identityOf, isFranchise,
+    adviceFor, buildOffsetControl, checkMarketFor, checkMarketForAll, fingerprint, getMarketCheck, getMultiMarketCheck, getPriceOffset, identityOf, isFranchise, jobNote,
     isListingBusy, isMultiCheckBusy, isPriceCheckFresh, labelOf, listAnimals, onListerSettingChanged, onMarketCheckChanged, PRICE_CHECK_FRESH_MS,
     stopListing, stopMultiCheck,
 } from '/js/mods/pz2qol/lister.js';
 import {
-    activeFilterCount, basisScore, BLOCK_WORDS, CAUTION_WORDS, deskRows, filterRows, GENE_BASES, GENE_KEYS, normalizeFilters, resetFilters, RESULT_WORDS,
-    retryGuids, sortRows, speciesCounts, STEP_WORDS, STORAGE_TAGS, summaryText, tally, tickable, timeLeftText,
+    activeFilterCount, basisScore, BLOCK_WORDS, CAUTION_WORDS, NOID_TEXT, PREGNANT_TEXT, deskRows, filterRows, GENE_BASES, GENE_KEYS, normalizeFilters, resetFilters, RESULT_WORDS,
+    reasonText, retryGuids, tradeProblemKeys, sortRows, speciesCounts, STEP_WORDS, STORAGE_TAGS, summaryText, tally, tickable, timeLeftText, nativeFiltersOn, storageScope,
+    checkMinutes, checkPaceMs, checkSummaryText, encodeCheckJob, quickOffers, refusedGuids, uncheckedRows, verdictBlock, verdictsOfState,
+    normalizeRefused, refusedNote, REFUSED_OPTIONS,
+    acceptedMode, encodeQuickJob, FIRST_TEXT, QUICK_MODES, quickAccepted, QUICK_WARNING, quickEligible, quickMoney, quickRunSummary, quickSheet,
 } from '/js/mods/pz2qol/listercore.js';
-import { capsAgeMs, engineCaps, engineRunning, engineUsable, engineWhyNot, getEngineState, onEngineState, resolveGuids } from '/js/mods/pz2qol/listerlua.js';
+import { getPref, setPref, updatePref } from '/js/mods/pz2qol/prefs.js';
+import { onShouldBlockInput } from '/js/common/core/Input.js';
+import { capsAgeMs, deskFilters, engineCaps, engineRunning, engineUsable, engineWhyNot, getEngineState, onEngineState, resolveGuids, startEngineRun } from '/js/mods/pz2qol/listerlua.js';
+import { getPaceMs } from '/js/mods/pz2qol/pace.js';
 import { Gender, Maturity } from '/js/mods/pz2qol/scores.js';
 import { medalLabel, MEDALS } from '/js/mods/pz2qol/pricing.js';
-import { getStoragePredicates } from '/js/mods/pz2qol/listfilter.js';
+import { getStorageFilters, getStoragePredicates } from '/js/mods/pz2qol/listfilter.js';
 import { rangeSlider } from '/js/mods/pz2qol/rangeslider.js';
 import { getPriceBook, onPriceBookChanged } from '/js/mods/pz2qol/pricebook.js';
 import { paceSlider } from '/js/mods/pz2qol/pace.js';
 import { clear, fmtInt, h, setClass, setText, tierOf } from '/js/mods/pz2qol/ui.js';
 import { breadcrumb, reportError } from '/js/mods/pz2qol/errors.js';
+import { dlog, logPriceDecision } from '/js/mods/pz2qol/debuglog.js';
 import { translate } from '/js/common/core/Localisation.js';
+import { getKinSettings } from '/js/mods/pz2qol/kin.js';
 import {
     btn as kitBtn, closeButton, closeOtherPanels, makeGuard, makeScroll, placePanel, refreshBars, registerPanel, restoreScroll, speciesName, trunc,
 } from '/js/mods/pz2qol/kinpanel.js';
@@ -97,6 +105,7 @@ const D = {
     readSig: '',
     lastRead: 0,
     reading: false,
+    readAgain: false,
     caps: null,
     timer: 0,
     queued: false,
@@ -107,7 +116,114 @@ const D = {
     offset: null,
     pace: null,
     renderSig: '',
+    scope: null,             // storageScope(): what Animal Storage showed when the desk opened
+    unfilter: '',            // the game's storage filters: '' | 'clearing' | 'cleared' | 'failed'
+    cleared: false,          // cleared by the desk and not yet put back (Lua may wait for a run)
+    reveal: null,            // { n }: keep the species opened on in view as the rail fills
+    // docs/PLAN-desk-quick-release.md 4: 'list' | 'quicktrade' | 'release';
+    // always 'list' when the desk opens (a quick mode is never remembered)
+    mode: 'list',
+    sheet: null,             // the confirmation sheet: { mode, info, rows, done, openedAt }
+    labels: new Map(),       // guid -> label of the animals a quick run took (they leave storage)
 };
+
+// The live acceptance: a mode is open for more than one animal at a time
+// only after a run of exactly one was confirmed gone (prefs quickAccepted).
+// "When the server refuses a listing": 'leave' (default) | 'quicktrade' | 'release'
+function refusedOption() {
+    try {
+        return normalizeRefused(getPref('deskRefused'));
+    }
+    catch (e) {
+        return 'leave';
+    }
+}
+
+function isAccepted(mode) {
+    try {
+        return quickAccepted(mode, getPref('quickAccepted'));
+    }
+    catch (e) {
+        return quickAccepted(mode, null);
+    }
+}
+
+function takeQuickAcceptance() {
+    const m = acceptedMode(getEngineState());
+    if (!m || isAccepted(m)) return;
+    updatePref('quickAccepted', o => Object.assign({}, o && typeof o === 'object' ? o : {}, { [m]: true }));
+    breadcrumb('desk_quick_accepted');
+    dlog('desk', 'quick_accepted', { mode: m });
+    notice(`${QUICK_MODES[m].label} checked: the animal left storage as it should. You can now ${QUICK_MODES[m].label.toLowerCase()} several at a time.`, 'ok');
+}
+
+// Animals a run found the game won't trade (guid -> its reason), for this
+// page: they stay unticked and say why; Read storage again checks afresh.
+const gameBlocked = new Map();
+
+// What the game allows for each animal a listing run or Check storage has
+// selected (guid -> listercore verdictOf): market, Quick trade, Quick
+// release, Rehome (docs/PLAN-desk-quick-release.md 3.1). For the page;
+// Read storage again clears it (runs up to verdictFloor no longer count).
+const verdicts = new Map();
+let verdictFloor = 0;
+// Whether a Check storage run is this page's (its req) and what it was asked.
+const checkRuns = new Map(); // req -> { n, species }
+// GUIDs a listing run had refused by the server (this page): the player can
+// quick-trade those leftovers (developer, 2026-10-18: 12 of 28 tigers refused, 255)
+const refusedSet = new Set();
+
+// The engine's results: remember the game's refusals and verdicts, untick
+// the rows that can't be listed now.
+function takeGameBlocks() {
+    const s = getEngineState();
+    if (!s || !Array.isArray(s.results)) return;
+    let added = false;
+    for (const r of s.results) {
+        if (r.kind !== 'untradeable' || !r.guid || gameBlocked.has(r.guid)) continue;
+        gameBlocked.set(r.guid, r.detail || '');
+        added = true;
+    }
+    // the server's refusals in a listing run: offered for Quick trade
+    for (const g of refusedGuids(s)) refusedSet.add(g);
+    if (!(s.run > verdictFloor)) return applyBlocks(added);
+    for (const [guid, v] of verdictsOfState(s)) {
+        const was = verdicts.get(guid);
+        if (was && was.src === v.src && was.trade === v.trade && was.quickTrade === v.quickTrade && was.quickRelease === v.quickRelease && was.rehome === v.rehome
+            && was.values.quickTrade === v.values.quickTrade && was.values.quickRelease === v.values.quickRelease) continue;
+        verdicts.set(guid, v);
+        added = true;
+    }
+    applyBlocks(added);
+}
+
+// The rows' blocks again from the refusals and verdicts (in place, between reads).
+function applyBlocks(changed) {
+    if (!changed) return;
+    let logged = 0;
+    for (const row of D.rows) {
+        if (!row.guid) continue;
+        const v = verdicts.get(row.guid) || null;
+        if (v) {
+            const vb = verdictBlock(v);
+            row.verdict = v;
+            row.cat = vb.cat;
+            // a row block (on the market, moving, pregnant...) stays first
+            const rowBlocked = row.block && row.block !== 'untradeable' && row.block !== 'quick' && row.block !== 'rehome';
+            if (!rowBlocked) {
+                if (row.block !== vb.block && logged++ < 40) dlog('desk', 'category', { guid: row.guid, key: row.key, cat: vb.cat, block: vb.block || undefined, was: row.block || undefined, src: v.src || undefined });
+                row.block = vb.block;
+                row.blockDetail = vb.detail;
+            }
+        }
+        else if (gameBlocked.has(row.guid) && !row.block) {
+            row.block = 'untradeable';
+            row.blockDetail = gameBlocked.get(row.guid);
+        }
+        // ticks that can't be acted on now go (a quick mode ticks its own rows)
+        if (D.mode === 'list' ? row.block : !quickEligible(row, D.mode).ok) D.chosen.delete(row.id);
+    }
+}
 
 function t(s) {
     if (typeof s !== 'string') return s == undefined ? '' : String(s);
@@ -121,7 +237,65 @@ function t(s) {
 
 function notice(text, tone = 'info') {
     D.notice = { text, tone, until: Date.now() + 9000 };
+    dlog('desk', 'notice', { tone, text });
     queueRender();
+}
+
+// ------------------------------------------------------------- debug log
+// debuglog.js (debug builds only): what the desk read, showed and did.
+// Written only when it changes: the rail's counts, the shown species'
+// prices, and each shown animal's price decision (one species at a time).
+const deskLogSig = { rail: '', prices: '' };
+
+function logRead(force, pageRows, guids) {
+    try {
+        const counts = speciesCounts(D.rows);
+        const parts = counts.map(c => `${c.species}:${c.total}/${c.sellable}/${c.listed}`);
+        const sig = parts.join(' ');
+        if (force || sig !== deskLogSig.rail) {
+            deskLogSig.rail = sig;
+            dlog('desk', 'rail', {
+                source: 'storage', pageRows, rows: D.rows.length, guids: guids ? guids.size : 0, noGuid: D.rows.filter(r => !r.guid).length,
+                engine: engineUsable(D.caps, pageRows), capsOk: D.caps ? D.caps.ok : undefined, luaRows: D.caps ? D.caps.rows : undefined,
+                species: counts.length, scoped: D.scope && D.scope.filtered ? D.scope.species || 'yes' : undefined, unfilter: D.unfilter || undefined,
+            });
+            // species:total/sellable/listed, six per line
+            for (let i = 0; i < parts.length; i += 6) dlog('desk', 'rail_counts', { part: i / 6 + 1, counts: parts.slice(i, i + 6).join(' ') });
+        }
+        logPrices();
+    }
+    catch (e) {
+        // the log never breaks the desk
+    }
+}
+
+function logPrices() {
+    try {
+        const sp = D.filters && D.filters.species;
+        const rows = D.rows.filter(r => !sp || r.species === sp);
+        const priced = rows.filter(r => r.advice && r.advice.price > 0).map(r => r.advice.price).sort((x, y) => x - y);
+        const conf = {};
+        for (const r of rows) {
+            const c = (r.advice && r.advice.confidence) || 'none';
+            conf[c] = (conf[c] || 0) + 1;
+        }
+        const sig = `${sp}|${rows.length}|${priced.join(',')}|${Object.keys(conf).map(k => k + conf[k]).join(',')}`;
+        if (sig === deskLogSig.prices) return;
+        deskLogSig.prices = sig;
+        dlog('desk', 'prices', {
+            species: sp || 'all', rows: rows.length, priced: priced.length, min: priced[0], median: priced.length ? priced[Math.floor(priced.length / 2)] : undefined,
+            max: priced[priced.length - 1], conf, book: getPriceBook().length, checked: sp ? isPriceCheckFresh(sp) : undefined,
+        });
+        // each animal's decision, for one species at a time (deduped per animal)
+        if (sp && rows.length <= 60) {
+            for (const r of rows) {
+                logPriceDecision('desk', r.guid || r.key, r.advice, { guid: r.guid || undefined, key: r.key, block: r.block || undefined, caution: r.caution || undefined, gender: r.a && r.a.gender, maturity: r.a && r.a.maturity });
+            }
+        }
+    }
+    catch (e) {
+        // ignore
+    }
 }
 
 // ------------------------------------------------------------------ data
@@ -130,7 +304,12 @@ function notice(text, tone = 'info') {
 // (an animal arrived, left, or a row now holds another animal) are GUIDs
 // asked again; countdown ticks change nothing here.
 async function readRows(force = false) {
-    if (D.reading) return;
+    if (D.reading) {
+        // a forced read (open, Read storage again, a list change) must not be
+        // lost to the timer's read in flight: it runs right after
+        if (force) D.readAgain = true;
+        return;
+    }
     D.reading = true;
     try {
         const animals = childrenOf(STORAGE_LIST).map(ctx => readAnimal(ctx)).filter(a => a.id != undefined);
@@ -140,16 +319,28 @@ async function readRows(force = false) {
         // or the list was loading), and every 10 s anyway
         if (force || !D.caps || !engineUsable(D.caps, pageRows) || capsAgeMs() > 10000) D.caps = await engineCaps({ force, maxAgeMs: 1500 });
         let guids = new Map();
-        if (engineUsable(D.caps, pageRows)) guids = await resolveGuids(animals.map(identityOf));
-        D.rows = deskRows(animals, guids, a => adviceFor(a, {}));
+        // keys the game gave no id for are asked again only when the list
+        // changed, on open and on Read storage again (else backed off)
+        if (engineUsable(D.caps, pageRows)) guids = await resolveGuids(animals.map(identityOf), { retry: force || sig !== D.readSig });
+        // Read storage again: the game's refusals are checked afresh
+        if (force) gameBlocked.clear();
+        D.rows = deskRows(animals, guids, a => adviceFor(a, {}), guids.failed, gameBlocked, verdicts);
         D.lastRead = Date.now();
+        logRead(force || sig !== D.readSig, pageRows, guids);
         if (sig !== D.readSig) {
             D.readSig = sig;
             // the storage screen's ticks, once their GUIDs are known
             if (D.pendingKeys) {
                 const keys = D.pendingKeys;
                 D.pendingKeys = null;
-                for (const r of D.rows) if (keys.has(r.key) && !r.block) D.chosen.add(r.id);
+                for (const r of D.rows) {
+                    if (!keys.has(r.key)) continue;
+                    if (!r.block) D.chosen.add(r.id);
+                    // a pregnant one ticked on the storage screen is never taken over
+                    else if (r.block === 'pregnant') dlog('desk', 'tick_refused', { guid: r.guid || undefined, key: r.key, why: 'pregnant', detail: PREGNANT_TEXT });
+                    else if (r.block === 'noid') dlog('desk', 'tick_refused', { key: r.key, why: 'noid' });
+                    else if (r.block === 'untradeable') dlog('desk', 'tick_refused', { guid: r.guid || undefined, key: r.key, why: 'untradeable' });
+                }
                 const first = D.rows.find(r => D.chosen.has(r.id));
                 if (first && !D.filters.species) D.filters = Object.assign({}, D.filters, { species: first.species });
             }
@@ -164,6 +355,10 @@ async function readRows(force = false) {
     }
     finally {
         D.reading = false;
+        if (D.readAgain) {
+            D.readAgain = false;
+            setTimeout(() => readRows(true), 0);
+        }
     }
 }
 
@@ -193,6 +388,8 @@ function setFilters(patch) {
     D.scroll.list = 0;
     const shown = new Set(rowsShown().map(r => r.id));
     for (const id of Array.from(D.chosen)) if (!shown.has(id)) D.chosen.delete(id);
+    dlog('desk', 'filters', { patch, shown: shown.size, ticked: D.chosen.size, species: D.filters.species || 'all' });
+    logPrices();
     saveFilters();
     queueRender();
 }
@@ -211,9 +408,11 @@ function resultsByGuid() {
 // --------------------------------------------------------------- actions
 
 function toggleRow(r) {
+    if (D.mode !== 'list') return toggleQuick(r);
     if (r.block || isListingBusy()) return;
     if (D.chosen.has(r.id)) D.chosen.delete(r.id);
     else D.chosen.add(r.id);
+    dlog('desk', 'tick', { guid: r.guid || undefined, key: r.key, on: D.chosen.has(r.id), price: r.advice ? r.advice.price : undefined, conf: r.advice ? r.advice.confidence : undefined, ticked: D.chosen.size });
     queueRender();
 }
 
@@ -221,22 +420,278 @@ function toggleRow(r) {
 // (unless the Keep tag is filtered for). Untick: every animal shown.
 function chooseShown(on) {
     for (const r of rowsShown()) {
-        if (on && tickable(r, D.filters)) D.chosen.add(r.id);
+        if (on && D.mode !== 'list') {
+            // a quick mode: its own rows only, one at first (the live acceptance)
+            if (quickEligible(r, D.mode).ok && (isAccepted(D.mode) || D.chosen.size < 1)) D.chosen.add(r.id);
+        }
+        else if (on && tickable(r, D.filters)) D.chosen.add(r.id);
         else if (!on) D.chosen.delete(r.id);
+    }
+    dlog('desk', 'tick_shown', { on, ticked: D.chosen.size, species: D.filters.species || 'all' });
+    queueRender();
+}
+
+// ------------------------------------------- Quick trade / Quick release
+// docs/PLAN-desk-quick-release.md 4. The right panel's mode switch; a quick
+// mode recolours the panel, ticks only its own rows, and sends nothing
+// until the confirmation sheet's Confirm. Then the job is frozen to the
+// animals the sheet showed and the engine takes them one at a time; the
+// run stops at anything unexpected.
+function setMode(mode) {
+    if (mode === D.mode) return;
+    if (engineRunning()) return notice('Wait for the run to end (or Stop it) before switching.', 'warn');
+    D.mode = QUICK_MODES[mode] ? mode : 'list';
+    D.chosen.clear();
+    closeSheet('mode');
+    breadcrumb('desk_quick_mode');
+    dlog('desk', 'mode', { mode: D.mode, accepted: D.mode !== 'list' ? isAccepted(D.mode) : undefined });
+    queueRender();
+}
+
+// Quick trade the animals the server refused to list: switch to Quick trade
+// (its ticks start empty), show their species, tick the ones allowed.
+function tickRefused(guids) {
+    const want = new Set((guids || []).map(String));
+    if (engineRunning()) return notice('Wait for the run to end first.', 'warn');
+    if (D.mode !== 'quicktrade') setMode('quicktrade');
+    const rows = D.rows.filter(r => r.guid && want.has(r.guid));
+    const species = new Set(rows.map(r => r.species));
+    setFilters({ species: species.size === 1 ? rows[0].species : null, state: 'any' });
+    let n = 0;
+    let not = 0;
+    for (const r of rows) {
+        if (quickEligible(r, 'quicktrade').ok) {
+            D.chosen.add(r.id);
+            n++;
+        }
+        else not++;
+    }
+    dlog('desk', 'tick_refused', { asked: want.size, inStorage: rows.length, ticked: n, notAllowed: not || undefined });
+    notice(n ? `${n} animal${n === 1 ? '' : 's'} the server refused to list ticked for Quick trade${not ? ` (${not} the game won't quick-trade)` : ''}.` : "None of them can be quick-traded now.", n ? 'ok' : 'warn');
+    queueRender();
+}
+
+function toggleQuick(r) {
+    if (isListingBusy()) return;
+    if (D.chosen.has(r.id)) {
+        D.chosen.delete(r.id);
+    }
+    else {
+        const e = quickEligible(r, D.mode);
+        if (!e.ok) return notice(e.why || 'Not available here.', 'warn');
+        if (!isAccepted(D.mode) && D.chosen.size >= 1) return notice(`${FIRST_TEXT[D.mode]}.`, 'warn');
+        D.chosen.add(r.id);
+    }
+    dlog('desk', 'tick', { mode: D.mode, guid: r.guid || undefined, key: r.key, on: D.chosen.has(r.id), pre: r.pre || undefined, ticked: D.chosen.size });
+    queueRender();
+}
+
+function quickInfo(rows = chosenRows()) {
+    return quickSheet(rows, D.mode, { fmt: fmtInt, nameOf: r => rowLabel(r.guid), accepted: isAccepted(D.mode) });
+}
+
+function openSheet() {
+    if (D.mode === 'list' || engineRunning() || isListingBusy()) return;
+    const info = quickInfo();
+    if (!info.go.length) return notice(`Tick the animals to ${QUICK_MODES[D.mode].label.toLowerCase()} first.`, 'warn');
+    D.sheet = { mode: D.mode, info, rows: info.go.slice(), done: false, openedAt: Date.now() };
+    breadcrumb('desk_quick_sheet');
+    dlog('desk', 'quick_sheet', { mode: D.mode, go: info.go.length, skip: info.skip.length, total: info.total, exact: info.exact });
+    buildSheet();
+}
+
+function buildSheet() {
+    const el = D.el.sheet;
+    const sh = D.sheet;
+    clear(el);
+    if (!sh) {
+        setClass(el, 'hidden', true);
+        return;
+    }
+    const m = QUICK_MODES[sh.mode];
+    const info = sh.info;
+    const card = h('div.PZ2QoL_mdSheetCard');
+    card.appendChild(h('div.PZ2QoL_mdSheetHead', { text: m.header }));
+    card.appendChild(h('div.PZ2QoL_mdSheetTitle', { text: info.title }));
+    const go = h('div.PZ2QoL_mdSheetList.go');
+    go.appendChild(h('div.PZ2QoL_mdSheetLabel', { text: `${info.go.length === 1 ? 'This animal goes' : `These ${info.go.length} animals go`}:` }));
+    for (const n of info.names) go.appendChild(h('div.PZ2QoL_mdSheetLine', { text: n }));
+    if (info.more) go.appendChild(h('div.PZ2QoL_mdSheetLine.more', { text: `and ${info.more} more` }));
+    card.appendChild(go);
+    if (info.skip.length) {
+        const sk = h('div.PZ2QoL_mdSheetList.skip');
+        sk.appendChild(h('div.PZ2QoL_mdSheetLabel', { text: `Ticked but skipped (${info.skip.length}):` }));
+        for (const x of info.skip.slice(0, 8)) sk.appendChild(h('div.PZ2QoL_mdSheetLine', { text: `${rowLabel(x.r.guid)}: ${x.why}`, title: x.why }));
+        if (info.skip.length > 8) sk.appendChild(h('div.PZ2QoL_mdSheetLine.more', { text: `and ${info.skip.length - 8} more` }));
+        card.appendChild(sk);
+    }
+    if (info.go.some(r => r.pre)) card.appendChild(h('div.PZ2QoL_mdSheetNote', { text: 'Some were classified from the storage list (a Frontier zoo); each animal is checked again before it goes, and skipped if the game does not allow it.' }));
+    card.appendChild(h('div.PZ2QoL_mdSheetWarn', { text: QUICK_WARNING }));
+    card.appendChild(h('div.PZ2QoL_mdSheetNote', { text: 'One at a time, each confirmed by storage. The run stops at anything unexpected.' }));
+    const confirm = btn(`${m.confirm} (${info.go.length})`, m.cash ? 'Icon_Cash_Symbol' : 'Icon_ConservationCredits', () => confirmSheet('click'), {
+        cls: `quick.confirm${engineRunning() ? '.disabled' : ''}`, tint: 'white', title: "Sends them, one at a time (also the gamepad's A, or Enter)",
+    });
+    sh.confirm = confirm;
+    card.appendChild(h('div.PZ2QoL_mdSheetButtons', null,
+        btn('Cancel', 'Icon_Close', () => closeSheet('cancel'), { title: 'Nothing is sent (Esc too)' }),
+        confirm));
+    el.appendChild(card);
+    setClass(el, 'hidden', false);
+}
+
+// Input on the sheet is ignored this long after it opens: a double click,
+// or the press that opened it, never confirms (review 2026-10-18).
+const SHEET_GUARD_MS = 300;
+
+// Confirm (a click, Enter or the gamepad's A; the developer found a 2 s hold
+// too much, 2026-10-18): the job is frozen to exactly the animals shown.
+function confirmSheet(how) {
+    const sh = D.sheet;
+    if (!sh || sh.done || engineRunning()) return;
+    if (Date.now() - (sh.openedAt || 0) < SHEET_GUARD_MS) {
+        dlog('desk', 'quick_confirm_ignored', { how, ms: Date.now() - (sh.openedAt || 0) });
+        return;
+    }
+    sh.done = true;
+    if (sh.confirm) sh.confirm.classList.add('disabled');
+    breadcrumb('desk_quick_confirm');
+    dlog('desk', 'quick_confirm', { how, mode: sh.mode, n: sh.rows.length });
+    const rows = sh.rows.slice();
+    const mode = sh.mode;
+    closeSheet('confirmed');
+    startQuick(rows, mode);
+}
+
+function closeSheet(why) {
+    const sh = D.sheet;
+    if (!sh) return;
+    D.sheet = null;
+    if (why !== 'confirmed' && why !== 'mode') {
+        breadcrumb('desk_quick_cancel');
+    }
+    dlog('desk', 'quick_sheet_close', { why });
+    if (D.el.sheet) {
+        clear(D.el.sheet);
+        setClass(D.el.sheet, 'hidden', true);
     }
     queueRender();
 }
 
+// The gamepad while the sheet is open: A = Confirm, B = Cancel; the
+// game never sees them (its own back-out would close the screen).
+function sheetInput(e) {
+    if (!D.sheet || !e || !e.button) return false;
+    try {
+        if (e.inputName === 'UI_Select') {
+            if (e.button.isPressed()) confirmSheet('pad');
+            return true;
+        }
+        if (e.inputName === 'UI_Cancel') {
+            if (e.button.isPressed()) closeSheet('pad');
+            return true;
+        }
+    }
+    catch (err) {
+        return false;
+    }
+    return false;
+}
+
+async function startQuick(rows, mode) {
+    const m = QUICK_MODES[mode];
+    const { text, items } = encodeQuickJob(rows, { mode, paceMs: getPaceMs('lister') });
+    dlog('desk', 'quick_start', { mode, n: items.length, guids: items.map(r => r.guid).slice(0, 20) });
+    if (!items.length) return notice('Nothing to send.', 'warn');
+    for (const r of items) D.labels.set(String(r.guid), rowLabel(r.guid));
+    breadcrumb('desk_quick_start');
+    const r = await startEngineRun(text);
+    dlog('desk', 'quick_started', { ok: r.ok, pending: r.pending || undefined, req: r.req, n: items.length, msg: r.message || undefined });
+    if (r.pending) {
+        // no answer yet: it may still have started (the run card shows it when the state comes)
+        D.chosen.clear();
+        return notice(r.message, 'warn');
+    }
+    if (!r.ok) return notice(r.message || `${m.label} did not start.`, 'warn');
+    D.chosen.clear();
+    notice(`${m.label}: ${items.length} animal${items.length === 1 ? '' : 's'}, one at a time. The run stops at anything unexpected; Stop ends it after the current animal.`, 'ok');
+    queueRender();
+}
+
+// ------------------------------------------------------- Check storage
+// docs/PLAN-desk-quick-release.md 3.2: selects each not-yet-checked animal
+// of the shown species in Animal Storage and records what the game allows
+// (market, Quick trade, Quick release, Rehome). The engine's 'check' job
+// never sends anything; Stop ends it at once, the selection ends cleared.
+function checkTargets() {
+    return uncheckedRows(D.rows, D.filters.species || null);
+}
+
+function checkPace() {
+    return checkPaceMs(getPaceMs('lister'));
+}
+
+async function startCheck() {
+    const rows = checkTargets();
+    dlog('desk', 'check_click', { n: rows.length, species: D.filters.species || 'all', busy: isListingBusy() || undefined, check: D.caps ? D.caps.check : undefined });
+    if (isListingBusy()) return notice('A listing or market check is running; check storage when it is done.', 'warn');
+    if (!engineUsable(D.caps, D.rows.length) || !D.caps.check) {
+        breadcrumb('desk_check_refused');
+        return notice(D.caps && engineUsable(D.caps, D.rows.length) ? "The game-side engine can't check storage (an older Main.ovl?)." : engineWhyNot(D.caps, D.rows.length) || 'The game-side engine is not available.', 'warn');
+    }
+    if (!rows.length) return notice('Every animal shown has been checked.', 'info');
+    const { text, items } = encodeCheckJob(rows, { paceMs: checkPace() });
+    if (!items.length) return notice('Nothing to check.', 'info');
+    breadcrumb('desk_check');
+    const r = await startEngineRun(text);
+    dlog('desk', 'check_started', { ok: r.ok, pending: r.pending || undefined, n: items.length, req: r.req, paceMs: checkPace(), msg: r.message || undefined });
+    if (r.pending) return notice(r.message, 'warn');
+    if (!r.ok) {
+        breadcrumb('desk_check_refused');
+        return notice(r.message || 'Check storage did not start.', 'warn');
+    }
+    checkRuns.set(String(r.req), { n: items.length, species: D.filters.species || null });
+    notice(`Checking ${items.length} animal${items.length === 1 ? '' : 's'} in Animal Storage, one at a time. Nothing is sold or listed; Stop ends it.`, 'ok');
+    queueRender();
+}
+
+function checkButton() {
+    const s = getEngineState();
+    const running = engineRunning();
+    if (running && s && s.mode === 'check') {
+        return btn('Stop checking', 'Icon_Close', () => {
+            breadcrumb('desk_check_stop');
+            stopListing();
+        }, { cls: 'stop', tint: 'white', title: 'Stops at once; the animals not checked yet stay as they are' });
+    }
+    const n = checkTargets().length;
+    const can = n > 0 && !isListingBusy() && engineUsable(D.caps, D.rows.length) && !!(D.caps && D.caps.check);
+    const label = n ? `Check storage (${n} not checked, ≈ ${checkMinutes(n, checkPace())} min)` : 'Check storage (all checked)';
+    return btn(label, 'IconSearch', startCheck, {
+        cls: can ? '' : 'disabled',
+        title: "Selects each animal of the species shown in Animal Storage, one at a time, and notes what the game allows: the market, Quick trade, Quick release or Rehome. Nothing is sold, listed or sent; the selection ends cleared. Stop any time.",
+    });
+}
+
 async function startListing() {
+    // how many ticked lack an id (the job can only hold animals the engine can identify)
+    const ticked = chosenRows();
+    dlog('desk', 'list_click', { busy: isListingBusy() || undefined, ticked: D.chosen.size, listable: ticked.filter(r => !r.block).length, hours: D.hours,
+        noId: ticked.filter(r => !r.guid).length, noIdBlocked: ticked.filter(r => r.block === 'noid').length,
+        noIdTotal: D.rows.filter(r => r.block === 'noid').length || undefined });
     if (isListingBusy()) return;
     const rows = chosenRows().filter(r => !r.block);
     if (!rows.length) return notice('Tick the animals to list first.', 'warn');
     const stale = uncheckedSpecies(rows);
     if (stale.length) return notice(`Check market prices first (${stale.length} species not checked in the last ${PRICE_CHECK_FRESH_MS / 60000} minutes).`, 'warn');
     breadcrumb('desk_list');
-    const r = await listAnimals(rows.map(x => x.a), { hours: D.hours });
+    const onRefused = refusedOption();
+    const refusedMax = onRefused === 'release' && !isAccepted('release') ? 1 : null;
+    const r = await listAnimals(rows.map(x => x.a), { hours: D.hours, onRefused, refusedMax });
+    dlog('desk', 'list_result', { ok: r.ok, engine: r.engine, count: r.count, msg: r.message || undefined });
     if (!r.ok) notice(r.message || 'Nothing was listed.', 'warn');
     else if (!r.engine) notice(`Listing through the storage screen (the fallback): ${r.message}`, 'warn');
+    // fewer in the job than ticked: say how many and why
+    else if (r.partial) notice(`${r.partial}. One at a time; you can keep browsing, Stop ends it.`, 'warn');
     else notice(`Listing ${r.count} animal${r.count === 1 ? '' : 's'}, one at a time. You can keep browsing; Stop ends it.`, 'ok');
     queueRender();
 }
@@ -246,6 +701,7 @@ function retry() {
     const again = new Set(retryGuids(s));
     D.chosen.clear();
     for (const r of D.rows) if (r.guid && again.has(r.guid) && !r.block) D.chosen.add(r.id);
+    dlog('desk', 'retry', { again: again.size, ticked: D.chosen.size, run: s ? s.run : undefined });
     notice(D.chosen.size ? `${D.chosen.size} ticked again. Press List to try them once more.` : 'Nothing to retry: the others are listed or cannot be listed.', D.chosen.size ? 'ok' : 'info');
 }
 
@@ -260,14 +716,30 @@ function ensureRoot() {
     el.main = h('div.PZ2QoL_mdMain');
     el.side = h('div.PZ2QoL_mdSide');
     el.notice = h('div.PZ2QoL_mdNotice.hidden');
+    el.scope = h('div.PZ2QoL_mdNotice.warn.hidden');
     el.status = h('div.PZ2QoL_kpStatus');
+    el.check = h('div.PZ2QoL_mdCheck');
+    // the quick trade / release confirmation, over the desk
+    el.sheet = h('div.PZ2QoL_mdSheet.hidden');
+    for (const ev of ['mousedown', 'click', 'wheel']) el.sheet.addEventListener(ev, e => e.stopPropagation());
     const head = h('div.PZ2QoL_kpHead', null,
         h('div.PZ2QoL_kpLogo.desk'),
         h('div.PZ2QoL_kpTitles', null, h('div.PZ2QoL_kpTitle', { text: 'Market desk' }), el.sub),
         h('div.PZ2QoL_kpFlex'),
         el.engine,
+        el.check,
         btn('Read storage again', 'Icon_CircleWithArrows', () => {
-            readRows(true);
+            // the categories are checked afresh (Check storage or a run)
+            const s = getEngineState();
+            verdicts.clear();
+            verdictFloor = s ? s.run : verdictFloor;
+            dlog('desk', 'verdicts_cleared', { floor: verdictFloor });
+            // and try again to show all of storage, if that failed
+            if (D.unfilter === 'failed') {
+                D.unfilter = '';
+                readRows(true).then(seeAllStorage);
+            }
+            else readRows(true);
             notice('Reading Animal Storage again…');
         }, { title: 'Read the animals and what the game-side engine can do again' }),
         closeButton(guard, 'Close (Esc)', () => closeMarketDesk()));
@@ -275,11 +747,13 @@ function ensureRoot() {
     D.pace = paceSlider('lister');
     const root = h('div.PZ2QoL_md.hidden', null,
         head,
+        el.scope,
         el.notice,
         h('div.PZ2QoL_mdBody', null, el.rail, el.main, el.side),
         h('div.PZ2QoL_kpFoot', null,
             h('div.PZ2QoL_mdRules', { text: "Nothing is listed until you press List · one animal at a time, each confirmed by the game · a pause between listings · Stop any time" }),
-            h('div.PZ2QoL_kpFlex'), el.status));
+            h('div.PZ2QoL_kpFlex'), el.status),
+        el.sheet);
     root.addEventListener('mousedown', e => e.stopPropagation());
     root.addEventListener('click', e => e.stopPropagation());
     root.addEventListener('wheel', e => {
@@ -318,15 +792,19 @@ function renderAll(force = false) {
         if (D.scrim) setClass(D.scrim, 'solid', engineRunning());
         const s = getEngineState();
         const sig = JSON.stringify([
-            D.rows.map(r => [r.id, r.block, r.caution, r.advice.price, r.advice.confidence, Math.ceil((r.a.auctionTimerSeconds || 0) / 300)]),
+            D.rows.map(r => [r.id, r.block, r.cat, r.verdict ? `${r.verdict.values.quickTrade}|${r.verdict.values.quickRelease}|${r.verdict.prices.quickTrade}` : '', r.caution, r.advice.price, r.advice.confidence, Math.ceil((r.a.auctionTimerSeconds || 0) / 300)]),
             Array.from(D.chosen), D.filters, D.moreOpen, !!filterCtx().related, D.hours, D.caps && [D.caps.ok, D.caps.rows, D.caps.storage], getPriceOffset(), isFranchise(),
-            s && [s.run, s.phase, s.index, s.step, Math.round(s.waited || 0), s.results.map(r => r.status + r.kind).join(',')],
+            s && [s.run, s.mode, s.phase, s.index, s.step, Math.round(s.waited || 0), s.results.map(r => r.status + r.kind).join(',')], D.caps && D.caps.check,
             D.notice && D.notice.until > Date.now() ? D.notice.text : '', isListingBusy(), getPriceBook().length,
             (getMarketCheck() || {}).message, (getMultiMarketCheck() || {}).message, uncheckedSpecies(chosenRows().filter(r => !r.block)).join(','),
+            getKinSettings().gameSpeciesNames !== false,
+            D.unfilter, D.scope && D.scope.species,
+            D.mode, isAccepted('quicktrade'), isAccepted('release'), refusedOption(),
         ]);
         if (!force && sig === D.renderSig) return;
         D.renderSig = sig;
         renderHead();
+        renderScope();
         renderNotice();
         renderRail();
         renderMain();
@@ -344,10 +822,13 @@ function renderHead() {
     const usable = engineUsable(D.caps, pageRows);
     const counts = speciesCounts(D.rows);
     const sellable = counts.reduce((n, c) => n + c.sellable, 0);
+    const quick = counts.reduce((n, c) => n + c.quick, 0);
     const listed = counts.reduce((n, c) => n + c.listed, 0);
     setText(el.sub, isFranchise()
-        ? `${fmtInt(D.rows.length)} animals in storage · ${fmtInt(sellable)} sellable · ${fmtInt(listed)} on the market`
+        ? `${fmtInt(D.rows.length)} animals in storage · ${fmtInt(sellable)} sellable${quick ? ` · ${fmtInt(quick)} Quick trade only` : ''} · ${fmtInt(listed)} on the market`
         : 'Listing animals is only available in Franchise mode.');
+    clear(el.check);
+    if (D.caps) el.check.appendChild(checkButton());
     clear(el.engine);
     if (!D.caps) return;
     el.engine.appendChild(h(`div.PZ2QoL_mdEnginePill.${usable ? 'ok' : 'fallback'}`, {
@@ -369,6 +850,17 @@ function renderNotice() {
     setTimeout(queueRender, Math.max(0, n.until - Date.now()) + 50);
 }
 
+// When the game's own storage filters could not be cleared, the desk can
+// show only what they let through: say so, and how to see everything.
+function renderScope() {
+    const el = D.el.scope;
+    const show = D.unfilter === 'failed' && D.scope && D.scope.known;
+    setClass(el, 'hidden', !show);
+    if (!show) return;
+    const sp = D.scope.species;
+    setText(el, `Animal Storage is filtered${sp ? ` to ${speciesName(sp)}` : ''}, so only ${sp ? 'that species is' : 'part of storage is'} listed here. Clear the filter in Animal Storage to see every species.`);
+}
+
 function renderRail() {
     const el = D.el.rail;
     const y = D.scroll.rail;
@@ -376,24 +868,48 @@ function renderRail() {
     const box = makeScroll('mdRail', { onScroll: (x, yy) => { D.scroll.rail = yy; } });
     D.boxes.rail = box;
     const counts = speciesCounts(D.rows);
-    const all = { species: null, total: D.rows.length, sellable: counts.reduce((n, c) => n + c.sellable, 0), listed: counts.reduce((n, c) => n + c.listed, 0) };
+    const all = { species: null, total: D.rows.length, sellable: counts.reduce((n, c) => n + c.sellable, 0), quick: counts.reduce((n, c) => n + c.quick, 0), listed: counts.reduce((n, c) => n + c.listed, 0) };
     for (const c of [all].concat(counts)) {
         const on = (D.filters.species || null) === c.species;
         const chosen = D.rows.filter(r => D.chosen.has(r.id) && (c.species === null || r.species === c.species)).length;
         box.content.appendChild(h(`div.PZ2QoL_mdSpecies${on ? '.on' : ''}`, {
             'data-species': c.species || '',
-            title: c.species ? t(c.species) : 'Every species in storage',
+            title: c.species ? speciesName(c.species) : 'Every species in storage',
             // a price range belongs to one species' prices
-            onClick: guard('Species', () => setFilters(c.species === D.filters.species ? {} : { species: c.species, priceMin: 0, priceMax: 0 })),
+            onClick: guard('Species', () => {
+                D.reveal = null;
+                setFilters(c.species === D.filters.species ? {} : { species: c.species, priceMin: 0, priceMax: 0 });
+            }),
         },
-            h('div.PZ2QoL_mdSpeciesName', { text: c.species ? trunc(t(c.species) || speciesName(c.species), 22) : 'All species' }),
+            h('div.PZ2QoL_mdSpeciesName', { text: c.species ? trunc(speciesName(c.species), 22) : 'All species' }),
             h('div.PZ2QoL_mdSpeciesMeta', null,
                 h('span.sell', { text: `${c.sellable} sellable` }),
+                c.quick ? h('span.quick', { text: `${c.quick} quick` }) : null,
                 c.listed ? h('span.listed', { text: `${c.listed} listed` }) : null,
                 chosen ? h('span.chosen', { text: `${chosen} ticked` }) : null)));
     }
     el.appendChild(box.wrap);
-    restoreScroll(box, 0, y);
+    restoreScroll(box, 0, revealRail(box, counts.length, y));
+}
+
+// The species the desk opened on stays in view while the rail fills (the
+// full list arrives once the game's filters are cleared), until a click.
+function revealRail(box, n, y) {
+    const r = D.reveal;
+    if (!r || r.n === n) return y;
+    r.n = n;
+    try {
+        const on = box.content.querySelector('.PZ2QoL_mdSpecies.on');
+        if (!on) return y;
+        const top = on.getBoundingClientRect().top - box.content.getBoundingClientRect().top;
+        const vh = box.vp.clientHeight;
+        if (top >= y && top + on.offsetHeight <= y + vh) return y;
+        D.scroll.rail = Math.max(0, Math.round(top - vh / 3));
+        return D.scroll.rail;
+    }
+    catch (e) {
+        return y;
+    }
 }
 
 function segmented(label, value, options, onPick, title) {
@@ -514,7 +1030,7 @@ function moreFilters(f, ctx) {
             h('div.PZ2QoL_mdSegItem', { text: '−', onClick: guard('Keep', () => setFilters({ keepBest: Math.max(0, keep - 1) })) }),
             h('span.PZ2QoL_mdStepValue', { text: keep ? `${keep} ♂ + ${keep} ♀` : 'Off' }),
             h('div.PZ2QoL_mdSegItem', { text: '+', onClick: guard('Keep', () => setFilters({ keepBest: Math.min(99, keep + 1) })) })),
-        segmented('Pregnant', f.pregnant, [['any', 'Any'], ['hide', 'Hide'], ['only', 'Only']], v => setFilters({ pregnant: v }), 'The game may refuse to list a pregnant animal'),
+        segmented('Pregnant', f.pregnant, [['any', 'Any'], ['hide', 'Hide'], ['only', 'Only']], v => setFilters({ pregnant: v }), "Pregnant animals are never listed: the market won't take one until she gives birth"),
         ctx.related || f.kin !== 'any'
             ? segmented('Kin', f.kin, [['any', 'Any'], ['related', 'Has kin'], ['unrelated', 'No kin']], v => setFilters({ kin: v }),
                 'A close relative of the same species in storage (from the family records the game keeps; Kin reads them when Animal Storage opens)')
@@ -610,7 +1126,9 @@ function renderMain() {
     const f = D.filters;
     const ctx = filterCtx();
     const shown = sortRows(filterRows(D.rows, f, ctx), f.sort, f.geneBasis);
-    const shownTickable = shown.filter(r => tickable(r, f));
+    const quickMode = D.mode !== 'list';
+    let shownTickable = shown.filter(r => (quickMode ? quickEligible(r, D.mode).ok : tickable(r, f)));
+    if (quickMode && !isAccepted(D.mode)) shownTickable = shownTickable.slice(0, 1);
     const counts = activeFilterCount(f);
     const species = f.species;
     const check = getMarketCheck();
@@ -621,7 +1139,8 @@ function renderMain() {
         segmented('Fertility', f.fertile, [['any', 'Any'], ['yes', 'Fertile'], ['no', 'Infertile']], v => setFilters({ fertile: v }), 'What the game shows: young adults, adults and elderly that can still breed are fertile'),
         multiSeg('Rating', f.medals, MEDALS.map(m => [m, medalLabel(m)]), v => setFilters({ medals: v }), "The game's genetics rating (medal); pick one or more"),
         geneBar(f),
-        segmented('Show', f.state, [['any', 'All'], ['sellable', 'Sellable'], ['listed', 'On market'], ['blocked', 'Not sellable']], v => setFilters({ state: v }))));
+        segmented('Show', f.state, [['any', 'All'], ['sellable', 'Sellable'], ['quick', 'Quick trade'], ['listed', 'On market'], ['blocked', 'Not sellable']], v => setFilters({ state: v }),
+            "Quick trade: the game's market won't take these animals, but its Quick trade or Quick release does (known once a listing run or Check storage has selected them)")));
     const busy = isListingBusy();
     const keepLeft = shown.filter(r => !r.block && !tickable(r, f)).length;
     el.appendChild(h('div.PZ2QoL_mdTools.second', null,
@@ -641,6 +1160,8 @@ function renderMain() {
         }, { cls: D.moreOpen || counts.more ? 'on' : '', title: 'Per-gene ranges, keep the best N per sex, pregnancy, storage tags, Kin, price and name' }),
         h('div.PZ2QoL_mdShown', { text: `${fmtInt(shown.length)} of ${fmtInt(species ? D.rows.filter(r => r.species === species).length : D.rows.length)} shown` })));
     if (D.moreOpen) el.appendChild(moreFilters(f, ctx));
+    // rows put in Quick trade by the storage list alone, before any check
+    if (shown.some(r => r.pre)) el.appendChild(h('div.PZ2QoL_mdPreNote', { text: 'Quick trade (from the storage list): classified by where the animal came from (a Frontier zoo); each animal is checked again before it goes.' }));
     // the table
     const geneHead = f.geneBasis === 'overall' ? 'Genes' : GENE_BASES[f.geneBasis].slice(0, 5);
     el.appendChild(h('div.PZ2QoL_mdRow.head', null,
@@ -653,7 +1174,14 @@ function renderMain() {
     if (!shown.length) {
         box.content.appendChild(h('div.PZ2QoL_mdEmpty', { text: D.rows.length ? 'No animal matches these filters.' : 'No animals in storage (or Animal Storage is still loading).' }));
     }
-    for (const r of shown) box.content.appendChild(rowEl(r, results.get(r.guid)));
+    const es = getEngineState() || {};
+    const mode = es.mode || 'list';
+    // a check that ended leaves its unchecked animals as they were (not "Queued")
+    const stale = mode === 'check' && es.phase !== 'running';
+    for (const r of shown) {
+        const res = results.get(r.guid);
+        box.content.appendChild(rowEl(r, stale && res && res.status === 'pending' ? undefined : res, mode));
+    }
     el.appendChild(box.wrap);
     restoreScroll(box, 0, y);
     if (typing && D.moreOpen) {
@@ -666,15 +1194,58 @@ function renderMain() {
     }
 }
 
-function stateOf(r, res) {
-    if (res && res.status !== 'pending') {
-        if (res.status === 'working') return { cls: 'working', text: 'Listing…' };
+function stateOf(r, res, mode = 'list') {
+    const qm = QUICK_MODES[mode];
+    if (qm && res && res.status !== 'pending') {
+        if (res.status === 'working') return { cls: 'working', text: qm.working };
+        if (res.status === qm.done) return { cls: 'done', text: `✓ ${qm.verb}${res.price ? ` · ${quickMoney(mode, res.price, fmtInt)}` : ''}` };
+        // sent, but storage did not confirm it: the run stopped there
+        if (res.status === 'unconfirmed') return { cls: 'refused', text: 'Sent, not confirmed: check storage', title: res.detail || 'Sent; it was still in storage when the wait ended. Check Animal Storage before anything else.' };
+        const why = `${RESULT_WORDS[res.kind] || res.status}${res.detail ? `: ${reasonText('untradeable', res.detail, t)}` : ''}`;
+        return { cls: 'skipped', text: `Not sent · ${why}`, title: why };
+    }
+    if (res && res.status !== 'pending' && res.status !== 'checked') {
+        if (res.status === 'working') return { cls: 'working', text: mode === 'check' ? 'Checking…' : 'Listing…' };
         if (res.status === 'listed') return { cls: 'done', text: `✓ Listed${res.price ? ` ${fmtInt(res.price)} CC` : ''}${res.capped ? ` (game ${res.capped})` : ''}` };
-        const why = `${RESULT_WORDS[res.kind] || res.status}${res.detail ? `: ${t(res.detail)}` : ''}`;
+        // refused by the server, then quick-traded / released in the same run
+        if (res.status === 'traded' || res.status === 'released') {
+            const qm = QUICK_MODES[res.status === 'traded' ? 'quicktrade' : 'release'];
+            return { cls: 'done', text: `✓ ${qm.verb} after refusal${res.price ? ` · ${quickMoney(res.status === 'traded' ? 'quicktrade' : 'release', res.price, fmtInt)}` : ''}`, title: 'The server refused the listing; quick action instead' };
+        }
+        if (res.status === 'unconfirmed') return { cls: 'refused', text: 'Sent, not confirmed: check storage', title: res.detail || '' };
+        const why = `${RESULT_WORDS[res.kind] || res.status}${res.detail ? `: ${reasonText(res.kind, res.detail, t)}` : ''}`;
         return { cls: res.status === 'refused' ? 'refused' : 'skipped', text: `Not listed · ${why}`, title: why };
     }
     if (r.block === 'listed') return { cls: 'listed', text: `On market${r.a.price ? ` · ${fmtInt(r.a.price)} CC` : ''} · ${timeLeftText(r.a.auctionTimerSeconds)}` };
-    if (r.block) return { cls: 'blocked', text: BLOCK_WORDS[r.block] };
+    if (r.block === 'quick' && r.pre) {
+        return {
+            cls: 'quick', text: 'Quick trade (from the storage list)',
+            title: "Came from a Frontier zoo (the storage list's source): the market won't take it (not born in a player zoo). Not checked yet: Check storage shows what the game allows and for how much; each animal is checked again before it goes.",
+        };
+    }
+    if (r.block === 'quick') {
+        // what the game offers instead of the market, and why not the market
+        const offers = quickOffers(r.verdict, fmtInt, t);
+        const why = reasonText('untradeable', r.blockDetail, t);
+        return {
+            cls: 'quick', text: offers.join(' / ') || BLOCK_WORDS.quick,
+            title: `Not for the market${why ? `: ${why}` : ''}. The game offers ${offers.join(' and ') || 'a quick action'} for it instead: switch the panel on the right to Quick trade or Quick release.`,
+        };
+    }
+    if (r.block === 'rehome') {
+        const why = reasonText('untradeable', r.blockDetail, t);
+        return { cls: 'blocked', text: BLOCK_WORDS.rehome, title: `The game offers only Rehome for it (no market, no Quick trade)${why ? `: ${why}` : ''}.` };
+    }
+    if (r.block === 'untradeable') {
+        const why = reasonText('untradeable', r.blockDetail, t);
+        // sick or injured: a quarantine treats it (back to the zoo first)
+        const keys = tradeProblemKeys(r.blockDetail);
+        const cure = keys.includes('Infected') || keys.includes('SeriouslyInjured')
+            ? ' To fix it: Return to zoo from Animal Storage, then send it to the trade centre from the Species board. With "Quarantine sick animals first" (Kin settings) it is treated in a quarantine on the way.'
+            : '';
+        return { cls: 'blocked', text: `${BLOCK_WORDS.untradeable}${why ? `: ${why}` : ''}`, title: `${BLOCK_WORDS.untradeable}${why ? `: ${why}` : ''}. The game's own Trade button refuses it too.${cure} Read storage again to check again.` };
+    }
+    if (r.block) return { cls: 'blocked', text: BLOCK_WORDS[r.block], title: r.block === 'pregnant' ? PREGNANT_TEXT : r.block === 'noid' ? NOID_TEXT : undefined };
     if (res && res.status === 'pending') return { cls: 'queued', text: 'Queued' };
     if (r.caution) return { cls: 'caution', text: CAUTION_WORDS[r.caution] };
     return { cls: 'sellable', text: 'Sellable' };
@@ -691,20 +1262,28 @@ function geneCell(r) {
     });
 }
 
-function rowEl(r, res) {
+function rowEl(r, res, mode) {
     const a = r.a;
     const on = D.chosen.has(r.id);
-    const st = stateOf(r, res);
+    const st = stateOf(r, res, mode);
     const adv = r.advice;
-    return h(`div.PZ2QoL_mdRow${on ? '.on' : ''}${r.block ? '.blocked' : ''}`, {
-        'data-id': r.id, 'data-key': a.key,
+    // a quick mode: only its own rows can be ticked; the others say why
+    const q = D.mode !== 'list' ? quickEligible(r, D.mode) : null;
+    const off = q ? !q.ok : !!r.block;
+    // a market animal in a quick mode: what the game offers for it too
+    if (q && q.ok && q.market && (st.cls === 'sellable' || st.cls === 'caution')) {
+        const offer = quickOffers(r.verdict, fmtInt, t).find(x => x.startsWith(QUICK_MODES[D.mode].label));
+        if (offer) st.text = `${st.text} · ${offer}`;
+    }
+    return h(`div.PZ2QoL_mdRow${on ? '.on' : ''}${off ? '.blocked' : ''}${q && q.ok ? '.quickok' : ''}`, {
+        'data-id': r.id, 'data-key': a.key, title: q && !q.ok ? q.why : undefined,
         onClick: guard('Tick', () => toggleRow(r)),
     },
-        h('div.PZ2QoL_mdCell.tick', null, h(`div.PZ2QoL_mdBox${on ? '.on' : ''}${r.block ? '.off' : ''}`)),
+        h('div.PZ2QoL_mdCell.tick', null, h(`div.PZ2QoL_mdBox${on ? '.on' : ''}${off ? '.off' : ''}`)),
         h(`div.PZ2QoL_mdCell.sex.${SEX_CLASS[a.gender] || 'other'}`, { text: SEX[a.gender] || '·' }),
-        h('div.PZ2QoL_mdCell.name', { title: `${t(a.species)} · ${t(a.name)}` },
+        h('div.PZ2QoL_mdCell.name', { title: `${speciesName(a.species)} · ${t(a.name)}` },
             h('span.PZ2QoL_mdName', { text: trunc(t(a.name), 22) }),
-            D.filters.species ? null : h('span.PZ2QoL_mdSpeciesTag', { text: trunc(t(a.species), 16) })),
+            D.filters.species ? null : h('span.PZ2QoL_mdSpeciesTag', { text: trunc(speciesName(a.species), 16) })),
         h('div.PZ2QoL_mdCell.stage', { text: STAGE[a.maturity] || '–' }),
         h('div.PZ2QoL_mdCell.medal', null, r.medal != undefined ? h(`span.PZ2QoL_medalDot.${r.medal}`, { title: medalLabel(r.medal) }) : h('span', { text: '–' })),
         geneCell(r),
@@ -714,12 +1293,53 @@ function rowEl(r, res) {
         h(`div.PZ2QoL_mdCell.state.${st.cls}`, { text: st.text, title: st.title || st.text }));
 }
 
+// The right panel's mode switch: List on market | Quick trade | Quick release.
+function modeSwitch(running) {
+    const seg = segmented('', D.mode, [['list', 'List on market'], ['quicktrade', 'Quick trade'], ['release', 'Quick release']], v => setMode(v),
+        running ? 'Switch when the run has ended' : "Quick trade sells for cash at once, Quick release releases to the wild for CC at once: only for animals the market won't take; neither can be undone");
+    seg.classList.add('mode');
+    return seg;
+}
+
+// The panel in a quick mode: red, its header, the count and exact total,
+// the live-acceptance note, the pace, the button that opens the sheet.
+function quickSide(el, s, running) {
+    const m = QUICK_MODES[D.mode];
+    const busy = isListingBusy();
+    el.appendChild(h('div.PZ2QoL_mdQuickHead', { text: m.header }));
+    const info = quickInfo();
+    const n = info.go.length;
+    el.appendChild(h('div.PZ2QoL_mdBig', null,
+        h('span.n', { text: String(n) }),
+        h('span.l', { text: `animal${n === 1 ? '' : 's'} to ${m.label.toLowerCase()}` })));
+    el.appendChild(h('div.PZ2QoL_mdTotal', { text: n ? `For ${info.totalText}${info.skip.length ? ` · ${info.skip.length} ticked can't go` : ''}` : `Tick the animals the game allows ${m.label} for (market ones too).` }));
+    // the server's refusals from a listing run: one click to tick them
+    const refusedRows = D.mode === 'quicktrade' ? D.rows.filter(r => r.guid && refusedSet.has(r.guid) && quickEligible(r, D.mode).ok && !D.chosen.has(r.id)) : [];
+    if (refusedRows.length && !running) el.appendChild(btn(`Tick the ${refusedRows.length} refused by the server`, null, () => tickRefused(Array.from(refusedSet)), { cls: 'small.refused', title: 'The animals a listing run had refused by the server (this session)' }));
+    if (!isAccepted(D.mode)) el.appendChild(h('div.PZ2QoL_mdQuickFirst', { text: `${FIRST_TEXT[D.mode]}.`, title: 'Until one animal has been confirmed gone from storage this way, the desk sends one at a time.' }));
+    el.appendChild(D.pace);
+    if (running) {
+        el.appendChild(btn('Stop', 'Icon_Close', () => stopListing(), { cls: 'stop.wide', tint: 'white', title: 'Stops after the current animal' }));
+    }
+    else {
+        const can = n > 0 && isFranchise() && !busy && engineUsable(D.caps, D.rows.length);
+        el.appendChild(btn(info.button, m.cash ? 'Icon_Cash_Symbol' : 'Icon_ConservationCredits', openSheet, {
+            cls: `quick.wide${can ? '' : '.disabled'}`, tint: 'white',
+            title: !isFranchise() ? 'Franchise only' : busy ? 'A run or market check is going' : 'Opens a confirmation; nothing is sent until you press Confirm there',
+        }));
+    }
+    if (s) el.appendChild(runCard(s));
+}
+
 function renderSide() {
     const el = D.el.side;
     clear(el);
     const s = getEngineState();
     const running = engineRunning();
     const busy = isListingBusy();
+    setClass(el, 'quick', D.mode !== 'list');
+    el.appendChild(modeSwitch(running));
+    if (D.mode !== 'list') return quickSide(el, s, running);
     const chosen = chosenRows();
     const listable = chosen.filter(r => !r.block);
     const total = listable.reduce((n, r) => n + (r.advice.price > 0 ? r.advice.price : 0), 0);
@@ -731,8 +1351,23 @@ function renderSide() {
     el.appendChild(h('div.PZ2QoL_mdTotal', { text: listable.length ? `≈ ${fmtInt(total)} CC asked${noPrice ? ` + ${noPrice} at the game's price` : ''}` : 'Tick animals in the list.' }));
     el.appendChild(segmented('Duration', D.hours, [['max', 'Longest'], ['default', 'Game default']], v => {
         D.hours = v;
+        dlog('desk', 'duration', { hours: v });
         queueRender();
     }, "Longest: the most hours the game allows (12 h today). Game default: what the game's own slider starts at (6 h)."));
+    // When the server refuses a listing (a player-wide setting, prefs 'deskRefused')
+    const onRefused = refusedOption();
+    const segR = segmented('If refused', onRefused, [['leave', 'Leave it'], ['quicktrade', 'Quick trade'], ['release', 'Release']], v => {
+        try {
+            setPref('deskRefused', normalizeRefused(v) === 'leave' ? undefined : normalizeRefused(v));
+        }
+        catch (e) {
+            // kept for the page only
+        }
+        dlog('desk', 'refused_option', { value: normalizeRefused(v) });
+        queueRender();
+    }, "When the server refuses a listing: Leave it, Quick trade it or Quick release it. Some animals are refused by Frontier's server every time (the game's own Trade too). Quick trade it / Quick release it: in the same run, right after the refusal, the animal is quick-traded or released if the game allows it (each checked again; the run stops at anything unexpected). Permanent.");
+    segR.classList.add('refused');
+    el.appendChild(segR);
     D.offset.__update();
     el.appendChild(D.offset);
     el.appendChild(D.pace);
@@ -743,7 +1378,11 @@ function renderSide() {
     else {
         const stale = uncheckedSpecies(listable);
         const can = listable.length && isFranchise() && !busy && !stale.length;
-        el.appendChild(btn(`List ${listable.length} animal${listable.length === 1 ? '' : 's'}`, 'IconTrade', startListing, {
+        // the permanence, up front: the List click is the opt-in
+        const note = refusedNote(onRefused, { limitOne: onRefused === 'release' && !isAccepted('release') });
+        if (note) el.appendChild(h('div.PZ2QoL_mdRefusedNote', { text: note }));
+        const tail = onRefused === 'quicktrade' ? ' · refused → quick trade' : onRefused === 'release' ? ' · refused → release' : '';
+        el.appendChild(btn(`List ${listable.length} animal${listable.length === 1 ? '' : 's'}${tail}`, 'IconTrade', startListing, {
             cls: `primary.wide${can ? '' : '.disabled'}`, tint: 'white',
             title: !isFranchise() ? 'Franchise only' : busy ? 'A listing or market check is running'
                 : stale.length ? 'Check market prices first (the button above)' : 'Lists the ticked animals at their recommended prices, one at a time',
@@ -758,6 +1397,8 @@ function runCard(s) {
     const pct = tl.total ? Math.round(processed / tl.total * 100) : 0;
     const running = s.phase === 'running';
     const cur = s.results[s.index];
+    if (s.mode === 'check') return checkCard(s, tl, pct, running, cur);
+    if (QUICK_MODES[s.mode]) return quickCard(s, pct, running, cur);
     const card = h(`div.PZ2QoL_mdRun.${running ? 'running' : s.phase}`);
     card.appendChild(h('div.PZ2QoL_mdRunHead', null,
         h('span', { text: running ? 'Listing…' : s.phase === 'done' ? 'Finished' : s.phase === 'closed' ? 'Stopped: storage closed' : 'Stopped' }),
@@ -769,16 +1410,80 @@ function runCard(s) {
         card.appendChild(h('div.PZ2QoL_mdRunStep', { text: `${STEP_WORDS[s.step] || s.message || 'Working…'}${s.waited >= 2 ? ` (${Math.round(s.waited)}s)` : ''}` }));
     }
     else {
-        card.appendChild(h('div.PZ2QoL_mdRunStep', { text: summaryText(s, fmtInt) }));
+        card.appendChild(h('div.PZ2QoL_mdRunStep', { text: summaryText(s, fmtInt, jobNote(s)) }));
         const again = retryGuids(s).length;
         if (again) card.appendChild(btn(`Tick the ${again} to retry`, null, retry, { cls: 'small', title: 'Ticks the animals that were not listed for a passing reason (server busy, refused, no confirmation, stopped)' }));
+        // the server's refusals: Quick trade them instead
+        const nRefused = refusedGuids(s).filter(g => D.rows.some(r => r.guid === g)).length;
+        if (nRefused) card.appendChild(btn(`Quick trade the ${nRefused} refused`, 'Icon_Cash_Symbol', () => tickRefused(refusedGuids(s)), { cls: 'small', title: 'Switches to Quick trade and ticks the animals the server refused to list (those the game allows Quick trade for)' }));
     }
     const recent = s.results.filter(r => r.status !== 'pending' && r.status !== 'working').slice(-5).reverse();
     for (const r of recent) {
-        const ok = r.status === 'listed';
-        const text = ok ? `${labelOf(r.guid)} · ${fmtInt(r.price || 0)} CC` : `${labelOf(r.guid)} · ${RESULT_WORDS[r.kind] || r.status}`;
-        card.appendChild(h(`div.PZ2QoL_mdRunLine.${ok ? 'ok' : 'no'}`, { text: `${ok ? '✓' : '·'} ${text}`, title: r.detail ? `${text} (${t(r.detail)})` : text }));
+        const quick = r.status === 'traded' || r.status === 'released';
+        const ok = r.status === 'listed' || quick;
+        const text = quick ? `${labelOf(r.guid)} · ${r.status === 'traded' ? 'quick-traded' : 'released'} after refusal${r.price ? ` · ${quickMoney(r.status === 'traded' ? 'quicktrade' : 'release', r.price, fmtInt)}` : ''}`
+            : ok ? `${labelOf(r.guid)} · ${fmtInt(r.price || 0)} CC` : `${labelOf(r.guid)} · ${RESULT_WORDS[r.kind] || r.status}`;
+        const why = !ok && r.detail ? reasonText(r.kind, r.detail, t) : '';
+        card.appendChild(h(`div.PZ2QoL_mdRunLine.${ok ? 'ok' : 'no'}`, { text: `${ok ? '✓' : '·'} ${text}${why && r.kind === 'untradeable' ? `: ${why}` : ''}`, title: why ? `${text} (${why})` : text }));
     }
+    return card;
+}
+
+// A quick run: "Quick-traded 6 of 7 · $7,200", why it stopped, a line per animal.
+function quickCard(s, pct, running, cur) {
+    const m = QUICK_MODES[s.mode];
+    const done = s.results.filter(r => r.status === m.done).length;
+    const card = h(`div.PZ2QoL_mdRun.quick.${running ? 'running' : s.phase}`);
+    card.appendChild(h('div.PZ2QoL_mdRunHead', null,
+        h('span', { text: running ? `${m.working}` : s.phase === 'done' ? 'Finished' : s.phase === 'closed' ? 'Stopped: storage closed' : 'Stopped' }),
+        h('div.PZ2QoL_kpFlex'),
+        h('span.PZ2QoL_mdRunCount', { text: `${done}/${s.results.length}` })));
+    card.appendChild(h('div.PZ2QoL_mdProgress', null, h('div.PZ2QoL_mdProgressFill', { style: { width: `${pct}%` } })));
+    card.appendChild(h('div.PZ2QoL_mdRunStep.sum', { text: quickRunSummary(s, fmtInt) }));
+    if (running && cur) card.appendChild(h('div.PZ2QoL_mdRunNow', { text: `${rowLabel(cur.guid)} · ${STEP_WORDS[s.step] || s.message || 'Working…'}` }));
+    else if (s.phase !== 'done' && s.message) card.appendChild(h('div.PZ2QoL_mdRunStep.why', { text: s.message, title: s.message }));
+    const lines = s.results.slice(0, 12);
+    for (const r of lines) {
+        let text;
+        let cls = 'no';
+        if (r.status === m.done) {
+            text = `✓ ${rowLabel(r.guid)}${r.price ? ` · ${quickMoney(s.mode, r.price, fmtInt)}` : ''}`;
+            cls = 'ok';
+        }
+        else if (r.status === 'pending') text = `· ${rowLabel(r.guid)} · not sent`;
+        else if (r.status === 'working') text = `… ${rowLabel(r.guid)}`;
+        else text = `✕ ${rowLabel(r.guid)} · ${RESULT_WORDS[r.kind] || r.status}`;
+        const why = r.detail && r.kind !== 'unconfirmed' ? reasonText('untradeable', r.detail, t) : '';
+        card.appendChild(h(`div.PZ2QoL_mdRunLine.${cls}`, { text: `${text}${why ? `: ${why}` : ''}`, title: `${text}${why ? ` (${why})` : ''}` }));
+    }
+    if (s.results.length > 12) card.appendChild(h('div.PZ2QoL_mdRunLine', { text: `and ${s.results.length - 12} more` }));
+    return card;
+}
+
+// "Lion ♀ "Nala"" for a GUID the desk shows (a check run's animals never got
+// a listing label; a quick run's leave storage, so their label is kept)
+function rowLabel(guid) {
+    const r = D.rows.find(x => x.guid === String(guid));
+    if (!r) return D.labels.get(String(guid)) || labelOf(guid);
+    return `${speciesName(r.species)} ${SEX[r.a.gender] || ''} "${t(r.a.name)}"`.replace(/\s+/g, ' ');
+}
+
+// A Check storage run: progress, the animal being checked, the categories found.
+function checkCard(s, tl, pct, running, cur) {
+    const card = h(`div.PZ2QoL_mdRun.check.${running ? 'running' : s.phase}`);
+    card.appendChild(h('div.PZ2QoL_mdRunHead', null,
+        h('span', { text: running ? 'Checking storage…' : s.phase === 'done' ? 'Storage checked' : s.phase === 'closed' ? 'Check stopped: storage closed' : 'Check stopped' }),
+        h('div.PZ2QoL_kpFlex'),
+        h('span.PZ2QoL_mdRunCount', { text: `${tl.checked}/${tl.total} checked` })));
+    card.appendChild(h('div.PZ2QoL_mdProgress', null, h('div.PZ2QoL_mdProgressFill', { style: { width: `${pct}%` } })));
+    if (running && cur) {
+        card.appendChild(h('div.PZ2QoL_mdRunNow', { text: rowLabel(cur.guid) }));
+        card.appendChild(h('div.PZ2QoL_mdRunStep', { text: s.step === 'pause' ? 'Next one…' : 'Selecting it in Animal Storage and reading what the game allows…' }));
+    }
+    else {
+        card.appendChild(h('div.PZ2QoL_mdRunStep', { text: checkSummaryText(s, verdicts) }));
+    }
+    card.appendChild(h('div.PZ2QoL_mdRunLine', { text: 'Nothing is sold, listed or sent while checking.' }));
     return card;
 }
 
@@ -791,12 +1496,92 @@ function storageOpen() {
     return r.width > 0 && r.height > 0;
 }
 
+// What Animal Storage shows now: the list as the game gave it (its own
+// filters narrow it natively) and the mod's species filter (the screen
+// only; the desk reads the unfiltered rows).
+function readScope() {
+    let modSpecies = '';
+    try {
+        modSpecies = String((getStorageFilters() || {}).species || '');
+    }
+    catch (e) {
+        modSpecies = '';
+    }
+    const rows = childrenOf(STORAGE_LIST).map(ctx => readAnimal(ctx));
+    const total = get(STORAGE_DATA, 'animalsInStorage');
+    const active = nativeFiltersOn(p => get(STORAGE_DATA.concat('filters'), p));
+    return storageScope({ rows, total: typeof total === 'number' ? total : null, active, modSpecies });
+}
+
+const wait = ms => new Promise(r => setTimeout(r, ms));
+
+// The desk lists every animal in storage, whatever Animal Storage is
+// filtered to. The game's filters narrow the storage list natively (there is
+// no other list, and the engine resolves and selects animals in it), so the
+// game-side engine clears them while the desk is open, as the game's own
+// Reset all filters does, and puts them back on close (pz2qol.lister.lua
+// DeskFilters; local calls only). The storage screen's ticks become GUIDs
+// first: a rebuilt list gives row keys to other animals. Without the engine
+// the list stays as it is and the desk says so (renderScope).
+async function seeAllStorage() {
+    if (!D.open || D.unfilter === 'clearing' || D.unfilter === 'cleared') return;
+    if (!D.cleared && !(D.scope && D.scope.filtered)) return;
+    D.unfilter = 'clearing';
+    try {
+        for (let i = 0; i < 20 && (D.reading || D.pendingKeys); i++) {
+            await wait(150);
+            if (!D.reading && D.pendingKeys) await readRows(true);
+        }
+        if (!D.open) {
+            D.unfilter = '';
+            return;
+        }
+        const ans = D.pendingKeys || !engineUsable(D.caps, D.rows.length) ? null : await deskFilters('clear');
+        dlog('desk', 'scope', { asked: !!ans || undefined, ok: ans ? ans.ok : undefined, detail: ans ? ans.detail : undefined, pendingKeys: !!D.pendingKeys || undefined, engine: engineUsable(D.caps, D.rows.length) });
+        if (ans && ans.ok) {
+            D.unfilter = 'cleared';
+            D.cleared = true;
+            breadcrumb('desk_scope_cleared');
+            // the native rebuilds the list: read it again (the timer does too)
+            D.readSig = '';
+            setTimeout(() => readRows(true), 300);
+        }
+        else {
+            D.unfilter = 'failed';
+            breadcrumb('desk_scope_kept');
+        }
+    }
+    catch (e) {
+        D.unfilter = 'failed';
+        reportError('ui', 'Market desk: showing all of storage failed', e, { silent: true });
+    }
+    finally {
+        queueRender();
+    }
+}
+
 // opts.keys: storage row keys to tick (the storage screen's selection).
 export function openMarketDesk(opts = {}) {
     try {
         ensureRoot();
         if (!D.filters) D.filters = loadFilters();
         closeOtherPanels('desk');
+        // what the storage screen was scoped to (kept while the desk's clear
+        // still holds: the list is the full one then); the desk starts there
+        const scopeNow = readScope();
+        if (!D.cleared || scopeNow.filtered) D.scope = scopeNow;
+        D.unfilter = '';
+        D.reveal = null;
+        // a quick mode is never remembered
+        closeSheet('open');
+        if (D.mode !== 'list') D.chosen.clear();
+        D.mode = 'list';
+        if (D.scope && D.scope.species) {
+            // another species than last time: no ticks it does not show (setFilters' rule)
+            if (D.filters.species !== D.scope.species) D.chosen.clear();
+            D.filters = normalizeFilters(Object.assign({}, D.filters, { species: D.scope.species, priceMin: 0, priceMax: 0 }));
+            D.reveal = { n: -1 };
+        }
         let keys = Array.isArray(opts.keys) ? opts.keys : null;
         if (!keys) {
             const sel = get(STORAGE_DATA, 'selectedAnimalIDs');
@@ -812,8 +1597,18 @@ export function openMarketDesk(opts = {}) {
         setClass(D.scrim, 'hidden', false);
         placePanel(D.root);
         breadcrumb('desk_open');
+        dlog('desk', 'open', {
+            keys: keys.length, pageRows: childrenOf(STORAGE_LIST).length, scopeFiltered: D.scope ? D.scope.filtered : undefined,
+            scopeSpecies: D.scope ? D.scope.species || undefined : undefined, scopeActive: D.scope && D.scope.active.length ? D.scope.active : undefined,
+            species: D.filters.species || 'all', filters: activeFilterCount(D.filters), hours: D.hours, offset: getPriceOffset() || undefined,
+            cleared: D.cleared || undefined, running: engineRunning() || undefined,
+        });
         if (!D.unsub.length) {
-            D.unsub.push(onEngineState(() => queueRender()));
+            D.unsub.push(onEngineState(() => {
+                takeGameBlocks();
+                takeQuickAcceptance();
+                queueRender();
+            }));
             D.unsub.push(onPriceBookChanged(() => {
                 D.readSig = '';
                 readRows(false);
@@ -833,7 +1628,7 @@ export function openMarketDesk(opts = {}) {
             }
             readRows(false);
         }, READ_MS);
-        readRows(true);
+        readRows(true).then(seeAllStorage);
         renderAll(true);
         return true;
     }
@@ -845,6 +1640,8 @@ export function openMarketDesk(opts = {}) {
 
 export function closeMarketDesk() {
     try {
+        dlog('desk', 'close', { cleared: D.cleared || undefined, running: engineRunning() || undefined, ticked: D.chosen.size });
+        closeSheet('close');
         D.open = false;
         clearInterval(D.timer);
         D.timer = 0;
@@ -852,6 +1649,13 @@ export function closeMarketDesk() {
         D.unsub = [];
         if (D.root) setClass(D.root, 'hidden', true);
         if (D.scrim) setClass(D.scrim, 'hidden', true);
+        // the game's storage filters back (after a run, if one is going)
+        D.unfilter = '';
+        if (D.cleared) {
+            deskFilters('restore').then(ans => {
+                if (!D.open) D.cleared = !(ans && ans.ok && ans.detail !== 'later');
+            });
+        }
         // a run keeps going: it lives in the game-side engine
     }
     catch (e) {
@@ -869,11 +1673,32 @@ export function installMarketDesk() {
     if (installed) return true;
     installed = true;
     document.addEventListener('keydown', e => {
-        if (!D.open || (e.key !== 'Escape' && e.keyCode !== 27)) return;
+        if (!D.open) return;
+        // the sheet: Esc closes it only; Enter confirms
+        if (D.sheet) {
+            if (e.key === 'Escape' || e.keyCode === 27) {
+                e.preventDefault();
+                e.stopPropagation();
+                closeSheet('esc');
+            }
+            else if ((e.key === 'Enter' || e.keyCode === 13) && !e.repeat) {
+                e.preventDefault();
+                e.stopPropagation();
+                confirmSheet('key');
+            }
+            return;
+        }
+        if (e.key !== 'Escape' && e.keyCode !== 27) return;
         e.preventDefault();
         e.stopPropagation();
         closeMarketDesk();
     }, true);
+    try {
+        onShouldBlockInput.add(sheetInput);
+    }
+    catch (e) {
+        // no gamepad hook: mouse and keyboard still confirm
+    }
     window.addEventListener('resize', () => {
         if (!D.open) return;
         placePanel(D.root);

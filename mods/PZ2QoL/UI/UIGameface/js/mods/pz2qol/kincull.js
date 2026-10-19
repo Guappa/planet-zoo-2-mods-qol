@@ -227,10 +227,11 @@ export function cullPlan(model, species, info = {}, { options = {} } = {}) {
         const unrelatedFirst = byValue(females).sort((x, y) => coreMales.some(m => related(model, m, x)) - coreMales.some(m => related(model, m, y)));
         unrelatedFirst.slice(0, opts.coreFemales).forEach(a => core.add(a.id));
         byValue(group.filter(a => a.sex === Sex.Unisex && breedsNow(a) && !poor.has(a.id))).slice(0, opts.coreMales + opts.coreFemales).forEach(a => core.add(a.id));
-        const fixed = a => keepIds.has(a.id) || a.preg || a.moving || core.has(a.id) || protectedBest.has(a.id);
+        const fixed = a => keepIds.has(a.id) || a.preg || a.moving || a.away || core.has(a.id) || protectedBest.has(a.id);
         const why = new Map();
         // the player's choices first
-        for (const { a } of scored) if (cullIds.has(a.id) && !a.moving) why.set(a.id, 'your choice');
+        // (never a pregnant one: she can't be sold and has to give birth first)
+        for (const { a } of scored) if (cullIds.has(a.id) && !a.moving && !a.preg && !a.away) why.set(a.id, 'your choice');
         // the player's sends come on top: they do not make room for another to stay
         let over = adults.length - target;
         // poor genes go from every habitat, full or not; they make room
@@ -253,7 +254,7 @@ export function cullPlan(model, species, info = {}, { options = {} } = {}) {
         const cull = scored.filter(x => why.has(x.a.id)).map(x => ({ id: x.a.id, reason: why.get(x.a.id), value: x.k.value, gene: x.k.gene }));
         const keep = scored.filter(x => !why.has(x.a.id)).map(x => ({
             id: x.a.id, value: x.k.value, gene: x.k.gene,
-            why: keepIds.has(x.a.id) ? 'your choice' : x.a.preg ? 'pregnant' : x.a.moving ? 'on the move' : core.has(x.a.id) ? 'breeding core'
+            why: keepIds.has(x.a.id) ? 'your choice' : x.a.preg ? 'pregnant' : x.a.away ? 'away for now' : x.a.moving ? 'on the move' : core.has(x.a.id) ? 'breeding core'
                 : lastOfSex.has(x.a.id) ? 'last breeder of its sex' : protectedBest.has(x.a.id) ? 'best genes of the species' : '',
             poor: poor.get(x.a.id) || '',
         }));

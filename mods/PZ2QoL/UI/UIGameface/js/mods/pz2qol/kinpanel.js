@@ -66,11 +66,9 @@ export function trunc(text, n) {
     return s.length > n ? s.slice(0, Math.max(1, n - 1)) + '…' : s;
 }
 
-// "[Animal_RedPanda]" -> "RedPanda"; plain names stay as they are.
-export function speciesName(s) {
-    const t = String(s || '').replace(/^\[(?:Animal_)?/, '').replace(/\]$/, '').replace(/_/g, ' ');
-    return t || 'Unknown species';
-}
+// Species names: the game's name in the player's language (Kin setting
+// gameSpeciesNames), else the internal one ("[Animal_RedPanda]" -> "RedPanda").
+export { speciesName } from '/js/mods/pz2qol/speciesnames.js';
 
 // Places a big panel: min(96rem, 92vw) wide (or as given), 84% of the view
 // high, centred.

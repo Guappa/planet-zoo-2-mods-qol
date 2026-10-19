@@ -73,6 +73,8 @@
 .PZ2QoL_mdSpeciesMeta span { margin-right: 0.5rem; white-space: nowrap; }
 .PZ2QoL_mdSpeciesMeta .sell { color: var(--qol-olive); font-weight: bold; }
 .PZ2QoL_mdSpeciesMeta .listed { color: var(--qol-teal); }
+/* Quick trade only: the market won't take them (docs/PLAN-desk-quick-release.md) */
+.PZ2QoL_mdSpeciesMeta .quick { color: #B5651D; font-weight: bold; }
 .PZ2QoL_mdSpeciesMeta .chosen { color: var(--kp-kin-ink); font-weight: bold; }
 
 /* ---------------------------------------------------------------- list */
@@ -114,6 +116,11 @@
 .PZ2QoL_mdCell.state.done { color: var(--kp-ok-ink); font-weight: bold; }
 .PZ2QoL_mdCell.state.skipped { color: var(--kp-kin-ink); }
 .PZ2QoL_mdCell.state.refused { color: var(--kp-risk-ink); }
+.PZ2QoL_mdCell.state.quick { color: #B5651D; font-weight: bold; }
+/* Check storage, in the header */
+.PZ2QoL_mdCheck { flex-shrink: 0; align-items: center; margin: 0 0.5rem; }
+.PZ2QoL_mdRun.check { border-left-color: #B5651D; }
+.PZ2QoL_mdRun.check.done { border-left-color: var(--kin-ok); }
 .PZ2QoL_mdBox { width: 1.05rem; height: 1.05rem; border-radius: 0.25rem; border: 0.12rem solid rgba(114, 91, 74, 0.45); background-color: #FFFFFF; }
 .PZ2QoL_mdBox.on { border-color: var(--qol-olive); background-color: var(--qol-olive); box-shadow: inset 0 0 0 0.16rem #FFFFFF; }
 .PZ2QoL_mdBox.off { opacity: 0.3; }
@@ -150,6 +157,9 @@
 
 /* its button in the price panel's header */
 .PZ2QoL_btn.PZ2QoL_deskBtn { flex-shrink: 0; margin-left: 0.6rem; white-space: nowrap; }
+/* the storage bar: the Market lister switch with the Market desk button under it */
+.PZ2QoL_listerCol { display: flex; flex-direction: column; flex-shrink: 0; align-items: stretch; justify-content: center; }
+.PZ2QoL_listerCol .PZ2QoL_btn.PZ2QoL_deskBtn { margin-left: 0; margin-top: 0.25rem; padding-top: 0.15rem; padding-bottom: 0.15rem; justify-content: center; }
 
 /* ------------------------------------------------------------- filters */
 /* the dim layer over Animal Storage while the desk is open */
@@ -204,3 +214,43 @@
 .PZ2QoL_mdPriceStatus.reading { color: var(--qol-teal); }
 /* during a listing run: Animal Storage behind the desk is hidden entirely */
 .PZ2QoL_mdScrim.solid { background-color: rgb(46, 38, 30); }
+
+/* ---------------------------------------- Quick trade / Quick release (Phase 2)
+   docs/PLAN-desk-quick-release.md 4: the mode switch, the red quick panel,
+   the confirmation sheet and its Confirm */
+.PZ2QoL_mdSide .PZ2QoL_mdSeg.mode { align-self: stretch; margin: 0 0 0.55rem 0; padding: 0 0.15rem; justify-content: space-between; }
+.PZ2QoL_mdSeg.mode .PZ2QoL_mdSegLabel { display: none; }
+.PZ2QoL_mdSeg.mode .PZ2QoL_mdSegItem { font-size: 0.76rem; padding: 0 0.5rem; }
+.PZ2QoL_mdSide.quick { background-color: #F6E1DC; border: 0.12rem solid #B3261E; }
+.PZ2QoL_mdSide.quick .PZ2QoL_mdSeg.mode .PZ2QoL_mdSegItem.on { background-color: #B3261E; color: #FFFFFF; }
+.PZ2QoL_mdQuickHead { padding: 0.45rem 0.55rem; border-radius: 0.5rem; background-color: #B3261E; color: #FFFFFF; font-size: 0.74rem; font-weight: bold; letter-spacing: 0.03rem; }
+.PZ2QoL_mdQuickFirst { margin-top: 0.4rem; padding: 0.35rem 0.5rem; border-radius: 0.45rem; background-color: rgba(179, 38, 30, 0.12); color: #8C1D16; font-size: 0.76rem; font-weight: bold; }
+.PZ2QoL_md .PZ2QoL_kpBtn.quick { margin-top: 0.6rem; background-color: #B3261E; color: #FFFFFF; }
+.PZ2QoL_md .PZ2QoL_kpBtn.quick.disabled { opacity: 0.45; }
+.PZ2QoL_mdRow.quickok .PZ2QoL_mdBox { border-color: #B3261E; }
+.PZ2QoL_mdRow.quickok.on .PZ2QoL_mdBox { background-color: #B3261E; border-color: #B3261E; }
+.PZ2QoL_mdPreNote { flex-shrink: 0; margin: 0 0 0.35rem 0.2rem; font-size: 0.72rem; color: #8A4B12; }
+.PZ2QoL_mdRun.quick { border-left-color: #B3261E; }
+.PZ2QoL_mdRun.quick.done { border-left-color: var(--kin-ok); }
+.PZ2QoL_mdRunStep.sum { color: var(--qol-ink); font-weight: bold; }
+.PZ2QoL_mdRunStep.why { color: #8C1D16; font-weight: bold; }
+.PZ2QoL_md .PZ2QoL_mdSheet { position: absolute; left: 0; top: 0; right: 0; bottom: 0; z-index: 5; align-items: center; justify-content: center; background-color: rgba(40, 30, 20, 0.45); }
+.PZ2QoL_md .PZ2QoL_mdSheet.hidden { display: none; }
+.PZ2QoL_mdSheetCard { flex-direction: column; width: 34rem; max-height: 90%; padding: 0.9rem 1rem; border-radius: 0.9rem; background-color: var(--qol-card); border: 0.15rem solid #B3261E; box-shadow: 0 0.8rem 2.4rem rgba(40, 30, 20, 0.45); overflow: hidden; }
+.PZ2QoL_mdSheetCard > * { flex-shrink: 0; }
+.PZ2QoL_mdSheetHead { padding: 0.4rem 0.55rem; border-radius: 0.5rem; background-color: #B3261E; color: #FFFFFF; font-size: 0.74rem; font-weight: bold; }
+.PZ2QoL_mdSheetTitle { margin-top: 0.6rem; font-size: 1.15rem; font-weight: bold; }
+.PZ2QoL_mdSheetList { flex-direction: column; margin-top: 0.5rem; padding: 0.4rem 0.55rem; border-radius: 0.5rem; background-color: #FFFFFF; }
+.PZ2QoL_mdSheetList.skip { background-color: rgba(217, 134, 42, 0.12); }
+.PZ2QoL_mdSheetLabel { font-size: 0.72rem; font-weight: bold; color: var(--qol-ink-soft); margin-bottom: 0.15rem; }
+.PZ2QoL_mdSheetLine { font-size: 0.8rem; white-space: nowrap; overflow: hidden; }
+.PZ2QoL_mdSheetLine.more { color: var(--qol-ink-faint); }
+.PZ2QoL_mdSheetNote { margin-top: 0.4rem; font-size: 0.74rem; color: var(--qol-ink-soft); }
+.PZ2QoL_mdSheetWarn { margin-top: 0.6rem; font-size: 0.9rem; font-weight: bold; color: #8C1D16; }
+.PZ2QoL_mdSheetButtons { margin-top: 0.8rem; align-items: center; justify-content: space-between; }
+.PZ2QoL_md .PZ2QoL_mdSheetButtons .PZ2QoL_kpBtn.quick.confirm { flex: 1; margin: 0 0 0 0.8rem; justify-content: center; }
+/* When the server refuses a listing (the List panel) */
+.PZ2QoL_mdRefusedLabel { margin-top: 0.15rem; font-size: 0.7rem; font-weight: bold; letter-spacing: 0.04rem; text-transform: uppercase; color: var(--qol-ink-faint); }
+.PZ2QoL_mdSide .PZ2QoL_mdSeg.refused { margin: 0 0 0.4rem 0; }
+.PZ2QoL_mdSeg.refused .PZ2QoL_mdSegItem { padding: 0 0.45rem; }
+.PZ2QoL_mdRefusedNote { margin-top: 0.45rem; padding: 0.25rem 0.5rem; border-radius: 0.45rem; background-color: rgba(179, 38, 30, 0.12); color: #8C1D16; font-size: 0.76rem; font-weight: bold; }

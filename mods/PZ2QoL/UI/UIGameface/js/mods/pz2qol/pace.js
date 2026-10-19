@@ -6,6 +6,7 @@
 // long pause after a server refusal stays as it is.
 import { h, setClass, setText } from '/js/mods/pz2qol/ui.js';
 import { breadcrumb } from '/js/mods/pz2qol/errors.js';
+import { getPref, onPrefs, setPref } from '/js/mods/pz2qol/prefs.js';
 
 export const PACE = {
     lister: {
@@ -15,12 +16,13 @@ export const PACE = {
     },
     moves: {
         label: 'Pause between moves',
-        min: 1, max: 10, step: 0.5, def: 1.5,
-        warn: 'Faster than the default (1.5 s). Each move still waits for the game to confirm it, but keepers get transport jobs closer together. In a Franchise zoo every move is also a server request.',
+        // 0.5 s default and minimum: the developer, 2026-10-18 (was 1.5 s, minimum 1 s)
+        min: 0.5, max: 10, step: 0.5, def: 0.5,
+        warn: 'Each move still waits for the game to confirm it before the pause starts. In a Franchise zoo every move is also a server request.',
     },
 };
 
-const KEY = 'PZ2QoL.pace';
+const PREF_KEY = 'pace';
 
 export function clampPace(kind, v) {
     const c = PACE[kind];
@@ -30,11 +32,13 @@ export function clampPace(kind, v) {
     return Math.max(c.min, Math.min(c.max, Math.round(stepped * 10) / 10));
 }
 
+// Kept in the player's settings (prefs.js, every zoo; Gameface's
+// localStorage is lost when the game closes).
 function load() {
     const out = {};
     for (const k of Object.keys(PACE)) out[k] = PACE[k].def;
     try {
-        const saved = window.localStorage && JSON.parse(window.localStorage.getItem(KEY) || 'null');
+        const saved = getPref(PREF_KEY);
         if (saved && typeof saved === 'object') for (const k of Object.keys(PACE)) if (saved[k] != null) out[k] = clampPace(k, saved[k]);
     }
     catch (e) {
@@ -45,6 +49,17 @@ function load() {
 
 let values = load();
 const listeners = new Set();
+
+// the kept values arrive (or change on the other page)
+onPrefs((status, key) => {
+    if (key !== undefined && key !== PREF_KEY) return;
+    const next = load();
+    for (const k of Object.keys(PACE)) {
+        if (next[k] === values[k]) continue;
+        values = Object.assign({}, values, { [k]: next[k] });
+        listeners.forEach(fn => fn(k, next[k]));
+    }
+});
 
 export function getPace(kind) {
     return values[kind] != null ? values[kind] : (PACE[kind] ? PACE[kind].def : 0);
@@ -60,11 +75,10 @@ export function setPace(kind, v) {
     if (next === values[kind]) return;
     values = Object.assign({}, values, { [kind]: next });
     try {
-        // Gameface keeps this for the session only
-        if (window.localStorage) window.localStorage.setItem(KEY, JSON.stringify(values));
+        setPref(PREF_KEY, Object.assign({}, values));
     }
     catch (e) {
-        // session only
+        // this session only
     }
     listeners.forEach(fn => fn(kind, next));
 }

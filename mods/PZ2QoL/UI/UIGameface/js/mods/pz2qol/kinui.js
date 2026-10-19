@@ -9,6 +9,8 @@ import {
 import { getKinSettings, locateAnimal, setContraception } from '/js/mods/pz2qol/kin.js';
 import { clear, h, icon, setClass } from '/js/mods/pz2qol/ui.js';
 import { reportError } from '/js/mods/pz2qol/errors.js';
+import { besideAnchor } from '/js/mods/pz2qol/placement.js';
+import { speciesName } from '/js/mods/pz2qol/speciesnames.js';
 
 export function sexSymbol(sex) {
     return sex === Sex.Male ? '♂' : sex === Sex.Female ? '♀' : '⚥';
@@ -207,18 +209,37 @@ export function hideKinCard(anchor) {
     cardOwner = null;
 }
 
+function remPx() {
+    try {
+        return parseFloat(getComputedStyle(document.documentElement).fontSize) || 16;
+    }
+    catch (e) {
+        return 16;
+    }
+}
+
+// The card was display: none a moment ago; Gameface may still measure it as
+// 0 x 0 (guess), so its CSS width (25rem) is the floor (placement.js).
 function place(anchor) {
+    if (!card || !anchor) return;
     const r = anchor.getBoundingClientRect();
-    const vw = window.innerWidth || 1920;
-    const vh = window.innerHeight || 1080;
+    const de = document.documentElement || {};
+    const vw = window.innerWidth || de.clientWidth || 1920;
+    const vh = window.innerHeight || de.clientHeight || 1080;
     const cr = card.getBoundingClientRect();
-    let left = r.right + 8;
-    if (left + cr.width > vw - 8) left = Math.max(8, r.left - cr.width - 8);
-    let top = r.top - 6;
-    if (top + cr.height > vh - 8) top = Math.max(8, vh - cr.height - 8);
-    if (left < 8) left = 8;
-    card.style.left = `${Math.round(left)}px`;
-    card.style.top = `${Math.round(top)}px`;
+    const rem = remPx();
+    const at = besideAnchor(r, { w: cr.width, h: cr.height }, { vw, vh }, { gap: 8, minW: 25 * rem, minH: 10 * rem });
+    card.style.left = `${at.left}px`;
+    card.style.top = `${at.top}px`;
+}
+
+// again once the new content is laid out (only if the card still belongs to it)
+function placeAfterLayout(anchor) {
+    for (const ms of [0, 60]) {
+        setTimeout(() => {
+            if (card && cardOwner === anchor) place(anchor);
+        }, ms);
+    }
 }
 
 // anchor null: is any card pinned?
@@ -242,6 +263,7 @@ export function showKinCard(anchor, build, asPinned, fromHover) {
     setClass(card, 'pinned', pinned);
     setClass(card, 'hidden', false);
     place(anchor);
+    placeAfterLayout(anchor);
 }
 
 // Hover peeks, click pins (with actions). build(pinned) returns the content.
@@ -313,7 +335,7 @@ export function habitatCardContent(model, habId, { pinned = false, openPlanner, 
     body.appendChild(h('div.PZ2QoL_kinCardHead', null,
         h('div.PZ2QoL_kinCardIcon'),
         h('div.PZ2QoL_cardTitles', null,
-            h('div.PZ2QoL_cardTitle', { text: species ? `${name} · ${species}` : name }),
+            h('div.PZ2QoL_cardTitle', { text: species ? `${name} · ${speciesName(species)}` : name }),
             h('div.PZ2QoL_cardSubtitle', { text: worstOfCounts(counts) ? riskSummaryText(counts) : 'No related breeding pairs' }))));
     const showCovered = getKinSettings().showCovered;
     const pairs = [];
@@ -331,7 +353,7 @@ export function habitatCardContent(model, habId, { pinned = false, openPlanner, 
             h('div.PZ2QoL_kinPairHead', null,
                 severityTag(p.severity),
                 nameTag(p.a), h('span.PZ2QoL_kinDash', { text: '–' }), nameTag(p.b),
-                h('div.PZ2QoL_kinFacts', { text: [species ? '' : p.species, `${word}`, percent(p.kinship), p.mated ? 'mates now' : ''].filter(Boolean).join(' · ') }))));
+                h('div.PZ2QoL_kinFacts', { text: [species ? '' : speciesName(p.species), `${word}`, percent(p.kinship), p.mated ? 'mates now' : ''].filter(Boolean).join(' · ') }))));
     }
     if (pairs.length > limit) body.appendChild(h('div.PZ2QoL_kinMore', { text: `+${pairs.length - limit} more` }));
     const foot = h('div.PZ2QoL_kinCardFoot');

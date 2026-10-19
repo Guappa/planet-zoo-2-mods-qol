@@ -9,7 +9,7 @@
 // (kinboardcore resolveAssignments). Saved keys are rewritten to today's ids
 // once the zoo's data is read; an assignment whose habitat is not found is
 // not shown (no ghost columns) and dropped after a few loads.
-import { normalizeAssignments, habitatPrints, printOf, resolveAssignments, rekeyAssignments, assignmentsFromSection } from '/js/mods/pz2qol/kinboardcore.js';
+import { normalizeAssignments, habitatPrints, printOf, resolveAssignments, rekeyAssignments, assignmentsFromSection, fullHabitatList } from '/js/mods/pz2qol/kinboardcore.js';
 import { getUserData, setUserData, updateUserData, loadUserData, onUserData, userDataStatus, userDataReason, userDataEpoch } from '/js/mods/pz2qol/userstore.js';
 import { breadcrumb } from '/js/mods/pz2qol/errors.js';
 
@@ -93,7 +93,9 @@ function rekeyLater(model, prints, token) {
         if (assignmentStorage() !== 'file' || token !== loadToken()) return;
         const key = parkKey(model);
         const section = sectionOf(readAll(), key);
-        const next = rekeyAssignments(section, prints, token);
+        // no full habitat list (older Lua, scan cut short): re-key, but never age entries out
+        const countMisses = fullHabitatList(model);
+        const next = rekeyAssignments(section, prints, token, { countMisses });
         if (JSON.stringify(next) === JSON.stringify(section)) return;
         breadcrumb('assign_rekey');
         // trace: was the game's habitat id kept across the load? (unproven)
@@ -107,7 +109,7 @@ function rekeyLater(model, prints, token) {
         if (orphans.length) breadcrumb('assign_orphan');
         updateUserData(DATA_KEY, old => {
             const all = Object.assign({}, old && typeof old === 'object' && !Array.isArray(old) ? old : {});
-            const park = rekeyAssignments(sectionOf(all, key), prints, token);
+            const park = rekeyAssignments(sectionOf(all, key), prints, token, { countMisses });
             if (Object.keys(park).length) all[key] = park;
             else delete all[key];
             return all;

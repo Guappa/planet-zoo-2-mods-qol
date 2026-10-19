@@ -2,6 +2,8 @@
 //
 //  - requestDestinations(ids): which habitats each species may move to, by
 //    the game's own checks (PZ2QoL.Kin on the Lua side).
+//  - requestStoredAdults(species): the player's stored adults of a species
+//    (Find a mate, Franchise only; read-only).
 //  - moveAnimal(id, to): ONE move, exactly what the game's own Move does
 //    (a keeper boxes the animal and carries it). One click, one move.
 //  - runPlan(plan): a staged plan, started by one click, run ONE move at a
@@ -10,17 +12,19 @@
 //    skipped and the run carries on; only Stop ends it. Franchise zoos run the
 //    same way: the Execute click is the opt-in.
 import { getKinModel, getKinSettings, onKin, requestKinScan } from '/js/mods/pz2qol/kin.js';
-import { prunePlan, moveText, TRADE } from '/js/mods/pz2qol/kinboardcore.js';
+import { prunePlan, moveText, TRADE, isPinned } from '/js/mods/pz2qol/kinboardcore.js';
+import { normalizeStored } from '/js/mods/pz2qol/kincore.js';
 import { breadcrumb, reportError } from '/js/mods/pz2qol/errors.js';
 import { getPaceMs } from '/js/mods/pz2qol/pace.js';
 
 const ANSWER_TIMEOUT_MS = 6000;
 const CONFIRM_TIMEOUT_MS = 12000;
-// the pause after each confirmed move: the player's 'moves' pace (default 1.5 s)
+// the pause after each confirmed move: the player's 'moves' pace (default 0.5 s)
 const DEST_CACHE_MS = 30000;
 
 let reqSeq = 0;
 const waiting = new Map(); // reqId -> resolve
+const storedChunks = new Map(); // reqId -> { parts, n }
 let installed = false;
 
 function install() {
@@ -49,6 +53,28 @@ function install() {
         }
         catch (e) {
             reportError('mod', 'Kin: species facts could not be read', e, { silent: true });
+        }
+        done(out);
+    });
+    // the stored adults come in chunks, like the park snapshot
+    engine.on('PZ2QoL_KinStoredChunk', (reqId, i, n, text) => {
+        const key = String(reqId);
+        const done = waiting.get(key);
+        if (!done) return;
+        let entry = storedChunks.get(key);
+        if (!entry) storedChunks.set(key, entry = { parts: [], n: Number(n) || 1 });
+        entry.parts[(Number(i) || 1) - 1] = String(text == null ? '' : text);
+        let have = 0;
+        for (const p of entry.parts) if (typeof p === 'string') have++;
+        if (have < entry.n) return;
+        storedChunks.delete(key);
+        waiting.delete(key);
+        let out = null;
+        try {
+            out = JSON.parse(entry.parts.join(''));
+        }
+        catch (e) {
+            reportError('mod', 'Kin: stored animals could not be read', e, { silent: true });
         }
         done(out);
     });
@@ -145,10 +171,75 @@ export async function requestSpeciesInfo(species, habIds = [], { force = false }
     return value;
 }
 
+// ------------------------------------------------------ stored adults
+
+const STORED_CACHE_MS = 60000;
+const storedCache = new Map();    // species -> normalized answer (with .time)
+const storedAsking = new Map();   // species -> Promise
+
+// The player's stored adults of one species (Franchise only, as the game's
+// own Compare Mates lists them): read-only, cached for a minute. Resolves
+// normalizeStored()'s { species, animals, anc, error, capped, time }, or
+// null when Lua did not answer.
+export function requestStoredAdults(species, { force = false } = {}) {
+    const sp = String(species || '');
+    if (!sp) return Promise.resolve(null);
+    const c = storedCache.get(sp);
+    if (!force && c && Date.now() - c.time < STORED_CACHE_MS) return Promise.resolve(c);
+    if (storedAsking.has(sp)) return storedAsking.get(sp);
+    const p = ask('PZ2QoL_KinStored', null, sp).then(raw => {
+        storedAsking.delete(sp);
+        if (!raw) {
+            // no answer: remembered briefly so a page that keeps rendering
+            // does not ask again and again
+            const none = Object.assign(normalizeStored({ species: sp, error: 'noanswer' }), { time: Date.now() - STORED_CACHE_MS + 15000 });
+            storedCache.set(sp, none);
+            return null;
+        }
+        const value = normalizeStored(raw);
+        value.time = Date.now();
+        storedCache.set(sp, value);
+        breadcrumb(value.error ? 'kin_stored_error' : 'kin_stored');
+        return value;
+    }).catch(e => {
+        storedAsking.delete(sp);
+        reportError('mod', 'Kin: stored animals failed', e, { silent: true });
+        return null;
+    });
+    storedAsking.set(sp, p);
+    return p;
+}
+
+// The last answer for a species ({ ..., error: 'noanswer' } after a silent
+// Lua), or null when none is cached; never asks.
+export function cachedStoredAdults(species) {
+    const c = storedCache.get(String(species || ''));
+    return c && Date.now() - c.time < STORED_CACHE_MS ? c : null;
+}
+
+// True while a request for the species is out.
+export function isAskingStored(species) {
+    return storedAsking.has(String(species || ''));
+}
+
+// For the browser harness: forget every cached answer.
+export function _clearStoredCache() {
+    storedCache.clear();
+}
+
 // ------------------------------------------------------------------ moves
 
-// One move, one click. Resolves { ok, detail }.
-export async function moveAnimal(id, to) {
+// Animals sent to a quarantine on their way to the trade centre (this
+// page): kinquarantine.js offers to send them on once they pass.
+const toTradeAfterQuarantine = new Set();
+
+export function quarantinedForTrade() {
+    return toTradeAfterQuarantine;
+}
+
+// One move, one click. Resolves { ok, detail, quarantine }. opts.direct:
+// to the trade centre even when sick (the "passed quarantine" notice).
+export async function moveAnimal(id, to, opts = {}) {
     const model = getKinModel();
     const a = model && model.animals.get(String(id));
     if (!a) return { ok: false, detail: 'This animal is no longer in the zoo.' };
@@ -156,10 +247,18 @@ export async function moveAnimal(id, to) {
     if (to === TRADE) {
         // a known trade centre, or let the Lua side find one now
         const tc = (lastDest && lastDest.tradeCentre) || model.tradeCentre;
-        target = 'trade:' + (tc ? tc.id : 'auto');
+        // sick or injured: a quarantine first (the market refuses it)
+        const q = !opts.direct && getKinSettings().quarantineSick !== false;
+        target = (q ? 'tradeq:' : 'trade:') + (tc ? tc.id : 'auto');
     }
     breadcrumb('kin_move');
     const r = await ask('PZ2QoL_KinMove', { ok: false, detail: 'The game did not answer.' }, String(id), target);
+    if (r && r.ok && r.detail === 'quarantine') {
+        toTradeAfterQuarantine.add(String(id));
+        r.quarantine = true;
+        r.detail = `${a.name} is sick or injured: sent to a quarantine first. You can send it on to the trade centre when it passes.`;
+        breadcrumb('kin_move_quarantine');
+    }
     requestKinScan('move', { force: true, delay: 300 });
     return r;
 }
@@ -171,6 +270,8 @@ function waitConfirmed(id, to, timeoutMs) {
         // gone from the zoo after Send to Trade Centre: it has left
         if (!a) return to === TRADE && !!model;
         if (a.moving) return true;
+        // sick: on its way to a quarantine instead (moveAnimal)
+        if (to === TRADE && a.lt === 'quarantine') return true;
         return to === TRADE ? a.lt === 'trade' : a.hab === String(to);
     };
     return new Promise(resolve => {
@@ -249,6 +350,15 @@ export async function runPlan(plan, { destinations } = {}) {
         const text = moveText(model, m, destinations);
         if (!still.length) {
             setRun({ log: run.log.concat([{ text, ok: false, detail: 'skipped: it can no longer move (or is already there)' }]) });
+            continue;
+        }
+        // a pregnant animal stays (she can't be sold and has to give birth
+        // first): only a move the player planned by hand is run
+        if (!m.byPlayer && isPinned(model && model.animals.get(String(m.id)))) {
+            skipped++;
+            error = `${text}: she is pregnant; plans never move her until she gives birth.`;
+            breadcrumb('kin_plan_skip_pregnant');
+            setRun({ log: run.log.concat([{ text, ok: false, detail: 'skipped: pregnant (plans never move her until she gives birth)' }]) });
             continue;
         }
         setRun({ current: text });

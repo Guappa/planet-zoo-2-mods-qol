@@ -196,8 +196,16 @@ export const DEFAULT_STORAGE_FILTERS = Object.freeze({
     hideListed: false, // hide animals already listed on the market
     related: false, // only animals with a close relative in storage (Kin)
     sellable: 'any', // 'any' | 'yes' (the market would take it) | 'no' (sellBlockers)
+    species: '', // one species only (the Species board's "Storage" button); '' = all
     sort: 'none', // 'none' | 'gene' | 'breeder'
 });
+
+// One spelling for a species id, wherever it comes from: storage and market
+// rows say "[Animal_Leopard_African]", the park "Leopard_African".
+// -> "leopard_african" ('' for nothing).
+export function normSpecies(s) {
+    return String(s == null ? '' : s).trim().replace(/^\[/, '').replace(/\]$/, '').replace(/^Animal_/i, '').toLowerCase().replace(/[^a-z0-9_]/g, '');
+}
 
 // Same test the game's storage row uses (MarketAnimalListItem: isOnMarket).
 export function isOnMarket(a) {
@@ -205,7 +213,7 @@ export function isOnMarket(a) {
 }
 
 export function storageFiltersActive(f) {
-    return f.minScore > 0 || f.pregnant || f.alpha || f.adults || f.fertileAdults || f.juveniles || f.pairsOnly || f.surplusOnly || f.hideListed || !!f.related || (!!f.sellable && f.sellable != 'any') || f.sort != 'none';
+    return f.minScore > 0 || f.pregnant || f.alpha || f.adults || f.fertileAdults || f.juveniles || f.pairsOnly || f.surplusOnly || f.hideListed || !!f.related || (!!f.sellable && f.sellable != 'any') || !!f.species || f.sort != 'none';
 }
 
 // Returns the animals to show, in display order. Input order is kept
@@ -218,7 +226,9 @@ export function applyStorageFilters(animals, f, predicates = {}) {
     const stats = (f.pairsOnly) ? speciesStats(animals) : null;
     const surplus = (f.surplusOnly) ? surplusIds(animals, f.surplusKeep) : null;
     const extra = Object.keys(predicates || {}).filter(k => f[k] && typeof predicates[k] === 'function').map(k => predicates[k]);
+    const onlySpecies = f.species ? normSpecies(f.species) : '';
     let out = animals.filter(a => {
+        if (onlySpecies && normSpecies(a.species) !== onlySpecies) return false;
         for (const test of extra) {
             if (!test(a)) return false;
         }

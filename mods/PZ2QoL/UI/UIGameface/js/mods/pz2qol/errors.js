@@ -8,6 +8,8 @@
 // Everything is plain DOM in its own root under <body>, outside the
 // game's preact tree.
 
+import { dlog } from '/js/mods/pz2qol/debuglog.js';
+
 const MAX_LOG = 50;
 const SPINNER_WARN_MS = 20000;
 const log = [];
@@ -164,6 +166,8 @@ export function breadcrumb(name) {
 export function reportError(source, title, detail, opts = {}) {
     breadcrumb('report');
     const entry = { source: String(source), title: String(title), detail: errorText(detail), time: new Date(), shown: !opts.silent };
+    // the detailed log (debug builds): every report, shown or silent
+    dlog('ui', 'report', { source: entry.source, title: entry.title, detail: entry.detail, shown: entry.shown });
     const last = log[log.length - 1];
     if (last && last.title == entry.title && last.detail == entry.detail && entry.time - last.time < 5000) {
         return;

@@ -18,7 +18,7 @@ import * as DS from '/js/common/core/DataStore.js';
 import { translate } from '/js/common/core/Localisation.js';
 import { GameMode } from '/js/project/data/GameTypes.js';
 import { currentGamemodeIs } from '/js/project/data/SimulationDataModel.js';
-import { medalLabel, medalOf, offsetLabel, recommendPrice, speciesMarketSummary } from '/js/mods/pz2qol/pricing.js';
+import { medalLabel, medalOf, morphOf, morphText, normalMorphLabel, offsetLabel, recommendPrice, speciesMarketSummary } from '/js/mods/pz2qol/pricing.js';
 import { Gender, geneScore, isInfertileElderly, relevantGenes } from '/js/mods/pz2qol/scores.js';
 import { clear, fmtInt, GENES, h, icon, setClass, setText, tierOf } from '/js/mods/pz2qol/ui.js';
 import {
@@ -26,12 +26,14 @@ import {
 } from '/js/mods/pz2qol/game.js';
 import { countForSpecies, getPriceBook, onPriceBookChanged, recordVisibleListings } from '/js/mods/pz2qol/pricebook.js';
 import { breadcrumb, onErrorReported, reportError } from '/js/mods/pz2qol/errors.js';
+import { dlog, logPriceDecision } from '/js/mods/pz2qol/debuglog.js';
 import { getPaceMs, onPace, paceSlider } from '/js/mods/pz2qol/pace.js';
-import { deskRows, encodeJob, RESULT_WORDS, rowFingerprint, STEP_WORDS, summaryText, tally } from '/js/mods/pz2qol/listercore.js';
+import { deskRows, encodeJob, partialJobText, PREGNANT_TEXT, RESULT_WORDS, rowFingerprint, STEP_WORDS, summaryText, tally } from '/js/mods/pz2qol/listercore.js';
 import {
     capsAgeMs, engineCaps, engineRunning, engineUsable, engineWhyNot, getEngineState, lastCaps, onEngineState, resolveGuids, setEnginePace, startEngineRun, stopEngineRun,
 } from '/js/mods/pz2qol/listerlua.js';
 import { panelApi } from '/js/mods/pz2qol/kinpanel.js';
+import { speciesName } from '/js/mods/pz2qol/speciesnames.js';
 
 // Pause after every listing request that reached the server, accepted or
 // not: the player's 'lister' pace (pace.js, default 3 s, 1 to 10 s). A
@@ -240,7 +242,7 @@ const CONFIDENCE = {
 // Advice for one storage animal, using the game's limits if it is the
 // currently selected animal (the game only fills them for the selection).
 export function adviceFor(animal, limits) {
-    return recommendPrice(animal, getPriceBook(), limits || {}, { offset: priceOffset });
+    return recommendPrice(animal, getPriceBook(), limits || {}, { offset: priceOffset, morphName });
 }
 
 // ---------------------------------------------------------- check market
@@ -390,7 +392,10 @@ export async function checkMarketFor(species, opts = {}) {
     // one server action at a time: never during a listing
     if ((run && !run.finished) || engineRunning()) return { ok: false, total: 0, fatal: false, busy: true, message: 'A listing is running; check prices when it is done.' };
     setPeek({ species, uid: undefined, state: 'starting', message: 'Asking the market…' });
+    const peekStart = Date.now();
+    dlog('peek', 'start', { species, quiet: !!opts.quiet });
     const fail = (title, detail, fatal = false) => {
+        dlog('peek', 'failed', { species, title, detail: detail == undefined ? undefined : String(detail), fatal: fatal || undefined, ms: Date.now() - peekStart });
         setPeek({ state: 'failed', message: detail ? `${title}: ${detail}` : title });
         if (!opts.quiet) reportError('lister', title, detail);
         return { ok: false, total: 0, fatal: fatal || /Animal Storage/.test(String(detail || '')), busy: title == 'Market check is busy', message: detail || title };
@@ -402,19 +407,22 @@ export async function checkMarketFor(species, opts = {}) {
         uid = speciesUid(species);
     }
     if (uid == undefined) {
-        return fail('Cannot check the market for this species', `The game's species list has no id for ${t(species)}.`);
+        return fail('Cannot check the market for this species', `The game's species list has no id for ${speciesName(species)}.`);
     }
     setPeek({ uid });
     breadcrumb('peek_start');
     const answer = nextPeekState(PEEK_ANSWER_TIMEOUT_MS, START_STATES);
+    dlog('peek', 'request', { species, uid });
     engine.trigger('PZ2QoL_MarketPeek', uid);
     let reply = await answer;
+    dlog('peek', 'reply', { species, state: reply.state, detail: reply.detail || undefined, ms: Date.now() - peekStart });
     if (reply.state == 'timeout') {
         return fail('Market check got no answer', "The mod's game-side script did not reply. Install a matching PZ2QoL build (Main.ovl and UI together), then reopen Animal Storage.", true);
     }
     if (reply.state == 'loading') {
-        setPeek({ state: 'loading', message: `Loading ${t(species)} listings…` });
+        setPeek({ state: 'loading', message: `Loading ${speciesName(species)} listings…` });
         reply = await nextPeekState(PEEK_TOTAL_TIMEOUT_MS, LOAD_STATES);
+        dlog('peek', 'reply', { species, state: reply.state, detail: reply.detail || undefined, ms: Date.now() - peekStart });
     }
     if (reply.state != 'ready') {
         // Lua still holds the market after a timeout: let it put it back
@@ -438,23 +446,27 @@ export async function checkMarketFor(species, opts = {}) {
                 // the page did not change: past the end, or paging is not
                 // shown to the page while the market is hidden
                 if (pagesKnown) stopNote = ` (page ${page + 1} did not show)`;
+                dlog('peek', 'page_stale', { species, page, rows: rows.length, pagesKnown });
                 break;
             }
             lastSig = pageSignature();
             pagesRead++;
             total += rows.length;
-            cc += rows.filter(ctx => get(ctx, 'auctionIsConservationCredits')).length;
+            const pageCc = rows.filter(ctx => get(ctx, 'auctionIsConservationCredits')).length;
+            cc += pageCc;
             // the game's page count; without it keep going until a page
             // comes back unchanged
             const known = get(MARKET_DATA, 'pages');
             pagesKnown = typeof known === 'number' && known > 0;
             pages = Math.min(PEEK_MAX_PAGES, pagesKnown ? known : PEEK_MAX_PAGES);
+            dlog('peek', 'page_read', { species, page, rows: rows.length, cc: pageCc, pages: pagesKnown ? known : 'unknown', book: countForSpecies(species) });
             if (page + 1 >= pages) break;
             await sleep(PEEK_PAGE_GAP_MS);
             breadcrumb('peek_page');
             const next = awaitPeekReady();
             engine.trigger('PZ2QoL_MarketPeekPage', page + 1);
             const r = await next;
+            dlog('peek', 'page_reply', { species, page: page + 1, state: r.state, detail: r.detail || undefined });
             if (r.state == 'failed') luaFinished = true; // Lua already put the market back
             if (r.state != 'ready') {
                 // keep what was read; say why the rest is missing
@@ -469,12 +481,13 @@ export async function checkMarketFor(species, opts = {}) {
     }
     breadcrumb('peek_done');
     const added = countForSpecies(species) - before;
+    dlog('peek', 'done', { species, listings: total, cc, pages: pagesRead, added, note: stopNote || undefined, ms: Date.now() - peekStart, released: !luaFinished });
     const where = pagesRead == 1 ? '1 market page' : `${pagesRead} market pages`;
     setPeek({
         state: 'done',
         message: total
-            ? `Checked: ${total} ${t(species)} listing${total == 1 ? '' : 's'} on ${where} (${cc} for CC)${added > 0 ? `, ${added} new` : ''}${stopNote}.`
-            : `Checked: no ${t(species)} listings for Conservation Credits on the market right now${stopNote}.`,
+            ? `Checked: ${total} ${speciesName(species)} listing${total == 1 ? '' : 's'} on ${where} (${cc} for CC)${added > 0 ? `, ${added} new` : ''}${stopNote}.`
+            : `Checked: no ${speciesName(species)} listings for Conservation Credits on the market right now${stopNote}.`,
     });
     return { ok: true, total, fatal: false };
 }
@@ -516,13 +529,14 @@ export async function checkMarketForAll(speciesList) {
     const list = Array.from(new Set(speciesList.filter(Boolean)));
     if (!list.length) return false;
     breadcrumb('peek_all_start');
+    dlog('peek', 'all_start', { n: list.length, species: list });
     setPeekAll({ list, index: 0, done: 0, failed: [], listings: 0, stopRequested: false, finished: false, message: '' });
     let lastStart = 0;
     for (let i = 0; i < list.length; i++) {
         if (peekAll.stopRequested) break;
         const species = list[i];
         const wait = peekGapMs() - (Date.now() - lastStart);
-        setPeekAll({ index: i, message: `Checking ${t(species)} (${i + 1} of ${list.length})…` });
+        setPeekAll({ index: i, message: `Checking ${speciesName(species)} (${i + 1} of ${list.length})…` });
         if (wait > 0) await sleep(wait);
         if (peekAll.stopRequested) break;
         lastStart = Date.now();
@@ -532,8 +546,9 @@ export async function checkMarketForAll(speciesList) {
             lastStart = Date.now();
             r = await checkMarketFor(species, { quiet: true });
         }
+        dlog('peek', 'all_species', { i: i + 1, species, ok: r.ok, total: r.total, busy: r.busy || undefined, fatal: r.fatal || undefined, msg: r.ok ? undefined : r.message });
         if (r.ok) setPeekAll({ done: peekAll.done + 1, listings: peekAll.listings + r.total });
-        else setPeekAll({ failed: peekAll.failed.concat(`${t(species)}: ${r.message || 'failed'}`) });
+        else setPeekAll({ failed: peekAll.failed.concat(`${speciesName(species)}: ${r.message || 'failed'}`) });
         if (r.fatal) break;
     }
     const f = peekAll.failed;
@@ -542,6 +557,7 @@ export async function checkMarketForAll(speciesList) {
         + (f.length ? `; ${f.length} failed (${f[0]}${f.length > 1 ? ', …' : ''})` : '') + '.';
     if (f.length) reportError('lister', `Market check failed for ${f.length} species`, f.join('\n'));
     breadcrumb('peek_all_end');
+    dlog('peek', 'all_end', { done: peekAll.done, failed: f.length, listings: peekAll.listings, stopped, msg: message });
     setPeekAll({ finished: true, message });
     return true;
 }
@@ -603,6 +619,7 @@ const SKIP_KINDS = {
     timeout: 'server timeout',
     refused: 'refused by the server',
     elderly: "elderly and no longer fertile: the market won't take it",
+    pregnant: "pregnant: the market won't take it until she gives birth",
     other: 'other',
 };
 
@@ -654,6 +671,7 @@ function queryServerState(timeoutMs = 1000) {
         serverStateWaiter = state => {
             clearTimeout(timer);
             serverStateWaiter = null;
+            dlog('lister', 'legacy_server_state', { known: state.known, busy: state.busy, request: state.request });
             resolve(state);
         };
         engine.trigger('PZ2QoL_DbQuery');
@@ -678,6 +696,9 @@ async function listOne(target, index) {
     run.attempt = { sent: false, error: false };
     const found = findTarget(target);
     const label = target.label;
+    // the old path's animal: no GUID, so the row id and position stand in
+    const lg = { run: 'legacy', i: index + 1, guid: target.id != undefined ? `id${target.id}` : undefined };
+    dlog('lister', 'legacy_animal', Object.assign({ key: found ? found.key : target.key, found: !!found, label }, lg));
     run.current = { key: found ? found.key : target.key, label, index };
     run.status = `Selecting ${index + 1}/${run.total}: ${label}`;
     notifyRun();
@@ -685,12 +706,15 @@ async function listOne(target, index) {
     const before = found.a;
     if (before.auctionTimerSeconds > 0) skip(`${label}: already on the market`, 'listed');
     if (before.isMoving) skip(`${label}: being moved`, 'moving');
+    // never sent: the game's own sell flow blocks pregnant animals (bPregnant)
+    if (before.isPregnant) skip(`${label}: ${PREGNANT_TEXT}`, 'pregnant');
     // never sent: the market refuses elderly animals past breeding age
     if (isInfertileElderly(before)) skip(`${label}: ${SKIP_KINDS.elderly}`, 'elderly');
     if (before.id == undefined) skip(`${label}: no id`, 'noid');
 
     // 1. select exactly this animal, the way a click on its row does
     breadcrumb('lister_select');
+    dlog('lister', 'legacy_select', Object.assign({ key: found.key, id: before.id }, lg));
     engine.trigger('AnimalStorage_SelectAllToggled', false);
     engine.trigger('AnimalStorage_ItemSelected', before.id);
     const isSelected = () => {
@@ -702,6 +726,7 @@ async function listOne(target, index) {
     if (run.stopRequested) throw new StopError('Stopped by you');
     if (!selected) skip(`${label}: could not be selected (game selection [${selectedKeys().join(', ')}])`, 'unselectable');
     breadcrumb('lister_selected');
+    dlog('lister', 'legacy_selected', Object.assign({ selection: selectedKeys() }, lg));
 
     // 2. the game must allow trading it (e.g. juveniles can't be traded)
     const allowed = await waitFor(() => get(STORAGE_ACTIONS, 'tradeAllowed') === true, 3000);
@@ -713,6 +738,7 @@ async function listOne(target, index) {
     if (!now) skip(`${label}: the list changed while listing; not listed`, 'changed');
     const limits = tradeLimits();
     const advice = adviceFor(now.a, limits);
+    logPriceDecision('legacy', lg.guid || now.key, advice, { run: 'legacy', i: index + 1, guid: lg.guid, limits });
     if (!(advice.price > 0)) skip(`${label}: no price (${advice.reason})`, 'noprice');
     // longest listing the game allows (12h today) instead of its default (6h)
     const duration = limits.durationMax > 0 ? limits.durationMax
@@ -737,6 +763,8 @@ async function listOne(target, index) {
     }
     breadcrumb('lister_add');
     run.attempt.sent = true;
+    dlog('lister', 'legacy_send', Object.assign({ key: atSend.key, price: advice.price, hours: duration }, lg));
+    const sentAt = Date.now();
     engine.trigger('AnimalStorage_AddToMarket', atSend.key, advice.price, duration);
 
     // 5. wait until the game shows it on the market, or an error arrives
@@ -745,6 +773,7 @@ async function listOne(target, index) {
         return !!f && f.a.auctionTimerSeconds > 0;
     };
     let confirmed = await waitFor(() => run.errors.length > errorsBefore || isListed(), CONFIRM_TIMEOUT_MS, 250);
+    dlog('lister', 'legacy_answer', Object.assign({ listed: isListed(), errors: run.errors.length - errorsBefore, err: run.errors.length > errorsBefore ? run.errors[run.errors.length - 1] : undefined, ms: Date.now() - sentAt }, lg));
     if (!isListed() && run.stopRequested) {
         skip(`${label}: stopped while waiting for the server; it may still appear on the market`, 'stopped');
     }
@@ -783,6 +812,7 @@ async function listOne(target, index) {
         skip(`${label}: no confirmation after ${CONFIRM_TIMEOUT_MS / 1000}s; it may still appear on the market`, 'timeout');
     }
     breadcrumb('lister_confirmed');
+    dlog('lister', 'legacy_result', Object.assign({ status: 'listed', price: advice.price, ms: Date.now() - sentAt }, lg));
     run.rejections = 0;
     run.listed.push({ label, price: advice.price, confidence: advice.confidence });
     run.log.push(`Listed ${label} at ${advice.price} CC`);
@@ -801,18 +831,39 @@ function summary() {
     if (run.skipped.length) parts.push(`skipped ${run.skipped.length} (${skipCounts()})`);
     let text = `${parts.join(', ')} of ${run.total}`;
     if (run.leftOut) text += `; ${run.leftOut} already on the market left out`;
+    if (run.leftOutPregnant) text += `; ${run.leftOutPregnant} pregnant left out (not until she gives birth)`;
     return text;
 }
 
-// Selected animals a run would list: not those already on the market.
+// Selected animals a run would list: not those already on the market, and
+// never a pregnant one (the market won't take her until she gives birth).
 export function sellableKeys(keys) {
-    return keys.filter(k => !(animalForKey(k).auctionTimerSeconds > 0));
+    return keys.filter(k => {
+        const a = animalForKey(k);
+        return !(a.auctionTimerSeconds > 0) && !a.isPregnant;
+    });
+}
+
+// Of these keys, the pregnant ones that are not on the market (left out of a run).
+function pregnantKeys(keys) {
+    return keys.filter(k => {
+        const a = animalForKey(k);
+        return !(a.auctionTimerSeconds > 0) && !!a.isPregnant;
+    });
 }
 
 // ------------------------------------------------- the Lua listing engine
 
 // Labels of the animals in engine runs (results carry only GUIDs).
 const labelByGuid = new Map();
+// What each run's job left out (engine run req -> { noid, asked, inJob }),
+// so the run's summary can repeat it.
+const jobNotes = new Map();
+
+// The note for an engine state's run, or null.
+export function jobNote(s) {
+    return (s && s.req != undefined && jobNotes.get(String(s.req))) || null;
+}
 // Which run the panels show: the engine's or the old path's latest.
 let lastRunKind = '';
 
@@ -821,7 +872,7 @@ export function labelOf(guid) {
 }
 
 function animalLabel(a) {
-    return `${t(a.species) || 'animal'} ${SEX[a.gender] || ''} "${t(a.name)}"`.replace(/\s+/g, ' ');
+    return `${a.species ? speciesName(a.species) : 'animal'} ${SEX[a.gender] || ''} "${t(a.name)}"`.replace(/\s+/g, ' ');
 }
 
 // A listing (or a market check) is running.
@@ -838,40 +889,70 @@ export function storageRows() {
 // through the Lua engine when it can, else the old click-driven path.
 // hours: 'max' (the game's longest, default) or 'default'.
 // Returns { ok, engine, count, message }.
-export async function listAnimals(animals, { hours = 'max' } = {}) {
+export async function listAnimals(animals, { hours = 'max', onRefused = 'leave', refusedMax = null } = {}) {
+    dlog('lister', 'list_request', { n: animals.length, hours, onRefused: onRefused !== 'leave' ? onRefused : undefined, refusedMax: refusedMax ?? undefined, busy: isListingBusy() || undefined, franchise: isFranchise(), offset: priceOffset || undefined, paceMs: getPaceMs('lister') });
     if (isListingBusy()) return { ok: false, engine: false, count: 0, message: 'A listing or market check is already running.' };
     if (!isFranchise()) {
         reportError('lister', 'Listing is only available in Franchise mode');
         return { ok: false, engine: false, count: 0, message: 'Franchise only.' };
     }
     // the answer the storage screen keeps fresh (place()); ask only without one
-    const caps = capsAgeMs() < 15000 ? lastCaps() : await engineCaps({ force: true });
+    const capsAge = capsAgeMs();
+    const caps = capsAge < 15000 ? lastCaps() : await engineCaps({ force: true });
+    dlog('lister', 'list_path', { engine: engineUsable(caps, childrenOf(STORAGE_LIST).length), capsAgeMs: isFinite(capsAge) ? capsAge : 'none', capsOk: caps ? caps.ok : undefined, luaRows: caps ? caps.rows : undefined, pageRows: childrenOf(STORAGE_LIST).length, why: engineWhyNot(caps, childrenOf(STORAGE_LIST).length) || undefined });
     if (!engineUsable(caps, childrenOf(STORAGE_LIST).length)) {
         breadcrumb('lister_legacy');
         await legacySell(animals.map(a => a.key));
         return { ok: true, engine: false, count: animals.length, message: engineWhyNot(caps, childrenOf(STORAGE_LIST).length) };
     }
-    const guids = await resolveGuids(animals.map(identityOf));
-    const rows = deskRows(animals, guids, a => adviceFor(a, {}));
-    const { text, items } = encodeJob(rows, { paceMs: getPaceMs('lister'), hours });
+    // asked again at the click (one round trip): ids may have come since the desk read them
+    const guids = await resolveGuids(animals.map(identityOf), { retry: true });
+    const rows = deskRows(animals, guids, a => adviceFor(a, {}), guids.failed);
+    const { text, items } = encodeJob(rows, { paceMs: getPaceMs('lister'), hours, onRefused, refusedMax });
+    // the job as the page built it: each animal's price decision, and why any was left out
+    try {
+        const inJob = new Set(items);
+        rows.forEach((r, i) => {
+            const a = r.a || {};
+            if (inJob.has(r)) {
+                logPriceDecision('job', r.guid, r.advice, { i: i + 1, guid: r.guid, key: r.key, species: a.species, gender: a.gender, maturity: a.maturity });
+            }
+            else {
+                dlog('lister', 'job_left_out', { i: i + 1, guid: r.guid || undefined, key: r.key, why: r.block === 'pregnant' ? 'pregnant' : r.block === 'noid' ? 'noid' : !r.guid ? 'noguid' : r.block || 'badkey', species: a.species, detail: r.block === 'pregnant' ? PREGNANT_TEXT : undefined });
+            }
+        });
+        const notRows = animals.length - rows.length;
+        dlog('lister', 'job_built', { animals: animals.length, rows: rows.length, inJob: items.length, guids: guids.size, noIdBlocked: rows.filter(r => r.block === 'noid').length || undefined, skippedNoId: notRows || undefined });
+    }
+    catch (e) {
+        // the log never stops a listing
+    }
+    // animals asked for that the game could not identify (blocked 'noid', or not answered)
+    const noid = rows.filter(r => !r.guid && (!r.block || r.block === 'noid')).length;
     if (!items.length) {
         const unknown = rows.filter(r => !r.guid).length;
         const why = !rows.length ? 'none of them could be found in storage'
             : unknown ? `${unknown} of them could not be identified in Animal Storage (press Read storage again; if it stays, the game-side engine could not read their ids)`
-                : 'none of them can be listed now (on the market, moving, juvenile or elderly)';
+                : 'none of them can be listed now (on the market, moving, pregnant, juvenile or elderly)';
         breadcrumb(unknown ? 'lister_nothing_noid' : 'lister_nothing_blocked');
         reportError('lister', 'Nothing to list', `The selected animals: ${why}.`);
         return { ok: false, engine: true, count: 0, message: why };
     }
     for (const r of items) labelByGuid.set(r.guid, animalLabel(r.a));
     lastRunKind = 'engine';
+    // fewer in the job than asked for: "Listing 3 of 39: 36 couldn't be identified by the game"
+    const partial = partialJobText({ inJob: items.length, asked: animals.length, noid });
     const started = await startEngineRun(text);
-    if (!started.ok) reportError('lister', 'The listing engine did not start', started.message);
-    return { ok: started.ok, engine: true, count: items.length, message: started.message };
+    dlog('lister', 'list_started', { ok: started.ok, count: items.length, asked: animals.length, noid: noid || undefined, msg: started.message || undefined });
+    if (started.pending) breadcrumb('lister_engine_pending');
+    else if (!started.ok) reportError('lister', 'The listing engine did not start', started.message);
+    else if (noid && started.req != undefined) jobNotes.set(String(started.req), { noid, asked: animals.length, inJob: items.length });
+    return { ok: started.ok, engine: true, count: items.length, total: animals.length, noid, partial, message: started.message };
 }
 
 // Lists the given storage animals (child keys) at their recommended prices.
 export async function sellAtRecommendedPrice(keys) {
+    dlog('lister', 'sell_click', { keys: keys.length, enabled });
     if (!enabled) {
         reportError('lister', 'The market lister is turned off', 'Turn it on in the storage toolbar first.');
         return;
@@ -881,6 +962,7 @@ export async function sellAtRecommendedPrice(keys) {
 
 // Stop whatever listing runs.
 export function stopListing() {
+    dlog('lister', 'stop_click', { engine: engineRunning(), legacy: !!(run && !run.finished) });
     if (engineRunning()) stopEngineRun();
     if (run && !run.finished) stopRun();
 }
@@ -890,21 +972,25 @@ async function legacySell(keys) {
     if (run && !run.finished) return;
     lastRunKind = 'legacy';
     if (isMultiCheckBusy() || isPeekBusy()) return; // one market action at a time
-    // animals already on the market are left out up front, not "skipped"
+    // animals already on the market (and pregnant ones) are left out up front, not "skipped"
     const allKeys = keys;
+    const pregnantOut = pregnantKeys(keys);
     keys = sellableKeys(keys);
+    for (const k of pregnantOut) dlog('lister', 'legacy_left_out', { run: 'legacy', key: k, why: 'pregnant', detail: PREGNANT_TEXT });
     // remember the animals, not the list positions (see findTarget)
     const queue = keys.map(k => {
         const target = targetForKey(k);
         const a = animalForKey(k);
-        target.label = `${t(a.species) || 'animal'} ${SEX[a.gender] || ''} "${t(a.name)}"`.replace(/\s+/g, ' ');
+        target.label = `${a.species ? speciesName(a.species) : 'animal'} ${SEX[a.gender] || ''} "${t(a.name)}"`.replace(/\s+/g, ' ');
         return target;
     });
     breadcrumb('lister_start');
+    dlog('lister', 'legacy_start', { n: queue.length, leftOut: allKeys.length - keys.length, pregnant: pregnantOut.length || undefined, paceMs: getPaceMs('lister') });
     run = {
         total: queue.length, done: 0, current: null, stopRequested: false, finished: false, stopped: false,
         status: '', log: [], errors: [], listed: [], skipped: [], skipKinds: [], rejections: 0, startedAt: Date.now(),
-        leftOut: allKeys.length - keys.length,
+        leftOut: allKeys.length - keys.length - pregnantOut.length,
+        leftOutPregnant: pregnantOut.length,
     };
     const unsubscribe = onErrorReported(entry => {
         if (entry.source == 'server' || entry.source == 'lua' || entry.source == 'debug') {
@@ -932,6 +1018,7 @@ async function legacySell(keys) {
                 }
                 breadcrumb('lister_skip');
                 breadcrumb(`lister_skip_${e.kind}`);
+                dlog('lister', 'legacy_result', { run: 'legacy', i: i + 1, guid: queue[i].id != undefined ? `id${queue[i].id}` : undefined, status: 'skipped', kind: e.kind, detail: e.message, sent: !!(run.attempt && run.attempt.sent) });
                 run.skipped.push(e.message);
                 run.skipKinds.push(e.kind);
                 run.log.push(`Skipped ${e.message}`);
@@ -957,6 +1044,7 @@ async function legacySell(keys) {
     catch (e) {
         const msg = e instanceof StopError ? e.message : `Unexpected error: ${e && e.message}`;
         breadcrumb('lister_stop');
+        dlog('lister', 'legacy_stop', { msg, done: run.done, skipped: run.skipped.length });
         run.stopped = true;
         run.status = `Stopped (${summary()}): ${msg}`;
         if (!(e instanceof StopError && /^Stopped by you/.test(e.message))) {
@@ -966,6 +1054,7 @@ async function legacySell(keys) {
     finally {
         unsubscribe();
         breadcrumb('lister_end');
+        dlog('lister', 'legacy_end', { listed: run.done, skipped: run.skipped.length, total: run.total, stopped: run.stopped, summary: summary() });
         run.finished = true;
         run.current = null;
         notifyRun();
@@ -1032,14 +1121,7 @@ function buildPanel() {
             h('div.PZ2QoL_flex1'),
             paceControl,
             offsetControl,
-            countPill,
-            h('div.PZ2QoL_btn.PZ2QoL_deskBtn', {
-                title: 'Market desk: pick and list many animals at once, species by species, with every price and result in one place. Nothing is listed until you press List.',
-                onClick: () => {
-                    const desk = panelApi('desk');
-                    if (desk) desk.open();
-                },
-            }, icon('IconTrade', 'brown', 'sm'), h('span', { text: 'Market desk' }))),
+            countPill),
         body);
     document.body.appendChild(panel);
 }
@@ -1112,13 +1194,14 @@ function animalColumn(a) {
         h('div.PZ2QoL_colLabel', { text: 'Selected animal' }),
         h('div.PZ2QoL_animalName', null,
             h(`div.PZ2QoL_sexDot.${SEX_CLASS[a.gender] || 'other'}`, { text: SEX[a.gender] || '·' }),
-            h('div.PZ2QoL_animalSpecies', { text: t(a.species) || 'Animal' })),
+            h('div.PZ2QoL_animalSpecies', { text: a.species ? speciesName(a.species) : 'Animal' })),
         h('div.PZ2QoL_animalNick', { text: t(a.name) }),
         h('div.PZ2QoL_geneRow', null,
             h('div.PZ2QoL_scoreStack', null,
                 h(`div.PZ2QoL_bigScore.${tierOf(g)}`, { text: g == null ? '–' : String(g), title: 'Gene score' }),
                 // the game's genetics rating (Rating column), used for pricing
-                medalOf(a) != undefined ? h(`div.PZ2QoL_medalPill.${medalOf(a)}`, { text: medalLabel(medalOf(a)), title: 'Genetics rating shown by the game' }) : null),
+                medalOf(a) != undefined ? h(`div.PZ2QoL_medalPill.${medalOf(a)}`, { text: medalLabel(medalOf(a)), title: 'Genetics rating shown by the game' }) : null,
+                morphPill(a)),
             h('div.PZ2QoL_geneList', null, GENES.filter(x => relevantGenes(a).includes(x.id)).map(x => {
                 const v = a.genes[x.id];
                 const pct = typeof v === 'number' ? Math.round(v * 100) : null;
@@ -1135,13 +1218,14 @@ function marketColumn(a, book, advice) {
         .sort((x, y) => Math.abs((x.score ?? 0) - (advice.score ?? 0)) - Math.abs((y.score ?? 0) - (advice.score ?? 0)))
         .slice(0, 6);
     return h('div.PZ2QoL_col.market', null,
-        h('div.PZ2QoL_colLabel', { text: `Live market · ${t(a.species)}` }),
+        h('div.PZ2QoL_colLabel', { text: `Live market · ${speciesName(a.species)}` }),
         h('div.PZ2QoL_tiles', null,
             statTile('♂', 'male', s.male),
             statTile('♀', 'female', s.female),
             s.juvenile.count ? statTile('juv', 'juvenile', s.juvenile) : null,
             s.history.count ? statTile('you', 'history', s.history) : null),
         medalRow(s, medalOf(a)),
+        morphRow(s, morphOf(a, normalMorphLabel(a.species, book))),
         priceStrip(a.species, book, advice) || h('div.PZ2QoL_emptyNote', { text: 'No prices recorded for this species yet. Use “Check market prices”.' }),
         closest.length ? h('div.PZ2QoL_compRow', null,
             h('div.PZ2QoL_compLabel', { text: 'Closest' }),
@@ -1150,6 +1234,36 @@ function marketColumn(a, book, advice) {
                 h('span.PZ2QoL_compGene', { text: `G${c.score ?? '–'}` }),
                 // the listed price, also for a listing scaled from another medal
                 h('span', { text: fmtInt(c.rawPrice ?? c.price) })))) : null);
+}
+
+// A colour morph label as text: loc tokens ("[...]") through the game's
+// translation, plain text as it is.
+function morphName(s) {
+    return /^\[.*\]$/.test(String(s)) ? t(s) : String(s);
+}
+
+// The animal's colour morph (the game's label), when it has one: it is
+// priced against listings of the same morph (pricing.js comparables).
+function morphPill(a) {
+    const m = morphOf(a, normalMorphLabel(a.species, getPriceBook()));
+    if (!m) return null;
+    const name = morphText(m, morphName);
+    return h('div.PZ2QoL_medalPill.morph', { text: name.length > 12 ? name.slice(0, 11) + '…' : name, title: `Colour morph: ${name}. Priced against ${name} listings when there are enough.` });
+}
+
+// Live CC colour-morph listings of the species (normal animals left out).
+function morphRow(s, mine) {
+    const morphs = Object.keys(s.byMorph || {});
+    if (!morphs.length) return null;
+    return h('div.PZ2QoL_medalRow.morph', null,
+        h('div.PZ2QoL_compLabel', { text: 'Colour morphs' }),
+        morphs.map(m => {
+            const g = s.byMorph[m];
+            const name = morphText(m, morphName);
+            return h(`div.PZ2QoL_medalChip.morph${m == mine ? '.mine' : ''}`, { title: `${name}: ${g.count} listed, median ${fmtInt(g.median)} CC` },
+                h('span.PZ2QoL_medalName', { text: `${name} ×${g.count}` }),
+                h('span', { text: fmtInt(g.median) }));
+        }));
 }
 
 // Live CC listings of the species by genetics medal (only when recorded),
@@ -1171,13 +1285,35 @@ function medalRow(s, mine) {
 // The engine's run in the panel (the same look as the old path's).
 function engineRunBlock(s) {
     const tl = tally(s);
+    // the desk's Check storage (nothing is listed; docs/PLAN-desk-quick-release.md 3.2)
+    if (s.mode === 'check') {
+        const running = s.phase === 'running';
+        return h(`div.PZ2QoL_run.${running ? 'running' : s.phase === 'done' ? 'done' : 'stopped'}`, null,
+            h('div.PZ2QoL_runHead', null,
+                h('div.PZ2QoL_runTitle', { text: running ? 'Checking storage…' : 'Storage check ended' }),
+                h('div.PZ2QoL_flex1'),
+                h('div.PZ2QoL_pill.ok', { text: `${tl.checked}/${tl.total} checked` })),
+            h('div.PZ2QoL_listerStatus.clamp', { text: 'Market desk: reading what the game allows for each animal. Nothing is sold or listed.' }));
+    }
+    // the desk's Quick trade / Quick release (docs/PLAN-desk-quick-release.md 4)
+    if (s.mode === 'quicktrade' || s.mode === 'release') {
+        const running = s.phase === 'running';
+        const trade = s.mode === 'quicktrade';
+        const n = trade ? tl.traded : tl.released;
+        return h(`div.PZ2QoL_run.${running ? 'running' : s.phase === 'done' ? 'done' : 'stopped'}`, null,
+            h('div.PZ2QoL_runHead', null,
+                h('div.PZ2QoL_runTitle', { text: running ? (trade ? 'Quick trading…' : 'Releasing…') : s.phase === 'done' ? 'Finished' : 'Stopped' }),
+                h('div.PZ2QoL_flex1'),
+                h('div.PZ2QoL_pill.ok', { text: `${n}/${tl.total} ${trade ? 'quick-traded' : 'released'}` })),
+            h('div.PZ2QoL_listerStatus.clamp', { text: s.message || 'Market desk: one animal at a time; open the desk to follow it.', title: s.message || '' }));
+    }
     const processed = tl.total - tl.pending - tl.working;
     const pct = tl.total ? Math.round(processed / tl.total * 100) : 0;
     const state = s.phase === 'running' ? 'running' : s.phase === 'done' ? 'done' : 'stopped';
     const cur = s.results[s.index];
     const status = state === 'running'
         ? `${processed + 1 > tl.total ? tl.total : processed + 1}/${tl.total}: ${cur ? labelOf(cur.guid) : ''} · ${STEP_WORDS[s.step] || s.message || 'Working…'}${s.waited >= 2 ? ` (${Math.round(s.waited)}s)` : ''}`
-        : summaryText(s, fmtInt) + (s.phase === 'closed' ? ' Animal Storage was closed.' : '');
+        : summaryText(s, fmtInt, jobNote(s)) + (s.phase === 'closed' ? ' Animal Storage was closed.' : '');
     const notListed = s.results.filter(r => r.status !== 'listed' && r.status !== 'pending' && r.status !== 'working');
     return h(`div.PZ2QoL_run.${state}`, null,
         h('div.PZ2QoL_runHead', null,
@@ -1238,7 +1374,8 @@ function recColumn(keys, single, advice) {
     }
     else {
         const n = single ? keys.length : sellableKeys(keys).length;
-        const onMarket = keys.length - (single ? keys.length : n);
+        const pregnantOut = single ? 0 : pregnantKeys(keys).length;
+        const onMarket = keys.length - (single ? keys.length : n) - pregnantOut;
         const label = !single ? `Sell ${n} at recommended prices`
             : (advice && advice.confidence == 'none' ? 'Sell at game price' : 'Sell at recommended price');
         const sell = h('div.PZ2QoL_btn.positive', { onClick: () => sellAtRecommendedPrice(keys) }, icon('IconTrade', 'white', 'sm'), h('span', { text: label }));
@@ -1246,7 +1383,15 @@ function recColumn(keys, single, advice) {
             sell.classList.add('disabled');
             sell.title = 'Already on the market';
         }
-        if (!single && onMarket > 0) sell.title = `${onMarket} of the selected animals are already on the market and are left out`;
+        else if (single && single.isPregnant) {
+            sell.classList.add('disabled');
+            sell.title = PREGNANT_TEXT;
+        }
+        if (!single && (onMarket > 0 || pregnantOut > 0)) {
+            sell.title = [onMarket > 0 ? `${onMarket} of the selected animals are already on the market` : '',
+                pregnantOut > 0 ? `${pregnantOut} ${pregnantOut === 1 ? 'is' : 'are'} pregnant (the market won't take ${pregnantOut === 1 ? 'her' : 'them'} until ${pregnantOut === 1 ? 'she gives' : 'they give'} birth)` : '']
+                .filter(Boolean).join('; ') + '; they are left out';
+        }
         if (!single && n == 0) sell.classList.add('disabled');
         const checkingAll = isMultiCheckBusy();
         if (checkingAll || isPeekBusy()) {
@@ -1341,8 +1486,8 @@ function multiColumn(keys) {
         h('div.PZ2QoL_groupRow', null,
             shownGroups.map(grp => {
                 const avg = grp.scores.length ? Math.round(grp.scores.reduce((s, v) => s + v, 0) / grp.scores.length) : null;
-                return h('div.PZ2QoL_groupChip', { title: `${t(grp.species)}: ${grp.n} selected, average gene ${avg ?? '–'}, about ${fmtInt(grp.total)} CC` },
-                    h('div.PZ2QoL_groupName', { text: t(grp.species) }),
+                return h('div.PZ2QoL_groupChip', { title: `${speciesName(grp.species)}: ${grp.n} selected, average gene ${avg ?? '–'}, about ${fmtInt(grp.total)} CC` },
+                    h('div.PZ2QoL_groupName', { text: speciesName(grp.species) }),
                     h('div.PZ2QoL_groupMeta', null,
                         h('span.PZ2QoL_groupCount', { text: `×${grp.n}` }),
                         grp.males ? h('span.male', { text: `${grp.males}♂` }) : null,
@@ -1354,7 +1499,7 @@ function multiColumn(keys) {
         h('div.PZ2QoL_tableScroll', null, rows.map(({ a, adv, g }) =>
             h('div.PZ2QoL_tableRow', null,
                 h(`div.PZ2QoL_sexDot.${SEX_CLASS[a.gender] || 'other'}`, { text: SEX[a.gender] || '·' }),
-                h('div.PZ2QoL_tableName', { text: `${t(a.species)} · ${t(a.name)}` }),
+                h('div.PZ2QoL_tableName', { text: `${speciesName(a.species)} · ${t(a.name)}` }),
                 medalOf(a) != undefined ? h(`span.PZ2QoL_medalDot.${medalOf(a)}`, { title: medalLabel(medalOf(a)) }) : null,
                 h(`div.PZ2QoL_miniScore.${tierOf(g)}`, { text: g == null ? '–' : String(g) }),
                 h(`div.PZ2QoL_tablePrice.conf_${adv.confidence}`, { text: adv.price > 0 ? `${fmtInt(adv.price)} CC` : '–', title: CONFIDENCE[adv.confidence] })))));

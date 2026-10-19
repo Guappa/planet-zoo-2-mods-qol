@@ -49,6 +49,14 @@ local function mark(sName)
 	end
 end
 
+-- the detailed log (debug builds; Core:Log, a no-op otherwise)
+local function log(sEvent, tData)
+	local Core = global.package.loaded["pz2qol.core"]
+	if Core and Core.Log then
+		pcall(Core.Log, Core, "peek", sEvent, tData)
+	end
+end
+
 local function now()
 	local bOk, n = pcall(function()
 		return api.time.PerformanceTimeToMilliseconds(api.time.GetPerformanceTimer()) / 1000
@@ -61,6 +69,7 @@ MarketPeek._Send = function(self, sState, sDetail)
 	-- the hub page (FrontEnd view) asked, so it gets the answer
 	local Hub = global.package.loaded["pz2qol.hub"]
 	local oUI = Hub and Hub.bFrontEndIsModded and Hub.oFrontEndUI or nil
+	log("state", { state = sState, detail = sDetail, page = self.tPeek and self.tPeek.nPage or nil, noview = oUI == nil or nil })
 	if oUI ~= nil then
 		pcall(oUI.TriggerEventAtNextAdvance, oUI, "PZ2QoL_MarketPeekState", sState, sDetail or "")
 	end
@@ -85,6 +94,7 @@ MarketPeek._Hub = function(self)
 end
 
 MarketPeek.Start = function(self, speciesUID)
+	log("start", { uid = speciesUID, storage = self.oStorageMode ~= nil, running = self.tPeek ~= nil })
 	if self.tPeek ~= nil then
 		return self:_Send("busy", "A market check is already running.")
 	end
@@ -125,6 +135,7 @@ MarketPeek.Start = function(self, speciesUID)
 	end)
 	self.tPeek = tPeek
 	mark("peek_start")
+	log("requested", { uid = speciesUID, ok = bOk, err = not bOk and tostring(sErr) or nil, saved = tPeek.tSaved ~= nil })
 	if not bOk then
 		self:_Finish("failed", "The game refused the market request: " .. tostring(sErr))
 		return
@@ -156,6 +167,7 @@ MarketPeek.Page = function(self, nPage)
 	tPeek.nPage = nPage
 	local bOk, sErr = pcall(hub.MarketUISetPage, nPage)
 	mark("peek_page")
+	log("page", { page = nPage, ok = bOk, err = not bOk and tostring(sErr) or nil })
 	if not bOk then
 		self:_Finish("failed", "The game refused market page " .. tostring(nPage) .. ": " .. tostring(sErr))
 		return
@@ -191,6 +203,7 @@ MarketPeek.Tick = function(self)
 			tPeek.sState = "ready"
 			tPeek.nReady = now()
 			mark("peek_ready")
+			log("ready", { page = tPeek.nPage or 0, secs = nAge, frames = tPeek.nFrames, pendingKnown = hub ~= nil and type(hub.MarketUIHasPendingDataRequests) == "function" })
 			self:_Send("ready")
 		elseif nAge > self.nRequestTimeout then
 			self:_Finish("failed", "The market did not answer within " .. self.nRequestTimeout .. " s.")
@@ -229,6 +242,7 @@ MarketPeek._Finish = function(self, sState, sDetail)
 	end)
 	pcall(function() hub.MarketUISetDisplayType(hub.AnimalMarketDisplay_None) end)
 	mark("peek_end")
+	log("release", { state = sState, detail = sDetail, lastPage = tPeek.nPage or 0, restored = tPeek.tSaved ~= nil })
 	if sState ~= "done" then
 		trace("market check: " .. tostring(sDetail))
 	end
@@ -258,6 +272,7 @@ MarketPeek.DbQuery = function(self)
 	end
 	local Hub = global.package.loaded["pz2qol.hub"]
 	local oUI = Hub and Hub.bFrontEndIsModded and Hub.oFrontEndUI or nil
+	log("dbstate", { known = bKnown, busy = bBusy, req = nType })
 	if oUI ~= nil then
 		pcall(oUI.TriggerEventAtNextAdvance, oUI, "PZ2QoL_DbState", bKnown, bBusy, nType)
 	end

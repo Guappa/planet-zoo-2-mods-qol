@@ -9,6 +9,7 @@
 // breeding (contraception, moves, births are caught by the timer).
 import { buildKinModel, normalizeSnapshot, DEFAULT_CLOSE_KINSHIP } from '/js/mods/pz2qol/kincore.js';
 import { breadcrumb, reportError } from '/js/mods/pz2qol/errors.js';
+import { getPref, onPrefs, setPref } from '/js/mods/pz2qol/prefs.js';
 
 const SCAN_INTERVAL_MS = 20000;   // background rescan (alerts)
 const ACTIVE_INTERVAL_MS = 6000;  // while a kin surface is on screen
@@ -21,6 +22,13 @@ export const DEFAULT_KIN_SETTINGS = Object.freeze({
     enabled: true,        // badges, filters and panels
     alerts: true,         // "new inbreeding risk" toasts
     alertKin: false,      // also alert for close kin the game does not flag
+    // growing-up notices (kinlife.js): a note when a young animal will grow
+    // up into a problem (group too big, pushed out, an inbreeding risk); off
+    // by default (developer, 2026-10-18)
+    alertLife: false,
+    // which notices pop up: 'action' (Needs you only, the default) or 'heads'
+    // (Heads-up too); the rest go to the notice log only
+    toastLevel: 'action',
     closeKinship: DEFAULT_CLOSE_KINSHIP,
     showCovered: true,    // grey badges for pairs kept apart by contraception
     // a related pair the game keeps apart by a monogamous pair bond counts as
@@ -29,39 +37,77 @@ export const DEFAULT_KIN_SETTINGS = Object.freeze({
     // Species board: run a whole staged plan in a Franchise zoo (or when the
     // mode is unknown). Off by default; single moves are always one click.
     allowPlansOnline: false,
+    // species names as the game shows them, in the game's language
+    // (speciesnames.js); off: the internal names ("Warthog Common")
+    gameSpeciesNames: true,
+    // kinboxed.js: a Needs-you alert when an animal waits in its transport
+    // box with no destination for boxedAfterS seconds (5/10/30/60); the trade
+    // centre's waiting animals only with boxedIncludeTrade
+    boxedAlert: true,
+    boxedAfterS: 10,
+    boxedIncludeTrade: false,
+    // a sick or injured animal the mod sends to the trade centre goes to a
+    // quarantine first (the market refuses it); kinmoves.js, kinquarantine.js
+    quarantineSick: true,
 });
-const SETTINGS_KEY = 'PZ2QoL.kin.settings';
+// Kept in the player's settings (prefs.js: the player save on this device,
+// every zoo, Franchise included), as the changes from the defaults only, so
+// a later change of a default reaches players who never touched it.
+// (Gameface's localStorage, used before, is lost when the game closes.)
+const PREF_KEY = 'kinSettings';
 
 function loadSettings() {
+    const out = Object.assign({}, DEFAULT_KIN_SETTINGS);
     try {
-        const raw = window.localStorage && window.localStorage.getItem(SETTINGS_KEY);
-        if (raw) return Object.assign({}, DEFAULT_KIN_SETTINGS, JSON.parse(raw));
+        const saved = getPref(PREF_KEY);
+        if (saved && typeof saved === 'object' && !Array.isArray(saved)) {
+            for (const k of Object.keys(DEFAULT_KIN_SETTINGS)) {
+                if (saved[k] !== undefined && typeof saved[k] === typeof DEFAULT_KIN_SETTINGS[k]) out[k] = saved[k];
+            }
+        }
     }
     catch (e) {
         // defaults
     }
-    return Object.assign({}, DEFAULT_KIN_SETTINGS);
+    return out;
+}
+
+function changedFromDefaults(s) {
+    const out = {};
+    for (const k of Object.keys(DEFAULT_KIN_SETTINGS)) if (s[k] !== DEFAULT_KIN_SETTINGS[k]) out[k] = s[k];
+    return Object.keys(out).length ? out : undefined;
 }
 
 let settings = loadSettings();
 const settingsListeners = new Set();
+
+// the settings as kept arrive (or change on the other page): take them in
+function applySettings(next) {
+    const before = settings;
+    if (JSON.stringify(before) === JSON.stringify(next)) return;
+    settings = next;
+    if (before.closeKinship !== settings.closeKinship || before.bondHolds !== settings.bondHolds) rebuild();
+    settingsListeners.forEach(fn => safeCall(fn, settings));
+    notify();
+}
+
+onPrefs((status, key) => {
+    if (key === undefined || key === PREF_KEY) applySettings(loadSettings());
+});
 
 export function getKinSettings() {
     return settings;
 }
 
 export function setKinSettings(patch) {
-    const before = settings;
-    settings = Object.assign({}, settings, patch);
+    const next = Object.assign({}, settings, patch);
     try {
-        if (window.localStorage) window.localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings));
+        setPref(PREF_KEY, changedFromDefaults(next));
     }
     catch (e) {
-        // session only
+        reportError('mod', 'Kin settings could not be kept', e, { silent: true });
     }
-    if (before.closeKinship !== settings.closeKinship || before.bondHolds !== settings.bondHolds) rebuild();
-    settingsListeners.forEach(fn => safeCall(fn, settings));
-    notify();
+    applySettings(next);
 }
 
 export function onKinSettings(fn) {
@@ -126,10 +172,20 @@ function modelOpts() {
     return { closeKinship: settings.closeKinship, bondHolds: settings.bondHolds !== false };
 }
 
+// Builds a model, reusing the previous model's pedigree caches when the
+// parentage is unchanged (kincore Pedigree), and leaves a debug breadcrumb
+// when a build is slow (the Nexus "UI lags" report).
+function timedBuild(snap, prev) {
+    const t0 = Date.now();
+    const model = buildKinModel(snap, Object.assign(modelOpts(), { ped: prev && prev.ped ? prev.ped : null }));
+    if (Date.now() - t0 > 50) breadcrumb('kin_build_slow');
+    return model;
+}
+
 function rebuild() {
     try {
-        if (parkSnapshot) parkModel = buildKinModel(parkSnapshot, modelOpts());
-        if (storageSnapshot) storageModel = buildKinModel(storageSnapshot, modelOpts());
+        if (parkSnapshot) parkModel = timedBuild(parkSnapshot, parkModel);
+        if (storageSnapshot) storageModel = timedBuild(storageSnapshot, storageModel);
     }
     catch (e) {
         reportError('mod', 'Kin could not read the animals', e);
@@ -139,7 +195,7 @@ function rebuild() {
 // Applies a snapshot (also used by the browser harness).
 export function applyKinSnapshot(raw) {
     const snap = normalizeSnapshot(raw);
-    const model = buildKinModel(snap, modelOpts());
+    const model = timedBuild(snap, snap.scope === 'storage' ? storageModel : parkModel);
     if (snap.scope === 'storage') {
         storageSnapshot = snap;
         storageModel = model;
@@ -325,6 +381,14 @@ export function setContraception(id, on) {
 
 export function locateAnimal(id) {
     return act('PZ2QoL_KinLocate', String(id));
+}
+
+// "Show in park": the camera to a habitat (its id) or an exhibit ('xe:<n>' /
+// 'xh:<name>'), as the game's Habitats and Exhibits lists locate them.
+// sampleId: one of its animals (a fallback target, and the way to an exhibit
+// known only by name).
+export function locatePlace(placeId, sampleId) {
+    return act('PZ2QoL_KinLocatePlace', String(placeId), sampleId == null ? '' : String(sampleId));
 }
 
 // The game's own "Breeding" heat map (InbreedingRisk). The HUD's heat map

@@ -3,7 +3,7 @@
 // Plain DOM in our own root under <body>, positioned under the screen's
 // header each tick. Nothing is inserted into the game's preact tree; the
 // list is pushed down with a stylesheet rule so nothing overlaps.
-import { MARKET_PRESETS, storageFiltersActive, storageSummary, applyStorageFilters, speciesStats, surplusIds, isAdult, isFertileAdult, isOnMarket, isSellable, sellBlockers, SELL_BLOCKERS } from '/js/mods/pz2qol/scores.js';
+import { MARKET_PRESETS, storageFiltersActive, storageSummary, applyStorageFilters, speciesStats, surplusIds, isAdult, isFertileAdult, isOnMarket, isSellable, sellBlockers, SELL_BLOCKERS, normSpecies } from '/js/mods/pz2qol/scores.js';
 import { MARKET_EVENT, readAnimal, sendScreenEvent } from '/js/mods/pz2qol/game.js';
 import { getStorageFilters, getStoragePredicates, getStorageSource, onStorageFiltersChanged, resetStorageFilters, setStorageFilters } from '/js/mods/pz2qol/listfilter.js';
 import { getMarketDimBelow, setMarketDimBelow } from '/js/mods/pz2qol/badges.js';
@@ -11,6 +11,7 @@ import { reportError } from '/js/mods/pz2qol/errors.js';
 import { isListerEnabled, onListerSettingChanged, setListerEnabled } from '/js/mods/pz2qol/lister.js';
 import { getPriceBook } from '/js/mods/pz2qol/pricebook.js';
 import { fmtInt, h, icon, setClass, setText, tierOf } from '/js/mods/pz2qol/ui.js';
+import { panelApi, speciesName, trunc } from '/js/mods/pz2qol/kinpanel.js';
 
 const SCORE_STEPS = [0, 50, 60, 70, 80, 90];
 const KEEP_STEPS = [1, 2, 3, 4];
@@ -185,6 +186,9 @@ function buildStorageBar() {
     const SELLABLE_TIP = "Click to cycle: animals the market would take, then animals it won't, then off. Not sellable: juveniles, infertile animals (including elderly past breeding age), pregnant animals, animals already listed and animals being moved. The game still checks each animal when you list it.";
     chips.sellable = chip('Sellable', SELLABLE_TIP, () => setStorageFilters({ sellable: SELLABLE_NEXT[getStorageFilters().sellable] || 'yes' }), 'IconTrade');
     chips.minScore = chip('Gene ≥ any', 'Minimum gene score; click to step', () => setStorageFilters({ minScore: next(SCORE_STEPS, getStorageFilters().minScore) }), 'IconMedalStandard');
+    // one species only: set by the Species board's / Kin planner's Storage button (trade shortcuts)
+    chips.species = chip('Species', 'Showing one species (from the Species board). Click to show all again.', () => setStorageFilters({ species: '' }), 'IconAnimals');
+    chips.species.classList.add('PZ2QoL_speciesChip');
     const clearChip = chip('Clear', "Clear the mod's storage filters", () => resetStorageFilters(), 'reset');
     clearChip.classList.add('ghost');
     // one chip that cycles, so the bar stays two rows high
@@ -207,9 +211,18 @@ function buildStorageBar() {
     bar.appendChild(h('div.PZ2QoL_expandOnly', null,
         toggles.map(([key]) => chips[key]), chips.sellable, chips.surplus, chips.minScore, sort, clearChip));
     bar.appendChild(h('div.PZ2QoL_flex1'));
-    bar.appendChild(stats);
+    // the species chip sits above the stats, so the filter rows keep their width
+    bar.appendChild(h('div.PZ2QoL_statsCol', null, chips.species, stats));
     bar.appendChild(h('div.PZ2QoL_divider'));
-    bar.appendChild(listerSwitch);
+    // the Market desk under the lister's switch (2026-10-18; it was in the
+    // price panel's header), one column so the filter rows keep their width
+    bar.appendChild(h('div.PZ2QoL_listerCol', null, listerSwitch, h('div.PZ2QoL_btn.PZ2QoL_deskBtn', {
+        title: 'Market desk: pick and list many animals at once, species by species, with every price and result in one place. Nothing is listed until you press List.',
+        onClick: safe('Market desk', () => {
+            const desk = panelApi('desk');
+            if (desk) desk.open();
+        }),
+    }, icon('IconTrade', 'brown', 'sm'), h('span', { text: 'Market desk' }))));
 
     const sync = () => {
         const f = getStorageFilters();
@@ -219,6 +232,8 @@ function buildStorageBar() {
         setChip(chips.surplus, f.surplusOnly, f.surplusOnly ? `Surplus · keep ${f.surplusKeep}` : 'Surplus');
         setChip(chips.minScore, f.minScore > 0, f.minScore > 0 ? `Gene ≥ ${f.minScore}` : 'Gene ≥ any');
         setChip(sort, f.sort != 'none', SORT_LABEL[f.sort]);
+        setChip(chips.species, !!f.species, f.species ? `${trunc(speciesName(f.species), 24)} only ✕` : 'Species');
+        chips.species.style.display = f.species ? '' : 'none';
         setClass(clearChip, 'hiddenSoft', !storageFiltersActive(f));
     };
     onStorageFiltersChanged(() => {
@@ -242,6 +257,7 @@ function buildStorageBar() {
         setChip(chips.pairsOnly, !!f.pairsOnly, undefined, animals.filter(a => (st.get(a.species || '?') || {}).pairs > 0).length);
         setChip(chips.surplus, f.surplusOnly, undefined, surplusIds(animals, f.surplusOnly ? f.surplusKeep : 2).size);
         setChip(chips.hideListed, !!f.hideListed, undefined, animals.filter(a => !isOnMarket(a)).length);
+        if (f.species) setChip(chips.species, true, undefined, animals.filter(a => normSpecies(a.species) === normSpecies(f.species)).length);
         // count for the state the chip is in (off: how many are sellable),
         // and why the rest aren't in the tooltip
         const reasons = {};
