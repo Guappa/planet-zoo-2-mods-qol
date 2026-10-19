@@ -9,5 +9,11 @@
 - Never patch the exe or touch Denuvo or online activation. Franchise automation must stay
   click-started (the player's click on Execute / Sell / Find a habitat is the opt-in; no extra
   "allow in Franchise" switches, decided 2026-10-16) and one action at a time.
+- **Tag every official release.** Each version published on Nexus gets an annotated Git tag
+  `vX.Y.Z` (e.g. `v3.0.2`, matching `Core.sVersion` / `VERSION`) on the commit whose
+  `mods/PZ2QoL` source is exactly what the release zip ships. Commit the release source before
+  uploading, tag that commit (`git tag -a vX.Y.Z -m "Mike's QoL Toolbox X.Y.Z"`), and push the
+  commit and the tag together (`git push origin main vX.Y.Z`). Never move or delete a published
+  tag; a fix is a new version with a new tag. `main` may run ahead of the latest release.
 - Franchise is the priority: the developer only plays Franchise. Every feature should work there
   unless it would change what is sent to Frontier's servers.
