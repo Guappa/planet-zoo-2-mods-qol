@@ -13,7 +13,11 @@
 //   - adults over the habitat's room, breeders over the group make-up
 //   + a little per distinct family line (room to swap partners later)
 // minus the cost of the moves: each moved animal, joining an established
-// group, separating bonded mates.
+// group, separating monogamous mates (they mourn).
+//
+// Monogamous mates living together pair only with each other, as the game
+// lets them (groupPairs); a breeder whose monogamous mate does not breed
+// pairs with no one while they share a habitat.
 //
 // Group make-up (groupRule): m males with f females. 1:1 pairs, 1:3 a male
 // with three females, 1:any a harem (one breeding male per habitat), any:1
@@ -80,7 +84,7 @@ import { TRADE, normalizeAssignments, assignedHabitatsOf, habitatAllowedFor } fr
 
 export const PROGRAMME_DEFAULTS = Object.freeze({
     moveCost: 0.04,          // per moved animal, in pair-value units (0..1)
-    bondBreakCost: 0.15,     // separating two current mates
+    bondBreakCost: 0.15,     // separating two monogamous mates (mourning)
     outsiderCost: 0.02,      // joining a habitat that already has this species
     relatedPenalty: 2,       // per related fertile pair living together
     // Room and make-up are hard limits in practice: each penalty is well
@@ -110,7 +114,24 @@ export const PROGRAMME_DEFAULTS = Object.freeze({
     wallLimitMs: Infinity,   // deep: wall-clock limit
     stop: null,              // deep: () => true ends the search (the best so far is kept)
     onStart: null,           // deep: ({ done, planned, bestStart, total, ms }) after each start
+    // Auto mode only (kinautocore.js; unset: the same plan as before): ids of
+    // breeders that count where they are but never move (hands off, moved
+    // by the player, sent away by Auto), like a pregnant one
+    pinIds: null,
 });
+
+// "Fewer moves <-> Best genetics": the optimiser's cost per moved animal
+// (and for joining an established group: the default unless given). Best
+// genetics counts no move cost at all (developer, 2026-10-18); a move that
+// gains nothing is still undone at the end. The board's slider and Auto
+// mode's setting.
+export const PROGRAMME_STEPS = Object.freeze([
+    Object.freeze({ label: 'Fewest moves', cost: 0.15 }),
+    Object.freeze({ label: 'Fewer moves', cost: 0.08 }),
+    Object.freeze({ label: 'Balanced', cost: 0.04 }),
+    Object.freeze({ label: 'Best genetics', cost: 0, outsider: 0 }),
+]);
+export const PROGRAMME_DEFAULT_STEP = 3; // Best genetics (developer, 2026-10-18)
 
 const MATING = new Set(['monogamy', 'polygyny', 'polyandry', 'mixed']);
 const EPS = 1e-9;
@@ -598,7 +619,9 @@ function makeContext(model, info, opts, breeders, all, habitats, home) {
     // where each breeder may go: the allowed habitats, the trade centre, home
     // pregnant breeders stay where they are (pinned): home is their only place
     // pregnant, or away from its habitat for now (vet, quarantine): stays
-    ctx.pinned = Uint8Array.from(breeders.map(a => (a.preg || a.away ? 1 : 0)));
+    // (and the animals Auto mode must leave where they are, opts.pinIds)
+    const pinIds = opts.pinIds instanceof Set ? opts.pinIds : new Set(Array.isArray(opts.pinIds) ? opts.pinIds.map(String) : []);
+    ctx.pinned = Uint8Array.from(breeders.map(a => (a.preg || a.away || pinIds.has(a.id) ? 1 : 0)));
     ctx.targetsOf = ctx.all.map(i => {
         if (ctx.pinned[i]) return [ctx.home[i]];
         const t = new Set(ctx.groupPlaces);
@@ -621,15 +644,27 @@ function makeContext(model, info, opts, breeders, all, habitats, home) {
     ctx.compatible = (i, j) => i !== j && ((isMaleSide(ctx.sex[i]) && isFemaleSide(ctx.sex[j])) || (isFemaleSide(ctx.sex[i]) && isMaleSide(ctx.sex[j])));
     // either order: the male (or the first) as the father
     ctx.pvAny = (i, j) => (isMaleSide(ctx.sex[i]) && isFemaleSide(ctx.sex[j]) ? ctx.pv(i, j) : ctx.pv(j, i));
-    // bonds between current mates: { a, b (breeder index or -1), ext (the other's place, or -1) }
+    // monogamous bonds between current mates: { a, b (breeder index or -1),
+    // ext (the other's place, or -1) }. Only these matter: while the two live
+    // together the game pairs each with no one else (IconLock), and parting
+    // them costs mourning. Other species list mates too, but have neither
+    // (animals.fdb: MourningSeasons is 0 for every species without single
+    // mates). Monogamous: the bond pass saw the bond (either side), or the
+    // species' mating system is monogamy.
     const byId = new Map(breeders.map((a, i) => [a.id, i]));
     const allIds = new Map(all.map(a => [a.id, a]));
+    const monoSpecies = info && info.mating === 'monogamy';
     ctx.bonds = [];
     ctx.bondsOf = ctx.all.map(() => []);
+    // each breeder's monogamous mate: a breeder (index) or a non-breeder's place
+    ctx.monoMate = new Int32Array(n).fill(-1);
+    ctx.monoExt = new Int32Array(n).fill(-1);
     const seen = new Set();
     breeders.forEach((a, i) => {
         for (const mateId of a.mates || []) {
-            if (!allIds.has(mateId)) continue;
+            const mate = allIds.get(mateId);
+            if (!mate) continue;
+            if (!(monoSpecies || (a.bond && a.bond.mate === mateId) || (mate.bond && mate.bond.mate === a.id))) continue;
             const key = a.id < mateId ? a.id + '|' + mateId : mateId + '|' + a.id;
             if (seen.has(key)) continue;
             seen.add(key);
@@ -639,17 +674,50 @@ function makeContext(model, info, opts, breeders, all, habitats, home) {
             ctx.bonds.push(bond);
             ctx.bondsOf[i].push(ctx.bonds.length - 1);
             if (j >= 0) ctx.bondsOf[j].push(ctx.bonds.length - 1);
+            // one mate each (the first found)
+            if (ctx.monoMate[i] >= 0 || ctx.monoExt[i] >= 0 || (j >= 0 && (ctx.monoMate[j] >= 0 || ctx.monoExt[j] >= 0))) continue;
+            if (j >= 0) {
+                ctx.monoMate[i] = j;
+                ctx.monoMate[j] = i;
+            }
+            else ctx.monoExt[i] = bond.ext;
         }
     });
+    ctx.hasMono = ctx.bonds.length > 0;
     return ctx;
 }
 
 // ------------------------------------------------------------- evaluation
 
-// The breeding pairs of one habitat's breeders (indices), under the make-up.
-// A unisex animal is on both sides: two of them make one couple (the lower
-// index as the father), and it keeps its number of partners over both roles.
-function groupPairs(ctx, list) {
+// The breeding pairs of one habitat's (place p) breeders (indices), under the
+// make-up. Monogamous mates living together pair with each other only (a
+// related couple breeds nothing worth counting, but still takes both out);
+// a breeder whose monogamous mate lives there and does not breed (old,
+// contracepted) pairs with no one. The rest are matched freely.
+function groupPairs(ctx, list, p) {
+    if (!ctx.hasMono) return freePairs(ctx, list);
+    const here = new Set(list);
+    const out = [], free = [];
+    const done = new Set();
+    for (const i of list) {
+        if (done.has(i)) continue;
+        const j = ctx.monoMate[i];
+        if (j >= 0 && here.has(j)) {
+            done.add(i);
+            done.add(j);
+            const v = ctx.compatible(i, j) ? ctx.pvAny(i, j) : 0;
+            if (v > 0) out.push(isMaleSide(ctx.sex[i]) && isFemaleSide(ctx.sex[j]) ? [v, i, j] : [v, j, i]);
+        }
+        else if (j < 0 && ctx.monoExt[i] >= 0 && ctx.monoExt[i] === p) done.add(i);
+        else free.push(i);
+    }
+    return free.length < 2 ? out : out.concat(freePairs(ctx, free));
+}
+
+// The best pairs among breeders free to choose (maxWeightPairs). A unisex
+// animal is on both sides: two of them make one couple (the lower index as
+// the father), and it keeps its number of partners over both roles.
+function freePairs(ctx, list) {
     const males = [], females = [];
     let unisex = false;
     for (const i of list) {
@@ -711,7 +779,7 @@ function placeScore(ctx, p, list) {
     if (hit !== undefined) return hit;
     const P = ctx.opts;
     let value = 0, penalty = relatedCount(ctx, list) * P.relatedPenalty;
-    for (const pr of groupPairs(ctx, list)) value += pr[0];
+    for (const pr of groupPairs(ctx, list, p)) value += pr[0];
     let nm = 0, nf = 0;
     for (const i of list) {
         if (ctx.sex[i] === Sex.Male) nm++;
@@ -1731,7 +1799,7 @@ export function programmeProblemSig(model, species, info = {}, destinations = nu
 // or a habitat that finishes measuring with the same room changes nothing.
 function problemSig(ctx) {
     const rows = ctx.B.map((a, i) => [a.id, ctx.placeKeys[ctx.home[i]], a.sex, ctx.pinned && ctx.pinned[i] ? 1 : 0,
-        (a.mates || []).slice().sort().join('+'), (a.fert && a.fert.state) || '',
+        (a.mates || []).slice().sort().join('+'), (a.bond && a.bond.mate) || '', (a.fert && a.fert.state) || '',
         a.genes ? ['F', 'I', 'S', 'L'].map(k => a.genes[k] || '').join('/') : ''].join(','));
     rows.sort();
     const places = ctx.placeKeys.map((k, p) => `${k}:${ctx.cap[p] == null ? '' : ctx.cap[p]}:${ctx.fixed[p]}:${ctx.allowedPlace[p] ? 1 : 0}`).sort();
@@ -1799,7 +1867,7 @@ function programmeStats(ctx, place) {
         }
         related += relatedCount(ctx, list);
         const busy = new Set();
-        for (const [, m, f] of groupPairs(ctx, list)) {
+        for (const [, m, f] of groupPairs(ctx, list, p)) {
             pairs++;
             quality += youngQuality(ctx.B[m], ctx.B[f]);
             chance += conceptionChance(ctx.B[m], ctx.B[f], ctx.info);

@@ -330,6 +330,9 @@ function renderBoxedSettings(p, settings) {
     }, 'Also alert for animals waiting boxed at the trade centre (off: they are expected to wait there)');
     setClass(trade, 'disabled', !on);
     p.appendChild(trade);
+    p.appendChild(switchEl('Let out stuck aquarium animals', settings.releaseBoxed !== false,
+        () => setKinSettings({ releaseBoxed: getKinSettings().releaseBoxed === false }),
+        "The game sometimes boxes aquarium animals and never lets them out. On: the mod unboxes them after 30 s, one at a time, as the Unbox button does (Franchise too). Off: the game's own behaviour."));
 }
 
 // Muted species (no alerts, this zoo): click one to unmute it.

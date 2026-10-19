@@ -15,7 +15,7 @@ local ipairs   = global.ipairs
 
 local Core = module(...)
 
-Core.sVersion = "3.0.2"
+Core.sVersion = "3.1.0"
 Core.bBooted = false
 
 -- lower-cased module name -> list of patch functions(tModule)
@@ -415,7 +415,7 @@ Core.Boot = function(self)
 	self:Checkpoint("require_hook")
 	self:AddModulePatch("Environment.Environment", function(t) self:_PatchEnvironment(t) end)
 	self:AddModulePatch("GameHelpers.ModeHelper", function(t) self:_PatchModeHelper(t) end)
-	for _, sFeature in ipairs({ "PZ2QoL.Errors", "PZ2QoL.Hub", "PZ2QoL.MarketPeek", "PZ2QoL.Lister", "PZ2QoL.PlayerStore", "PZ2QoL.Kin", "PZ2QoL.Guards", "PZ2QoL.SaveTrace", "PZ2QoL.Autosave", "PZ2QoL.StorageSend", "PZ2QoL.TradeJump", "PZ2QoL.StorageFetch" }) do
+	for _, sFeature in ipairs({ "PZ2QoL.Errors", "PZ2QoL.Hub", "PZ2QoL.MarketPeek", "PZ2QoL.Lister", "PZ2QoL.PlayerStore", "PZ2QoL.Kin", "PZ2QoL.Guards", "PZ2QoL.SaveTrace", "PZ2QoL.BoxTrace", "PZ2QoL.BoxRelease", "PZ2QoL.Autosave", "PZ2QoL.StorageSend", "PZ2QoL.TradeJump", "PZ2QoL.StorageFetch" }) do
 		local bOk, sErr = pcall(function()
 			global.require(sFeature):Init(self)
 		end)

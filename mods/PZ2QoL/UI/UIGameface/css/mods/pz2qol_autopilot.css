@@ -1,0 +1,120 @@
+/* =====================================================================
+   PZ2QoL Auto mode (kinautoui.js): its button and panel on the Species
+   board, its tags on the cards, and its notices. The board's field-kit
+   look (pz2qol_kinboard.css). pz2qol_kinboard.css loads after this file
+   and its ".PZ2QoL_kb *" catch-all sets flex-direction: row, so the
+   board rules here carry the .PZ2QoL_kb prefix. Gameface: explicit
+   display:flex, no CSS grid, no native scrolling.
+   ===================================================================== */
+
+/* ------------------------------------------------- the board's Auto button */
+
+.PZ2QoL_kb .PZ2QoL_kpBtn.PZ2QoL_kbAutoBtn.autoOn { box-shadow: inset 0 0 0 0.12rem #4F8A86; color: #2F6662; }
+.PZ2QoL_kb .PZ2QoL_kpBtn.PZ2QoL_kbAutoBtn.autoOn.on { color: #FFFFFF; background-color: #4F8A86; }
+
+/* ------------------------------------------------------------- the panel */
+
+.PZ2QoL_kb .PZ2QoL_kbAuto { flex: 1; min-height: 0; flex-direction: column; }
+/* makeScroll('kbAutoBody') gives .PZ2QoL_kpScroll.kbAutoBody (no PZ2QoL_
+   prefix on the second class); room on the right for its scroll bar, as
+   the Breeding programme's groups (.kbProgGroups) */
+.PZ2QoL_kb .PZ2QoL_kpScroll.kbAutoBody { flex: 1; min-height: 0; }
+.PZ2QoL_kb .PZ2QoL_kpScroll.kbAutoBody > .PZ2QoL_kpViewport > .PZ2QoL_kpContent { padding: 0 0.95rem 0.75rem 0; }
+
+.PZ2QoL_kb .PZ2QoL_apText { flex-shrink: 0; margin: 0.2rem 0; font-size: 0.82rem; line-height: 1.2rem; white-space: normal; color: var(--qol-ink); }
+.PZ2QoL_kb .PZ2QoL_apText.soft { color: var(--qol-ink-soft); font-size: 0.76rem; line-height: 1.05rem; }
+.PZ2QoL_kb .PZ2QoL_apText.warn { color: #9A5B12; font-size: 0.76rem; }
+
+.PZ2QoL_kb .PZ2QoL_apSection {
+  flex-shrink: 0;
+  flex-direction: column;
+  margin-top: 0.55rem;
+  padding: 0.5rem 0.7rem 0.55rem 0.7rem;
+  border-radius: 0.7rem;
+  background-color: var(--qol-card-2);
+}
+.PZ2QoL_kb .PZ2QoL_apSectionTitle {
+  flex-shrink: 0;
+  margin-bottom: 0.3rem;
+  font-size: 0.7rem;
+  font-weight: bold;
+  letter-spacing: 0.04rem;
+  text-transform: uppercase;
+  color: var(--qol-ink-soft);
+}
+.PZ2QoL_kb .PZ2QoL_apSectionBody { flex-shrink: 0; flex-direction: column; }
+/* a segment row on its own (How often) keeps its width, not the section's */
+.PZ2QoL_kb .PZ2QoL_apSectionBody > .PZ2QoL_apSeg { align-self: flex-start; }
+.PZ2QoL_kb .PZ2QoL_apRow { flex-shrink: 0; align-items: center; flex-wrap: wrap; margin: 0.15rem 0; }
+.PZ2QoL_kb .PZ2QoL_apRow > * { margin-top: 0.15rem; margin-bottom: 0.15rem; }
+.PZ2QoL_kb .PZ2QoL_apRow .PZ2QoL_kpSwitch { margin-right: 0.9rem; }
+.PZ2QoL_kb .PZ2QoL_apSeg { margin-right: 0.6rem; }
+
+.PZ2QoL_kb .PZ2QoL_apBanner {
+  flex-shrink: 0;
+  align-items: center;
+  margin: 0.2rem 0 0.4rem 0;
+  padding: 0.4rem 0.6rem;
+  border-radius: 0.6rem;
+  font-size: 0.8rem;
+  white-space: normal;
+  background-color: rgba(217, 147, 46, 0.16);
+  color: var(--kp-kin-ink);
+}
+
+/* the last runs */
+.PZ2QoL_kb .PZ2QoL_apRuns { flex-shrink: 0; flex-direction: column; }
+.PZ2QoL_kb .PZ2QoL_apRunHead {
+  flex-shrink: 0;
+  align-items: center;
+  margin: 0.4rem 0 0.15rem 0;
+  font-size: 0.74rem;
+  font-weight: bold;
+  color: var(--qol-ink-soft);
+}
+.PZ2QoL_kb .PZ2QoL_apLog { flex-shrink: 0; align-items: center; padding: 0.18rem 0; border-bottom: 0.08rem solid var(--qol-line); }
+.PZ2QoL_kb .PZ2QoL_apLogMark {
+  flex-shrink: 0;
+  width: 1.2rem;
+  height: 1.2rem;
+  margin-right: 0.45rem;
+  align-items: center;
+  justify-content: center;
+  border-radius: 0.6rem;
+  font-size: 0.7rem;
+  font-weight: bold;
+  color: #FFFFFF;
+  background-color: var(--qol-great);
+}
+.PZ2QoL_kb .PZ2QoL_apLog.skip .PZ2QoL_apLogMark { background-color: var(--qol-red); }
+.PZ2QoL_kb .PZ2QoL_apLog.wait .PZ2QoL_apLogMark { background-color: var(--qol-teal); }
+.PZ2QoL_kb .PZ2QoL_apLog.undone .PZ2QoL_apLogMark { background-color: rgba(114, 91, 74, 0.45); }
+.PZ2QoL_kb .PZ2QoL_apLog.undone .PZ2QoL_apLogMain { text-decoration: line-through; color: var(--qol-ink-soft); }
+.PZ2QoL_kb .PZ2QoL_apLogText { flex: 1; flex-direction: column; min-width: 0; }
+.PZ2QoL_kb .PZ2QoL_apLogMain { font-size: 0.8rem; white-space: nowrap; overflow: hidden; color: var(--qol-ink); }
+.PZ2QoL_kb .PZ2QoL_apLogWhy { font-size: 0.7rem; line-height: 0.95rem; color: var(--qol-ink-soft); white-space: normal; }
+
+/* ------------------------------------------------- the board's tags (Auto) */
+
+.PZ2QoL_kbTag.auto { background-color: rgba(79, 138, 134, 0.2); color: #2F6662; }
+.PZ2QoL_kbMenuItem.auto { color: #2F6662; }
+
+/* -------------------------------------------------------------- notices */
+
+.PZ2QoL_apToasts { top: auto; bottom: 7rem; }
+.PZ2QoL_apToast .PZ2QoL_kinToastStripe { background-color: #4F8A86; }
+.PZ2QoL_apToast.tone_warn .PZ2QoL_kinToastStripe { background-color: var(--qol-amber); }
+.PZ2QoL_apToast.tone_ok .PZ2QoL_kinToastStripe { background-color: var(--qol-great); }
+.PZ2QoL_apToastIcon {
+  flex-shrink: 0;
+  width: 1.4rem;
+  height: 1.4rem;
+  margin-right: 0.45rem;
+  border-radius: 0.7rem;
+  background-color: #4F8A86;
+  background-image: url(/img/icons/IconTime.svg);
+  background-size: 0.9rem 0.9rem;
+  background-repeat: no-repeat;
+  background-position: center;
+}
+body .PZ2QoL_apToasts.underPopup { display: none; }

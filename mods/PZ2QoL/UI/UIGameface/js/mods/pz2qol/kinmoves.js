@@ -334,12 +334,16 @@ export function stopPlan() {
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 
 // Runs a plan: one move at a time, each confirmed by the game.
-export async function runPlan(plan, { destinations } = {}) {
+// Options only Auto mode passes (unset: exactly the board's run):
+//   beforeEach    async (move) => '' to go on, or a reason to skip it (the
+//                 game's gate: movement allowed, server idle...)
+//   owner         who started the run ('board' unless said)
+export async function runPlan(plan, { destinations, beforeEach = null, owner = 'board' } = {}) {
     const blocked = planBlockedReason();
     if (blocked) return { ok: false, detail: blocked };
     const moves = prunePlan(getKinModel(), plan);
     if (!moves.length) return { ok: false, detail: 'Nothing to move.' };
-    setRun({ running: true, stopping: false, done: 0, total: moves.length, current: null, log: [], error: null, finished: false });
+    setRun({ running: true, stopping: false, done: 0, total: moves.length, current: null, log: [], error: null, finished: false, owner });
     breadcrumb('kin_plan_start');
     let error = null;
     let skipped = 0;
@@ -362,6 +366,23 @@ export async function runPlan(plan, { destinations } = {}) {
             continue;
         }
         setRun({ current: text });
+        if (beforeEach) {
+            let why = '';
+            try {
+                why = await beforeEach(m);
+            }
+            catch (e) {
+                why = '';
+            }
+            if (run.stopping) break;
+            if (why) {
+                skipped++;
+                error = `${text}: ${why}`;
+                setRun({ log: run.log.concat([{ text, ok: false, detail: `skipped: ${why}` }]) });
+                await sleep(getPaceMs('moves'));
+                continue;
+            }
+        }
         // a refused or unconfirmed move is skipped and the plan carries on;
         // only Stop ends a run (the developer's decision, 2026-10-16)
         const r = await moveAnimal(m.id, m.to);

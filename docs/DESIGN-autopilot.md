@@ -1,7 +1,11 @@
 # Design: Autopilot (optional full-auto breeding management)
 
-Status: **design only, nothing built** (2026-10-16). Written for the developer to decide the open
-questions in section 14 before any code. "Autopilot" is a working name.
+Status: **superseded by section 16 (2026-10-18): Auto mode per species, on the Species
+board.** The developer narrowed the scope: an auto mode chosen per species that runs the
+Breeding programme on a schedule and moves the animals, with no human maintenance. Sections 0-15
+describe the zoo-wide Autopilot that was built first (2026-10-16, never released); the parts
+still in use (store binding, offline evidence, the gate, one action at a time, the log and Undo,
+the player's moves respected) are carried over in section 16. Not yet run in the game.
 
 Goal: an **opt-in** mode that does in the background what the player now does by hand on the
 Species board: **Suggest fixes** when a breeding problem appears, the **Breeding programme**, and
@@ -65,10 +69,11 @@ launcher button** (it opens the setup). This is a requirement for every phase, n
 | Item | While Autopilot is off |
 |---|---|
 | Engines (`suggestPlan`, `planProgramme`, `cullPlan`) | New options only; their defaults are today's behaviour. Return shapes unchanged (anything extra comes from a new function or an opt-in option). Status-quo bias and the stable tie-break apply **only when Autopilot passes them**; the panels never do. `maxEvaluations` stays 60 000 for the panels. |
-| Executor (`kinmoves.js` `runPlan`, `moveAnimal`) | Not changed. Autopilot is a caller of `runPlan` like the board (it adds its ordering and muting outside it). |
-| Lua (`Kin.Move`, `Kin.Contracept`, `Kin.Scan`) | Manual calls take today's path. Autopilot's extra guards (e.g. `IsPlayerAnimalMovementEnabled`) run only when the call is flagged as Autopilot's (an extra argument the board never sends). The snapshot gets no new fields; Autopilot asks for its gate facts with its own event, only while on. |
+| Executor (`kinmoves.js` `runPlan`, `moveAnimal`) | Opt-in options only (`minPaceMs`, `failPauseMs`, `beforeEach`, `owner`); unset, the board's run is unchanged. Autopilot is a caller of `runPlan` like the board (it adds its ordering and muting outside it). |
+| Lua (`Kin.Move`, `Kin.Contracept`, `Kin.Scan`) | Not changed. Autopilot asks the game's state (movement allowed, Move screen, server busy, trade-centre room) with its own event `PZ2QoL_AutoGate`, only while on, before each action. The snapshot gets no new fields. |
+| Kinship (`kincore.js`) | A simulated model reuses its source's ancestor / kinship / relation caches (lineage never changes in a simulation); a pure cache, same answers (equivalence test). It also speeds up the board's own Suggest fixes. |
 | Scans | Today's cadence (20 s, 6 s with a kin surface open). The faster rate is only while on. |
-| Kin alerts | No muting. Muting only covers Autopilot's own plan in flight. |
+| Kin alerts | No muting: the filter (`kin.js` `setKinAlertFilter`) is null. Muting only covers Autopilot's own plan in flight. |
 | Species board UI | No new menu items, tabs, tags or pins. The board's Autopilot tab, pins and "Autopilot" card tags appear only while on. |
 | Thin out choices | Forgotten when the game closes, as today. Persistent only while on. |
 | Player save | Nothing written. The `kinAuto` key is created the first time Autopilot is turned on; assignments' room in the 60 KB per zoo is untouched until then. |
@@ -340,11 +345,11 @@ What the current tools would do if chained blindly, and how the pipeline avoids 
 
 ### 6.2 Anti-churn ledger (per animal, keyed by GUID)
 
-- **Cooldown:** an animal Autopilot moved is not moved again by P1/P2 for 30 min of park time (and
-  never twice within one cycle). P0 may override, once.
-- **No reversals:** a plan that sends an animal back to a habitat it left in the last 2 hours is
-  rejected unless P0 needs it.
-- **Oscillation breaker:** two reversals for one species within a day mark it **unstable**:
+- **Cooldown:** an animal Autopilot moved is not moved again by the layout or Thin out for a
+  quarter of a park year (and at least 10 real minutes). Fixes may move it.
+- **No reversals:** a plan that sends an animal back to a habitat it left in the last park year is
+  rejected unless a fix needs it.
+- **Oscillation breaker:** two reversals for one species within a park year mark it **unstable**:
   Autopilot stops acting on it and adds a Needs you entry with both plans. The player decides.
 - **Failure backoff:** a move the game refused or didn't confirm is not retried for 10 min; after
   3 failures for the same animal and destination it is parked as Needs you ("No keeper can reach
@@ -652,3 +657,241 @@ keeps running). The veto window can be set to 0 (silent) by the player.
     hand).
 13. **Turning it off:** keep the contraception Autopilot set (default, the off dialog lists it with
     a "Lift" button), or lift it automatically?
+
+---
+
+## 15. Implementation (phase one, 2026-10-16)
+
+Branch `autopilot`, worktree `.claude/worktrees/autopilot`. **Not yet run in the game**: everything
+below is tested offline (Node, Lua mock, browser harness).
+
+### Files
+
+| File | What |
+|---|---|
+| `js/mods/pz2qol/kinautocore.js` | Pure: presets and settings, the pipeline (`planSpecies`), objective, commit gate, safe order, fingerprints, park clock, change detection |
+| `js/mods/pz2qol/kinautoledger.js` | Pure: the zoo's Autopilot data (GUID / habitat-fingerprint keyed), the view for this load, log, pins, undo, pruning, size budget |
+| `js/mods/pz2qol/kinauto.js` | Runtime on the HUD page: watching, scheduling, Franchise / offline trigger policy, executor, circuit breaker, persistence (`userstore.js` key `kinAuto`), dry run |
+| `js/mods/pz2qol/kinautoui.js`, `css/mods/pz2qol_autopilot.css` | Launcher button state, panel (Set up / Next / Needs you / Log / Settings), toasts, the Species board extension |
+| `hudlauncher.js`, `kinboard.js`, `main.js` | Third launcher button (greyed while off); the board's extension slot (null while off), `isBoardBusy`, `stagePlan` |
+| `kinprogramme.js`, `kinboardcore.js`, `kincull.js`, `kinmoves.js`, `kin.js`, `kinalerts.js`, `kincore.js` | Opt-in options and hooks only (section 0a) |
+| `Main/pz2qol.kin.lua`, `Main/pz2qol.storagesend.lua` | `PZ2QoL_AutoGate` → `PZ2QoL_AutoGateResult(reqId, {park, move, uiMode, dbBusy, tcMax, tcCount, gameMode, t})`; the Move-screen wrapper records the last mode name |
+
+### Decisions taken (until the developer says otherwise)
+
+- **Franchise: one-click cycles** (section 0, rule unchanged). Offline parks: background with a
+  20 s veto toast; inbreeding risks at once.
+- Contraception lever on, owned and lifted again; never touches contraception it did not set.
+- Close kin fixed too, urgency P1. No founding of groups in unassigned habitats. Bonds split only
+  for a large gain (`bondBreakCost` 0.5). Steward preset by default. 30 / 12 actions per hour.
+  Hand-moved animals locked for 2 park years. Trade-centre reserve 2. Log 120 entries, 20 KB cap.
+  Per-zoo on switch. Turning off keeps owned contraception unless the player clicks Lift.
+
+### Where the build differs from sections 4–10
+
+- **Time is park years** (from the animals' ages, `advanceClock`): cooldown 0.25 y (and 10 real
+  minutes), reversal window 1 y, manual lock 2 y, maturity horizon 0.5 y.
+- **Planning budget** (it runs on the game's UI thread): 400 ms per species (`planBudgetMs`, a
+  deadline passed to the engines), the layout search sized to the species (`evalBudget /
+  adults²`, 1 000–20 000 evaluations), and **triage**: more than 8 related pairs → a fixes-only
+  plan first; layout and thinning by room follow in later plans. Plans with more than 16 moves are
+  ordered without simulating each prefix (all affected pairs muted). Measured: a typical species
+  2–20 ms; a pathological, heavily inbred 300-animal species about 0.8 s (was 72 s before the
+  kinship cache and triage).
+- **Full habitats and a full trade centre** (found by the 50-year soak: births outpaced what the
+  trade centre could take, and one zoo grew to 1 120 animals): stage 4b puts the fertile females
+  of a habitat still over its target on contraception (`contraKind: 'room'`), and the lift stage
+  takes it off once the habitat is below its target again (a hold band between, so no churn). The
+  objective gained **B** (fertile females free to breed in a habitat over its target) after C:
+  `(R, F, C, B, G, -V, M)`. Under the Contraception switch.
+- **Arrivals** are trade-centre animals first seen there while Autopilot is on; animals already
+  waiting when it is turned on, or after a reload, count as sent away (never pulled back).
+- The trade-centre room comes from `PZ2QoL_AutoGate` (`tcMax`, `tcCount`); without it, 8 places.
+- `uiMode` from the gate is a hint (it is not reset when a park ends): Autopilot waits at most
+  6 s for the Move screen, then carries on.
+
+### After the independent review (13 findings, all fixed)
+
+- **Bound to the zoo's data:** Autopilot reads and writes `kinAuto` only while the store holds
+  this zoo's data (`userDataStatus() === 'file'`, the same `userDataEpoch()` it was read under).
+  Before that (a park loading, the hub, no player profile) it is off; nothing is ever queued for a
+  later zoo (the store replays queued writes into whatever zoo it reads next). It can only be
+  turned on with the store ready.
+- **Plans are never stale:** a ready plan is dropped the moment its species' fingerprint changes
+  (also assignments and pins), and a cycle re-checks it, risks included.
+- **Offline needs evidence:** Autopilot acts without a click only when the scan says offline AND
+  the gate says `gameMode` offline, `hubTypeKnown` (the Franchise hub-type constant exists) and
+  `franchiseZoo === false` (no Franchise zoo GUID). Anything else is click-started.
+- **Risk fixes go alone:** a plan that fixes a risk takes only its fixes (at once, no veto); the
+  layout and thinning are planned again and wait their turn (`partial`). Other rounds take whole
+  plans up to 6 actions (`maxActionsPerCycle`). Over the hourly budget, plans wait but planning
+  goes on.
+- **One action at a time everywhere:** Undo and Lift go through the game's gate, are confirmed
+  and paced (3 s, 8 s after a failure in Franchise); Undo waits for a running round.
+- **Outcomes:** a run that never started (the board's run came first) puts the plan back; only the
+  game's own refusals count against a move (not a busy gate); a move refused three times is listed
+  under Needs you.
+- **Expected moves** stay expected while the animal travels (60 min, longer while `moving`) and
+  are cleared on arrival, so a slow transport is never taken for the player's move; a
+  contraception and a move of the same animal no longer overwrite each other's expectation.
+- **Size:** 12 KB per zoo measured as the store writes it (non-ASCII as `\uXXXX`; the player
+  store holds 64 KB for all zoos together); cooldowns, histories and refusals expire; maps are
+  capped at 150 animals.
+- Contraception is not lifted in a hands-off habitat; the alert mute is cleared by the runtime
+  (not a timer that could clear the next round's); the panel's 1 s timer runs only while it is
+  open.
+
+### Tests
+
+| Test | Covers |
+|---|---|
+| `tests/engines_equivalence.test.mjs` + `fixtures/engines_golden.json` | Section 0a: Suggest fixes, Breeding programme and Thin out give exactly the pre-Autopilot answers on 40 seeded zoos (golden recorded before any engine change, commit `571ca55`) |
+| `tests/kinauto.test.mjs` | Pipeline, locks, contraception and lifting, arrivals, founding, estimates, areas, gate, order, objective, juveniles, **fixed point over 200 seeded zoos**, fingerprints, clock, change detection, ledger across a reload with new ids, pins, undo, pruning, budget |
+| `tests/kinauto_soak.test.mjs` | 50 park years × 4 zoos × 3 presets with births, ageing, deaths, sales and player moves: no lasting risk, no reversal, no layout churn, the player's animals and babies untouched, every action logged |
+| `tests/kinauto_runtime.test.mjs` | Fake game: off sends and writes nothing; offline fixes a risk by itself; the player's move is noticed; another zoo loads (off there, nothing carried over); Franchise waits for the click and drops a plan whose species changed; off removes every hook |
+| `tests/lua/test_pz2qol.lua` section 17 | `PZ2QoL_AutoGate` answers (incl. `hubTypeKnown`, `franchiseZoo`), fallbacks, the mode recorder |
+| `tests/uiharness/kin_autopilot.mjs` | Panel, preview, start, board extension on and off; off-mode screenshots against the base UI |
+
+### Still to do (in game)
+
+Section 13's probes, then section 12 steps 7–8: Guardian and Steward in an offline park for an
+hour each, then Franchise one-click rounds while watching server errors per action.
+
+## 16. Auto mode per species (2026-10-18, replaces the zoo-wide Autopilot)
+
+The developer's request: an auto mode per species, selectable on the Species board, that runs the
+Breeding programme, uses the plan and starts the moves; the player picks how often and the
+programme's settings; on Auto it needs no human maintenance.
+
+### What the player sees
+
+- The board's action row has an **Auto mode** button next to Thin out (it reads "Auto · next 12
+  min", "Auto · 4 ready", "Auto · running" while on). It opens the **Auto panel** in the board's
+  middle, where the Breeding programme and Thin out panels go (one of the three at a time; Esc
+  closes it).
+- Per species: **Turn on / Turn off**, **Run now**, **How often** in game time (1 month, 1
+  season, 2 seasons, 1 year of the park's calendar; 2026-10-19, was real minutes), the programme's **Make-up** (the same per-zoo choice as the programme's arrows), **Fewest
+  moves ... Best genetics** (starts at the player's slider position), **Bring breeders from the
+  trade centre**, **Thin out** with its fill level (on, Balanced, by default), the animals left
+  alone, the plan waiting for the click (Franchise) and the last runs with Undo.
+- Cards: "hands off" (the card menu's **Auto mode: hands off**), "moved by you", "auto" (moved by
+  Auto mode in the last 2 hours). The species rail says "auto" for species on Auto.
+- Notices: **Auto mode is ready** (Franchise: Run now / Show / Skip), a short "N moved" after a
+  run, and "stopped" if it would move animals back and forth.
+- Nothing else changes while no species is on Auto: no listeners, timers, scans or saves (the
+  runtime only reads the zoo's data to see whether a species is on). The board gains the button.
+
+### A run (kinautocore.js prepareAutoRun / finishAutoRun)
+
+1. **Thin out first** (if on): Thin out's own engine on the zoo as it is, with the chosen fill
+   level and make-up. It comes first because the programme counts adults that don't breed (the
+   old, the infertile) as fixed room: with them still there it sends breeders away instead.
+2. **The Breeding programme** (Classic, the board's search budget, sliced so the game never
+   stalls) on the zoo as Thin out leaves it, with the young that grow up within half a park year
+   counted as breeders, so a daughter is placed away from her father before she can breed.
+3. The moves: Thin out's first, then the programme's, one at a time through the board's own
+   `runPlan` (each confirmed by the game, a refusal skipped), the game's gate before each.
+
+Never moved: pregnant females, animals on the move, animals marked hands off, animals the player
+moved by hand (2 park years), animals Auto mode moved itself in the last park year, young (by
+Thin out). An animal Auto mode sent to the trade centre is never brought back (pinned in the
+programme). The last breeding male or female of the species is never sent to the trade centre:
+in a species where everyone is related the programme would otherwise empty it, one leftover at a
+time (the soak showed a closed zoo dying out in 35 park years). Moves the game refused lately are
+held back; after three refusals a move is no longer tried and is listed. With the trade centre
+full the sends wait.
+
+### Why it settles
+
+On a zoo that does not change, every move the programme keeps raises its own score and Thin out
+only removes animals, so runs stop finding work. A changing zoo (births, ageing) shifts the
+programme's best layout: without a cooldown Best genetics moved some animals back and forth (80
+moves back within a park year in one soak seed). So an animal Auto mode moved stays put for a
+park year (`AUTO_LIMITS.cooldownYears`, the same window as a reversal). If a plan still moves an
+animal back where it came from, two such runs stop Auto mode for the species with a notice and
+"Hand it back" in the panel.
+
+### When it acts
+
+- Each species has its next run as a month of the park's calendar (`park:GetTimeOfMonth()`,
+  read through `PZ2QoL_AutoGate` every 5 s: `year`, `month`, `monthProp`). Game time: it stands
+  still while the game is paused and runs faster at 2x and 5x; animal ages are not used (the
+  in-game animal-time option scales them). The holds (a year after Auto mode moves an animal, 2
+  after the player does) count calendar years too. The panel shows the real time left at the
+  current speed (measured from the calendar, or the game's `GetMonthDurationInSeconds()` until
+  then). When it is due and nothing blocks it (the zoo just loaded: a minute's watch first; a plan
+  running; a game window open; its animals on the move; the player working on that species on
+  the board; a deep search of it), the species is planned.
+- **Every park, Franchise included, runs by itself** (developer, 2026-10-19): turning Auto mode
+  on for a species is the opt-in (CLAUDE.md and SKILL.md rule 3 name it as the one exception to
+  click-started Franchise automation). No notice waits for a click; the Run now notice, the
+  "ready" plan and `clickStarted()` are gone. (2026-10-18 to -19 Franchise runs waited for one
+  click, the conductor's decision before the developer's.)
+- **The queue** (`A.queue`): species whose run is due join it in the order they came due and run
+  one after another, one run at a time. While a run (Auto mode's or the board's) goes on the
+  queue waits; nothing is skipped or asked for again. A species that can't run just now (its
+  animals on the move, the player planning it on the board) lets the next one go first and keeps
+  its place. A run the board's own run got ahead of goes back to the front. **Run now** puts a
+  species first in line (at once if nothing runs). Turning a species off takes it out.
+- **Notices** are off unless the player turns them on (panel: Show a notice when Auto mode moves
+  animals; player-wide pref `autoNotices`).
+
+### What it still needs from the player
+
+- **New blood.** The programme never pairs close kin (the game's rule or kinship of at least the
+  close-kin threshold). Auto mode never buys, so a closed population ends up all related and
+  stops breeding. The panel says so ("N breeders have no unrelated partner"). The soak's player
+  buys one unrelated adult per species every two park years.
+- **Selling.** Auto mode sends animals to the trade centre and never sells, releases or lists
+  them. In Franchise the trade centre is the account's storage (250 places across zoos); in a
+  small offline trade centre the sends wait once it is full, and births go on. Contraception for
+  full habitats (the zoo-wide design's stage 4b) is not part of Auto mode yet: an open question.
+
+### After the independent review (2026-10-19)
+
+- **Another zoo mid-plan or mid-run:** a plan or run belongs to its session (`A.session`, bumped
+  by `stop()`, plus the store epoch and the ledger). One from an older session is dropped, a run
+  stops sending (its `beforeEach` stops the plan) and nothing is written into the new zoo. `stop()`
+  also forgets the old zoo's model and gate answer, so the new zoo is never taken for offline on
+  the old one's evidence.
+- **Stop or Turn off mid-run:** only a move the run reached and the game refused counts against
+  it. The rest are logged "not run (stopped)" and pause nothing.
+- **The notice's Run now when it can't run** says why, and the notice comes back 20 s later.
+- **Undo** marks an entry undone, and holds the animal, only once the game moved it.
+- **Settings or make-up changed while planning:** that plan is dropped and made again.
+- **Run now** on a species Auto mode stopped, or on a shoal or colony, says so.
+- Young about to grow up with no place in a group may go to the trade centre (the programme's
+  "no place"): keeping them raised the soak's inbred births from 0 to 5 %. Thin out never sends
+  young.
+
+### Files
+
+| File | Role |
+|---|---|
+| `kinautocore.js` | Pure: settings (`SPECIES_DEFAULTS`, `EVERY_CHOICES`), `prepareAutoRun` / `finishAutoRun` / `planAutoRun`, `projectGrownUp`, the locks, fingerprints, park clock, `observeChanges` |
+| `kinautoledger.js` | Pure: the per-zoo memory `kinAuto` v2 (per-species settings and countdown, pins, the player's moves, history and cooldown, refusals, the log, Undo), budget 12 KB |
+| `kinauto.js` | Runtime: store binding, schedule, gate, Franchise click, runs through `runPlan`, Undo, pins |
+| `kinautoui.js` | The board extension (button, panel, tags, menu item) and the notices |
+| `kinboard.js` | Hooks: the Auto button, the panel slot (`S.auto`), `isBoardBusy(species)`, `openAutoPanel`, `refreshAutoPanel`; `PROG_STEPS` now from `kinprogramme.js` `PROGRAMME_STEPS` |
+| `kinprogramme.js` | `PROGRAMME_STEPS` (shared), opt-in `pinIds` (unset: the same plan, `tests/engines_equivalence.test.mjs`) |
+| `kinmoves.js` | `runPlan` opt-in `beforeEach` (the gate) and `owner` |
+| `pz2qol.kin.lua` | `Kin.AutoGate` unchanged from section 15 |
+
+The zoo-wide pieces are gone: the launcher button (hudlauncher.js is main's again), presets,
+the veto window, contraception, the commit gate, the zoo-wide objective.
+
+### Tests
+
+| Test | What |
+|---|---|
+| `tests/kinauto.test.mjs` | Settings, the board's programme options per step, `pinIds`, a run equals the programme's plan, locks, trade-centre memory, Thin out first, refusals and reversals, cooldown, growing up, the last breeder, runs settle on 50 seeded zoos, the ledger |
+| `tests/kinauto_runtime.test.mjs` | Fake game: nothing on Auto sends or writes nothing; an offline run by itself, logged and kept; the schedule; the player's move held; another zoo gets nothing; Franchise waits for the click and makes a stale plan again; Run now; off removes every hook |
+| `tests/kinauto_soak.test.mjs` | 50 park years, 3 settings, 3 seeds: no reversal, no churn, no move of a held or pinned animal, every move logged, inbred births at most 2 %, no species dies out, the population in hand with Thin out |
+| `tests/engines_equivalence.test.mjs` | The board's engines answer as before (golden recorded from main's code) |
+| `tests/uiharness/kin_autopilot.mjs` | The board with the button, the panel off and on, every setting saved, hands off, Esc and the other panels, a 1280x720 window |
+
+### Still to do (in game)
+
+Section 13's probes that still apply (the gate's answers, the trade centre numbers in Franchise),
+then a species on Auto in an offline park for an hour, then Franchise click-started runs while
+watching server errors per move.

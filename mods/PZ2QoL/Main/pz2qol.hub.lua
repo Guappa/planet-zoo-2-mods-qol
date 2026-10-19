@@ -435,6 +435,11 @@ Hub._OnModFrontEndReady = function(self, oUI)
 	if Autosave then
 		pcall(Autosave.Attach, Autosave, oUI)
 	end
+	-- stuck aquarium animals: the page sends the setting, Lua tells what it let out
+	local BoxRelease = global.package.loaded["pz2qol.boxrelease"]
+	if BoxRelease then
+		pcall(BoxRelease.Attach, BoxRelease, oUI)
+	end
 	-- "Find a habitat": the hub arms it, the park HUD places the animals
 	local StorageSend = global.package.loaded["pz2qol.storagesend"]
 	if StorageSend then

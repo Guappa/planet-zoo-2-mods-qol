@@ -30,7 +30,7 @@ import {
     cachedDestinations, getPlanRun, isAskingStored, moveAnimal, onPlanRun, planBlockedReason, requestDestinations, requestSpeciesInfo, requestStoredAdults, runPlan, stopPlan,
 } from '/js/mods/pz2qol/kinmoves.js';
 import {
-    PROGRAMME_DEFAULTS, RATIO_CHOICES, conceptionChance, groupRule, planProgrammeAsync, programmeLogData, programmeProblemSig, ratioKey, unknownMakeupText, youngQuality,
+    PROGRAMME_DEFAULTS, PROGRAMME_DEFAULT_STEP, PROGRAMME_STEPS, RATIO_CHOICES, conceptionChance, groupRule, planProgrammeAsync, programmeLogData, programmeProblemSig, ratioKey, unknownMakeupText, youngQuality,
 } from '/js/mods/pz2qol/kinprogramme.js';
 import {
     CPU_ORDER, CPU_STEPS, CUSTOM_STEPS, DEEP_PRESETS, PRESET_ORDER, PRESET_WORDS, cpuOf, deepJob, deepKey, deepResult, deepSettings,
@@ -102,6 +102,7 @@ const S = {
     unsub: [],
     timer: 0,
     prog: null,               // the breeding programme preview: { species, state, step, info, results, ... }
+    auto: null,               // the species whose Auto mode panel is open (kinautoui.js draws it)
     storedBy: new Map(),      // species -> the player's stored adults (Franchise; kinmoves requestStoredAdults), null: no answer
     storedTried: new Set(),   // species asked since the board opened
     storedFresh: false,       // the next ask skips the 60 s cache (board just opened)
@@ -109,17 +110,10 @@ const S = {
     storedView: null,         // withStored(model, answer): the merged pedigree (hover relatives)
 };
 
-// "Fewer moves <-> Best genetics": the optimiser's cost per moved animal
-// (and for joining an established group: the default unless given). Best
-// genetics counts no move cost at all (developer, 2026-10-18); a move that
-// gains nothing is still undone at the end.
-const PROG_STEPS = [
-    { label: 'Fewest moves', cost: 0.15 },
-    { label: 'Fewer moves', cost: 0.08 },
-    { label: 'Balanced', cost: 0.04 },
-    { label: 'Best genetics', cost: 0, outsider: 0 },
-];
-const PROG_DEFAULT_STEP = 3; // Best genetics (developer, 2026-10-18)
+// "Fewer moves <-> Best genetics" (kinprogramme.js PROGRAMME_STEPS, shared
+// with Auto mode)
+const PROG_STEPS = PROGRAMME_STEPS;
+const PROG_DEFAULT_STEP = PROGRAMME_DEFAULT_STEP;
 // The slider's last position is the player's default for every species and
 // zoo (prefs.js, the player save; developer, 2026-10-18).
 const PROG_STEP_PREF = 'progStep';
@@ -154,6 +148,93 @@ const RATIO_SOURCE_WORDS = {
     mating: 'the mating system',
     none: 'not known',
 };
+
+// ------------------------------------------------------------ Auto mode
+
+// Auto mode's part of the board (kinautoui.js): the Auto button and its
+// panel per species, its tags on the cards and in the rail, "hands off" in
+// the card menu. null if Auto mode failed to load: the board then draws and
+// does exactly what it did before.
+let ext = null;
+
+export function setBoardExtension(e) {
+    ext = e || null;
+    if (!ext) S.auto = null;
+    if (S.open) queueRender();
+}
+
+function extCall(name, ...args) {
+    if (!ext || typeof ext[name] !== 'function') return null;
+    try {
+        return ext[name](...args);
+    }
+    catch (e) {
+        reportError('ui', `Species board: Auto mode ${name} failed`, e, { silent: true });
+        return null;
+    }
+}
+
+// The player is working on this species on the board: a staged plan with
+// its animals, its Breeding programme or Thin out open, a drag, a Move now
+// in flight. Auto mode waits.
+export function isBoardBusy(species) {
+    if (S.pendingMove.size > 0 || S.drag) return true;
+    if (!S.open) return false;
+    if ((S.prog && S.prog.species === species) || (S.cull && S.cull.species === species)) return true;
+    const model = S.model;
+    return S.plan.some(m => {
+        const a = model && model.animals.get(String(m.id));
+        return !a || a.species === species;
+    });
+}
+
+// What the Auto panel can use of the board.
+function autoHelpers() {
+    return {
+        btn, switchEl, guard, notice, renderAll, queueRender, makeScroll, restoreScroll, statTile, placeName,
+        close: closeAuto,
+        scroll: y => {
+            if (y != null) S.scroll.auto = y;
+            return S.scroll.auto || 0;
+        },
+        box: b => {
+            S.boxes.auto = b;
+        },
+    };
+}
+
+function openAuto() {
+    if (!S.species || !ext) return;
+    if (S.auto === S.species) return closeAuto();
+    S.prog = null;
+    S.cull = null;
+    S.auto = S.species;
+    S.scroll.auto = 0;
+    closeMenu();
+    S.selected.clear();
+    breadcrumb('kin_board_auto');
+    renderAll();
+}
+
+function closeAuto() {
+    S.auto = null;
+    renderAll();
+}
+
+// Auto mode's notices: open the board on a species with its Auto panel.
+export function openAutoPanel(species) {
+    openSpeciesBoard({ species });
+    if (!ext || S.species !== String(species)) return;
+    S.prog = null;
+    S.cull = null;
+    S.auto = S.species;
+    renderAll();
+}
+
+// Auto mode's state changed (a run, the countdown): draw again if open.
+export function refreshAutoPanel() {
+    if (S.open) queueRender();
+}
 
 function notice(text, tone = 'info') {
     S.notice = { text, tone, until: Date.now() + NOTICE_MS };
@@ -320,6 +401,7 @@ function renderAll() {
         fitColumns();
         fitProgramme();
         fitCull();
+        fitAuto();
         renderPlan(model, dest);
         renderFoot();
         if (S.hoverId) highlightRelatives(S.hoverId);
@@ -416,6 +498,8 @@ function renderRail(model) {
         const over = overBySpecies.get(s.species);
         if (over) meta.push(`${over} over`);
         if (s.muted) meta.push('muted');
+        const autoTag = ext ? extCall('railTag', s.species) : null;
+        if (autoTag) meta.push(autoTag);
         box.content.appendChild(h(`div.PZ2QoL_kbSpecies.sev_${worst}${on ? '.on' : ''}${s.muted ? '.muted' : ''}`, {
             'data-species': s.species,
             title: speciesName(s.species),
@@ -495,6 +579,13 @@ function renderBoard(model, dest) {
     if (S.cull && S.cull.species === S.species) {
         el.appendChild(cullEl(model));
         return;
+    }
+    if (S.auto && S.auto === S.species && ext) {
+        const panel = extCall('panelEl', model, S.species, autoHelpers());
+        if (panel) {
+            el.appendChild(panel);
+            return;
+        }
     }
     const box = makeScroll('kbCols', {
         x: true,
@@ -848,6 +939,8 @@ function tagsFor(a, x, model) {
     if (a.contra) out.push(h('span.PZ2QoL_kbTag.contra', { text: 'contra' }));
     if (a.preg) out.push(h('span.PZ2QoL_kbTag.preg', { text: 'pregnant', title: `Pregnant: Kin's plans never move her; she stays until she gives birth (she can't be sold). The game still lets you move her yourself.` }));
     if (S.pendingMove.has(a.id)) out.push(h('span.PZ2QoL_kbTag.moving', { text: 'moving…' }));
+    const t = ext ? extCall('cardTag', a) : null;
+    if (t) out.push(h('span.PZ2QoL_kbTag.auto', { text: t.text, title: t.title || '' }));
     return out;
 }
 
@@ -1402,6 +1495,9 @@ function openMenu(id, anchor) {
                 h('span', { text: trunc(c.name, 26) }), c.dest || c.kind !== 'habitat' ? null : h('span.PZ2QoL_kbMenuFaint', { text: 'not checked' })));
         }
     }
+    for (const it of (ext && extCall('menuItems', a)) || []) {
+        kids.push(h('div.PZ2QoL_kbMenuItem.auto', { title: it.title || '', onClick: guard(it.label, () => { closeMenu(); it.run(); renderAll(); }) }, h('span', { text: it.label })));
+    }
     kids.push(h('div.PZ2QoL_kbMenuItem.ghost', { onClick: guard('Kin planner', () => openPlanner({ animalId: a.id })) }, h('span', { text: 'Relatives and mates in the kin planner' })));
     const menu = h('div.PZ2QoL_kbMenu', null, kids);
     menu.addEventListener('mousedown', e => e.stopPropagation());
@@ -1587,6 +1683,15 @@ function actionsEl(model) {
             title: 'Full habitats: pick the animals to send to the trade centre (too old, extra males, weaker genes) and keep the best breeders',
         }));
     el.appendChild(row);
+    // in the same wrapping row (beside Thin out): a row of its own pushed the
+    // pause slider under Execute out of the actions area
+    const auto = ext && S.species ? extCall('button', S.species) : null;
+    if (auto) {
+        row.appendChild(btn(auto.text, 'IconTime', openAuto, {
+            cls: `${S.auto === S.species ? 'on.' : ''}${auto.on ? 'autoOn.' : ''}PZ2QoL_kbAutoBtn`,
+            title: auto.title || '',
+        }));
+    }
     const exec = btn(`Execute plan (${S.plan.length} move${S.plan.length === 1 ? '' : 's'})`, null, execute, {
         cls: `primary.wide${!S.plan.length || blocked ? '.disabled' : ''}`,
         title: 'Run the plan: one move at a time, each confirmed by the game; a move the game refuses is skipped',
@@ -1628,6 +1733,7 @@ function openProgramme() {
     }
     if (S.prog && S.prog.species === S.species) return closeProgramme();
     S.cull = null;
+    S.auto = null;
     const species = S.species;
     S.prog = { species, state: 'loading', step: savedProgStep(), info: null, infoError: '', results: new Map(), modelRef: null, error: null };
     closeMenu();
@@ -2464,6 +2570,7 @@ function openCull() {
     }
     if (S.cull && S.cull.species === S.species) return closeCull();
     S.prog = null;
+    S.auto = null;
     const species = S.species;
     S.cull = Object.assign({ species, state: 'loading', info: null, infoError: '', keepIds: new Set(), cullIds: new Set(), result: null, key: '' }, cullPrefs);
     closeMenu();
@@ -2742,6 +2849,23 @@ function fitCull() {
     }
 }
 
+// Like Thin out: the Auto panel's scroll area gets its height after layout.
+function fitAuto() {
+    const box = S.boxes.auto;
+    if (!box || !S.el.board) return;
+    try {
+        const board = S.el.board.getBoundingClientRect();
+        const top = box.wrap.getBoundingClientRect().top;
+        const hgt = Math.max(remPx() * 6, Math.floor(board.bottom - top - Math.ceil(remPx() * 0.45)));
+        box.wrap.style.flex = '0 0 auto';
+        box.wrap.style.height = `${hgt}px`;
+        setTimeout(() => refreshBars({ auto: box }), 0);
+    }
+    catch (e) {
+        // cosmetic
+    }
+}
+
 // ---------------------------------------------------------------- footer
 
 function renderFoot() {
@@ -2958,6 +3082,7 @@ export function installSpeciesBoard() {
             else if (S.menu) closeMenu();
             else if (S.prog) closeProgramme();
             else if (S.cull) closeCull();
+            else if (S.auto) closeAuto();
             else closeSpeciesBoard();
         }
         catch (err) {
@@ -2969,6 +3094,7 @@ export function installSpeciesBoard() {
         placePanel(S.root, BOARD_SIZE);
         setTimeout(() => {
             fitColumns();
+            fitAuto();
             refreshBars(S.boxes);
         }, 0);
     });

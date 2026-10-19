@@ -1,4 +1,4 @@
-# Mike's QoL Toolbox for Planet Zoo 2 (version 3.0.0)
+# Mike's QoL Toolbox for Planet Zoo 2 (version 3.1.0)
 
 *Breeding, market, storage and park quality-of-life tools for Planet Zoo 2, formerly Genes & Gold
 (and PZ2QoL before that). Installs as `Win64\ovldata\PZ2QoL`.*
@@ -19,16 +19,37 @@ What's in the toolbox:
 | **Animal Storage** | Filters (Pregnant, Alpha, Adults / Fertile adults / Juveniles, Sellable, Not listed, Has pair, Surplus, Gene ≥, Kin), lister on/off, sort by score, summary line, Find a habitat |
 | **Zoo Animals list** | Filter bar (habitat, sex, age, pregnant, alpha, contraception, unhappy, gene and fertility minimums, Kin) and sort by gene, breeder or welfare |
 | **Kin (inbreeding)** | Risk badges in every animal screen, alerts, Kin planner, Find a mate, Compare Mates and Genealogy additions, fertility over a life |
-| **Species board** | Plan moves by drag and drop, Suggest fixes, Breeding programme, Thin out, habitat assignments, Execute plan one move at a time |
+| **Species board** | Plan moves by drag and drop, Suggest fixes, Breeding programme, Thin out, habitat assignments, Execute plan one move at a time, Auto mode per species |
 | **Market lister** | Price book, price advisor with recommended prices, background price checks, Sell at recommended price, Market desk (list many at once) |
-| **Park tools** | Launcher buttons on the tools column, reliable Autosave with Save now, pause sliders for automated runs |
+| **Park tools** | Launcher buttons on the tools column, reliable Autosave with Save now, pause sliders for automated runs, stuck aquarium animals let out of their boxes |
 | **Safety net** | Error banner for silent server and script errors, stuck-spinner watchdog, crash guard for the game's Move screen |
 
 The mod never changes what is sent to Frontier's servers. Everything it does in Franchise goes
-through the game's own buttons and events, starts only from your click, and runs one action at a
-time.
+through the game's own buttons and events and runs one action at a time. It starts only from your
+click, except Auto mode (only for the species you turned it on for) and letting out stuck aquarium
+animals (a setting, on by default).
 
 ## Changelog
+
+### 3.1.0
+
+- **Auto mode per species** on the Species board: runs a species' Breeding programme by itself on
+  a schedule in game time (every month, season, 2 seasons or year), optionally Thin out first,
+  and moves the animals one at a time, each confirmed by the game (Franchise too). Species due
+  together take turns in a queue; **Run now** puts one first. Every move is logged with **Undo**;
+  animals you move or mark **hands off** are left alone. Notices are off unless you turn them on.
+  Off for every species until you turn it on.
+- **Stuck aquarium animals let out**: the game sometimes boxes aquarium animals (sharks, turtles)
+  while they swim and never lets them out, so they sit boxed until you notice and their welfare
+  drops. The mod now unboxes them about 30 seconds later, one at a time, exactly as the game's
+  Unbox button does, quietly. If the game keeps boxing the same animal again, the mod leaves it
+  for 10 minutes and tells you, with Locate. On by default; Kin settings > **Let out stuck
+  aquarium animals** turns it off.
+- **Breeding programme**: monogamous mates living together pair only with each other, as the
+  game lets them, and separating them counts as the mourning it causes. Other species' current
+  mates no longer count as a bond.
+- **Market desk**: an animal the game won't list (e.g. no birth zoo) now takes the run's **If
+  refused** quick action, like a listing the server refuses.
 
 ### 3.0.2
 
@@ -632,6 +653,61 @@ which male and female in the same habitat are related and would inbreed. Collect
   centre count (off by default).
 - **Read-only and safe:** Kin only reads. The only things it changes are the ones you click, one
   animal per click, through the same calls the game's own buttons make (contraception, camera).
+  Auto mode (below) is the one exception, and only for the species you turned it on for.
+- **Stuck aquarium animals** (on by default): the game sometimes boxes an aquarium animal while it
+  swims and never unboxes it. After 30 seconds the mod unboxes it, one animal at a time, with the
+  same calls as the game's Unbox button (only animals no keeper, move or game action is working
+  on). No notice for that; if the game boxes the same animal again three times right after, the
+  mod leaves it for 10 minutes and shows a **Needs you** note with **Locate**. Kin settings >
+  **Let out stuck aquarium animals** turns it off.
+
+### Auto mode (per species, off by default)
+
+Auto mode runs a species' **Breeding programme** for you on a schedule and moves the animals into
+its groups, so a species can look after itself without you. It is **off** for every species until
+you turn it on for that species, in that zoo. Off, the board works exactly as before; only the
+**Auto mode** button is new.
+
+- **Turning it on:** on the Species board, pick the species and press **Auto mode** (next to Thin
+  out). Its panel takes the middle of the board, like the Breeding programme. Press **Turn on**.
+- **Settings, per species:**
+  - **How often**, in game time: every month, season (the default), 2 seasons or year of the
+    park's calendar (12 months a year, 3 a season). It waits while the game is paused and comes
+    sooner at 2x and 5x; the panel shows the next run and about how long that is at the current
+    speed.
+  - **Breeding programme:** the same choices as the programme panel. **Make-up** (pairs, 1:2 to
+    1:5, harem, mixed... the same choice as the programme's arrows), **Fewest moves ... Best
+    genetics** (starts at your programme slider's position), and whether breeders waiting at the
+    trade centre may join a group.
+  - **Thin out** (on by default): first send what is over each habitat's room to the trade centre,
+    the old and infertile first (fill level: Core only, Strict, Lean, Balanced, Full).
+- **Each run:** Thin out (if on), then the Breeding programme on the zoo as Thin out leaves it.
+  Then the moves, one at a time like Execute, each confirmed by the game and skipped if the game
+  refuses it. A run with nothing to do just waits for the next one. **Run now** runs it at once.
+- **Hands-free everywhere, Franchise included:** turning Auto mode on for a species is your
+  go-ahead; nothing waits for a click. When several species are due together they take turns in
+  a queue, one run at a time, so nothing is skipped. **Run now** puts a species first in line.
+- **Notices:** off by default, so it works quietly. Turn on **Show a notice when Auto mode moves
+  animals** in the panel (for all zoos) to get a short notice after each run that moved
+  animals.
+- **It never:** sells, releases, buys or lists animals (the trade centre is where it sends them;
+  you sell or release them as before); moves pregnant females, young (Thin out), animals on the
+  move, or animals you marked **Auto mode: hands off** (an animal card's menu); brings back an
+  animal it sent to the trade centre.
+- **You stay in charge:**
+  - An animal **you** move is left where you put it for two game years.
+  - While you work on that species on the board (a staged plan with its animals, its Breeding
+    programme or Thin out, a drag, a Move now), Auto mode waits.
+  - If it would move an animal back where it just came from twice, it stops for that species and
+    says so (**Hand it back** in the panel).
+  - Several refused moves pause the species for 10 minutes; a move refused three times is no
+    longer tried and is listed in the panel.
+- **The panel** also shows the animals left alone and the last runs, each move with its reason
+  and **Undo** (one move or the whole run).
+- **Kept** with your habitat assignments in your player profile on this PC (settings, pins and the
+  last log entries, about 12 KB per zoo at most), written only once you turn it on for a species.
+  It needs that profile: until the zoo's data has been read, Auto mode can't be turned on and
+  doesn't run.
 
 ## Install / uninstall
 
@@ -649,7 +725,8 @@ The mod is a folder in the game's data directory:
 - **Update:** copy the new `Win64` folder over the old one (Replace).
 - **Uninstall:** delete `Win64\ovldata\PZ2QoL`. No game files are modified. The only thing the
   mod writes is its own small `PZ2QoL` entry in your player profile (`Saves\player`: habitat
-  assignments, at most 64 KB); the game keeps but never reads it. No mod data goes into
+  assignments and, in zoos where you turned it on, Auto mode's settings and log; at most 64 KB);
+  the game keeps but never reads it. No mod data goes into
   park or online saves.
 
 The game will show its standard one-time "modifications detected" notice.

@@ -51,6 +51,7 @@ StorageSend.nOpenMoveSeconds = 30
 StorageSend.fnSetNewMode = nil  -- the game's own BaseUIMode.SetNewMode (unwrapped)
 StorageSend.nSeq = 0
 StorageSend.tViews = global.setmetatable({}, { __mode = "k" })
+StorageSend.sLastUIMode = nil  -- the last BaseUIMode.SetNewMode name (Kin.AutoGate)
 
 local function trace(sMsg)
 	pcall(function() api.debug.Trace("[PZ2QoL] send: " .. sMsg) end)
@@ -246,6 +247,8 @@ StorageSend._PatchBaseUIMode = function(self, BaseUIMode)
 	end
 	self.fnSetNewMode = fnSetNewMode
 	BaseUIMode.SetNewMode = function(sMode, tParams, ...)
+		-- the last mode asked for, for Auto mode's gate (Kin.AutoGate); only read
+		pcall(function() self.sLastUIMode = sMode end)
 		if sMode == "AnimalMovementMode" and self.tArm ~= nil then
 			local bOk, bTaken = pcall(self._TryTake, self, tParams)
 			if bOk and bTaken then
@@ -638,6 +641,8 @@ end
 
 StorageSend.Init = function(self, Core)
 	self.Core = Core
+	-- found by Kin through Core (package.loaded keys proved unreliable)
+	Core.StorageSend = self
 	Core:AddModulePatch("Editors.Shared.BaseUIMode", function(t) self:_PatchBaseUIMode(t) end)
 	Core:AddModulePatch("Editors.Select.SelectMode", function(t) self:_PatchSelectMode(t) end)
 end

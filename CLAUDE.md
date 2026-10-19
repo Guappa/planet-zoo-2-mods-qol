@@ -8,7 +8,12 @@
   the same change and add a line to its `changelog.md`. Do this without being asked.
 - Never patch the exe or touch Denuvo or online activation. Franchise automation must stay
   click-started (the player's click on Execute / Sell / Find a habitat is the opt-in; no extra
-  "allow in Franchise" switches, decided 2026-10-16) and one action at a time.
+  "allow in Franchise" switches, decided 2026-10-16) and one action at a time. **One exception**
+  (developer, 2026-10-19): the Species board's per-species **Auto mode** runs by itself in
+  Franchise too; turning it on for a species is the opt-in. It still does one action at a time,
+  each confirmed by the game. **Second exception** (developer, 2026-10-19): "Let out stuck
+  aquarium animals" (`pz2qol.boxrelease.lua`) unboxes animals the game boxed and left, by itself,
+  on by default, with a Kin setting to turn it off; one animal at a time.
 - **Tag every official release.** Each version published on Nexus gets an annotated Git tag
   `vX.Y.Z` (e.g. `v3.0.2`, matching `Core.sVersion` / `VERSION`) on the commit whose
   `mods/PZ2QoL` source is exactly what the release zip ships. Commit the release source before

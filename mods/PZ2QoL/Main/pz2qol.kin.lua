@@ -2523,6 +2523,98 @@ Kin.PrefsSave = function(self, oUI, sReq, sText)
 end
 
 -----------------------------------------------------------------------
+-- Auto mode's gate (asked only while a species is on Auto; reads only)
+-----------------------------------------------------------------------
+-- PZ2QoL_AutoGate(reqId) -> PZ2QoL_AutoGateResult(reqId, json):
+--   park     a park world is running
+--   move     api.planetHub.IsPlayerAnimalMovementEnabled() (omitted if unknown)
+--   uiMode   the last BaseUIMode.SetNewMode name ('' if none seen)
+--   dbBusy   franchise:IsDatabaseOperationInProgress() (omitted if unknown)
+--   tcMax / tcCount  trade centre capacity and animals in it (omitted if unknown)
+--   year / month / monthProp  park:GetTimeOfMonth() (month 1..12, monthProp 0..1
+--            through it; omitted if unknown)
+--   monthSec park:GetMonthDurationInSeconds() (omitted if unknown)
+--   gameMode 'franchise' | 'offline' | 'unknown'
+--   t        whole seconds of the performance timer (now())
+Kin.AutoGate = function(self, oUI, sReq)
+	-- whole seconds: Encode writes other numbers with 6 significant digits
+	local tOut = { park = false, uiMode = "", gameMode = "unknown", t = math.floor(now()) }
+	pcall(function()
+		local Core = self.Core or global.package.loaded["pz2qol.core"]
+		local Send = (Core and Core.StorageSend) or global.package.loaded["pz2qol.storagesend"]
+		local sMode = Send and Send.sLastUIMode
+		if type(sMode) == "string" then
+			tOut.uiMode = sMode
+		end
+	end)
+	pcall(function()
+		local hub = api.planetHub
+		local fn = hub and hub.IsPlayerAnimalMovementEnabled
+		if type(fn) == "function" then
+			local bOk, b = pcall(fn)
+			if bOk and type(b) == "boolean" then
+				tOut.move = b
+			end
+		end
+	end)
+	pcall(function()
+		local tAPIs = self:_ParkWorld()
+		if tAPIs == nil then
+			return
+		end
+		tOut.park = true
+		tOut.gameMode = self:_GameMode(tAPIs)
+		if tAPIs.franchise ~= nil then
+			local franchise = tAPIs.franchise
+			local bBusy = call(franchise, "IsDatabaseOperationInProgress")
+			if type(bBusy) == "boolean" then
+				tOut.dbBusy = bBusy
+			end
+			-- evidence for "offline" (Auto mode acts without a click only
+			-- then): the hub type and its Franchise constant are both known,
+			-- and the zoo has no Franchise zoo GUID (Kin._ZooKey's test)
+			local bKnown = false
+			pcall(function()
+				bKnown = franchise.PlanetHubType_FranchiseOnline ~= nil and franchise:GetPlanetHubType() ~= nil
+			end)
+			tOut.hubTypeKnown = bKnown
+			local bOk, g = pcall(function() return franchise:GetCurrentZooGUID() end)
+			if bOk then
+				tOut.franchiseZoo = g ~= nil and g ~= "" and g ~= 0
+			end
+		end
+		local park = tAPIs.park
+		local nMax, nNow = call(park, "GetTradeCentreMaxCapacity"), call(park, "GetNumberOfAnimalsInTradeCentre")
+		if type(nMax) == "number" then
+			tOut.tcMax = nMax
+		end
+		if type(nNow) == "number" then
+			tOut.tcCount = nNow
+		end
+		-- the park calendar (Auto mode's schedule): the real date, not the
+		-- apparent one the player's time slider can override
+		local oDate = call(park, "GetTimeOfMonth")
+		if oDate ~= nil then
+			pcall(function()
+				if type(oDate.Valid) == "function" and oDate:Valid() == false then
+					return
+				end
+				local nY, nM, nP = oDate:Year(), oDate:Month(), oDate:Prop()
+				if type(nY) == "number" and type(nM) == "number" and type(nP) == "number" then
+					tOut.year, tOut.month, tOut.monthProp = nY, nM, nP
+				end
+			end)
+		end
+		local nMonthSec = call(park, "GetMonthDurationInSeconds")
+		if type(nMonthSec) == "number" then
+			tOut.monthSec = nMonthSec
+		end
+	end)
+	pcall(mark, "auto_gate")
+	pcall(oUI.TriggerEventAtNextAdvance, oUI, "PZ2QoL_AutoGateResult", sReq, Kin.Encode(tOut))
+end
+
+-----------------------------------------------------------------------
 -- Wiring
 -----------------------------------------------------------------------
 Kin.Attach = function(self, oUI)
@@ -2586,6 +2678,9 @@ Kin.Attach = function(self, oUI)
 		end), self)
 		oUI:AddEventListener("PZ2QoL_KinForget", 0, guard("forget", function()
 			self.tLastSent[oUI] = nil
+		end), self)
+		oUI:AddEventListener("PZ2QoL_AutoGate", 1, guard("auto_gate", function(sReq)
+			self:AutoGate(oUI, sReq)
 		end), self)
 	end)
 	if not bOk then

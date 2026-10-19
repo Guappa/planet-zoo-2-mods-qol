@@ -2303,6 +2303,15 @@ Lister._Step = function(self, tRun, t)
 				end
 			end
 			log("untradeable", runFields(tRun, { src = tData.sSrc, problems = table.concat(tKeys, ","), reason = sReason }))
+			-- the game won't list it (e.g. NoBirthZoo) but allows the run's
+			-- "If refused" quick action now: the same fallback as a server
+			-- refusal (developer, 2026-10-19; nothing was sent for it)
+			local tFb = tRun.sOnRefused ~= nil and self.tQuickModes[tRun.sOnRefused] or nil
+			if tFb ~= nil and type(tData.tQuick) == "table" and tData.tQuick[tFb.sFlag] == true
+				and (tRun.nRefusedMax == nil or (tRun.nRefusedTried or 0) < tRun.nRefusedMax) then
+				local sWhy = (type(sReason) == "string" and sReason ~= "") and compactReason(sReason) or "The game does not allow listing it."
+				return self:_Refused(tRun, "Not listed: " .. sWhy)
+			end
 			return self:_Skip(tRun, "untradeable", (type(sReason) == "string" and sReason ~= "") and sReason or nil)
 		end
 		local tRes = tRun.tResults[tRun.nIndex]

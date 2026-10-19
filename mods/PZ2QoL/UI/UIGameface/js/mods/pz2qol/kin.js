@@ -46,6 +46,9 @@ export const DEFAULT_KIN_SETTINGS = Object.freeze({
     boxedAlert: true,
     boxedAfterS: 10,
     boxedIncludeTrade: false,
+    // boxrelease.js / pz2qol.boxrelease.lua: let out aquarium animals the
+    // game boxed and left in the box (hands-free, Franchise too)
+    releaseBoxed: true,
     // a sick or injured animal the mod sends to the trade centre goes to a
     // quarantine first (the market refuses it); kinmoves.js, kinquarantine.js
     quarantineSick: true,
@@ -358,6 +361,17 @@ export function markKinActive() {
     const wasIdle = now > activeUntil;
     activeUntil = now + 3000;
     if (wasIdle) requestKinScan('active');
+}
+
+// Auto mode's own run in flight: pairs it creates for a moment (a swap half
+// done) are not news for the alerts (kinalerts.js). null (the default, and
+// whenever no species is on Auto): every pair is shown as before.
+let alertFilter = null;
+export function setKinAlertFilter(fn) {
+    alertFilter = typeof fn === 'function' ? fn : null;
+}
+export function getKinAlertFilter() {
+    return alertFilter;
 }
 
 // ----------------------------------------------------------------- actions

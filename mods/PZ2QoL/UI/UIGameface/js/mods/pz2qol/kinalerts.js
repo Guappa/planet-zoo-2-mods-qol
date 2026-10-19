@@ -10,7 +10,7 @@
 // to the log only (getLifeLog); births never pop up.
 // Display only; the buttons do what the game's own controls do, one click
 // one action.
-import { getKinSettings, onKin, setContraception } from '/js/mods/pz2qol/kin.js';
+import { getKinAlertFilter, getKinSettings, onKin, setContraception } from '/js/mods/pz2qol/kin.js';
 import { newRisks, relationWord, SEVERITY_INFO, Sex, habitatsAtRisk, countsExcluding, riskHabitatsExcluding } from '/js/mods/pz2qol/kincore.js';
 import { sexSymbol, placeOf } from '/js/mods/pz2qol/kinui.js';
 import { openKinPlanner } from '/js/mods/pz2qol/kinplanner.js';
@@ -285,10 +285,23 @@ function onModel(model) {
             }
             return;
         }
-        const fresh = newRisks(previous, model, { includeKin: settings.alertKin, muted }).filter(p => {
+        let fresh = newRisks(previous, model, { includeKin: settings.alertKin, muted }).filter(p => {
             const t = seen.get(p.key);
             return t == null || now - t > SEEN_MS;
         });
+        // Auto mode's own run in flight (kin.js setKinAlertFilter); none
+        // while no species is on Auto
+        const quietFilter = getKinAlertFilter();
+        if (quietFilter) {
+            fresh = fresh.filter(p => {
+                try {
+                    return !quietFilter(p);
+                }
+                catch (e) {
+                    return true;
+                }
+            });
+        }
         remember(watched, now);
         const byHab = new Map();
         for (const p of fresh) {

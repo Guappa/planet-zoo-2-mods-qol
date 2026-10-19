@@ -17,13 +17,14 @@ import { installKinStorage } from '/js/mods/pz2qol/kinstorage.js';
 import { installKinPlanner } from '/js/mods/pz2qol/kinplanner.js';
 import { installKinAlerts } from '/js/mods/pz2qol/kinalerts.js';
 import { installBoxedAlerts } from '/js/mods/pz2qol/kinboxed.js';
+import { installBoxRelease } from '/js/mods/pz2qol/boxrelease.js';
 import { installQuarantineAlerts } from '/js/mods/pz2qol/kinquarantine.js';
 import { installHudLauncher } from '/js/mods/pz2qol/hudlauncher.js';
 import { installStorageSend } from '/js/mods/pz2qol/storagesend.js';
 import { installTradeJump } from '/js/mods/pz2qol/tradejump.js';
 import { installStorageFetch } from '/js/mods/pz2qol/storagefetch.js';
 
-export const VERSION = '3.0.2';
+export const VERSION = '3.1.0';
 
 // Debug builds: tell Lua how far the page got (written to dbg/trace.log).
 const trace = breadcrumb;
@@ -51,6 +52,7 @@ step('Styles', () => {
     loadCSS('mods/pz2qol_kinplanner');
     loadCSS('mods/pz2qol_kinmates');
     loadCSS('mods/pz2qol_hud');
+    loadCSS('mods/pz2qol_autopilot');
 });
 step('Storage filters', installListFilter);
 step('Select-all guard', installSelectAllGuard);
@@ -68,6 +70,7 @@ step('Kin in Animal Storage', installKinStorage);
 step('Kin planner', installKinPlanner);
 step('Kin alerts', installKinAlerts);
 step('Boxed animal alerts', installBoxedAlerts);
+step('Stuck aquarium animals', installBoxRelease);
 step('Quarantine notices', installQuarantineAlerts);
 // in the park: one-click Species board and the autosave control
 step('Park launcher', installHudLauncher);
@@ -84,6 +87,13 @@ step('Species board', () => {
             if (m.installSpeciesBoard() === false) reportError('mod', 'Species board not installed', 'The game UI did not look as expected.', { silent: true });
         })
         .catch(e => reportError('mod', 'Species board failed to start', e));
+});
+// Auto mode (per species, on the Species board): its own module, so a
+// broken Auto mode never stops the board or the rest of the mod
+step('Auto mode', () => {
+    import('/js/mods/pz2qol/kinautoui.js')
+        .then(m => m.installAutopilotUI())
+        .catch(e => reportError('mod', 'Auto mode failed to start', e, { silent: true }));
 });
 // Market desk: list many storage animals at once (its own module, so a
 // broken desk never stops the rest of the mod)
