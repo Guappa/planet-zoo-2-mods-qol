@@ -86,6 +86,11 @@ Lister.tQuickModes = {
 	release = { sNative = "StorageUIReleaseAnimalsToWild", sFlag = "bRelease", sWhy = "sReleaseReason", sDone = "released", sVerb = "Released", sSending = "Releasing it to the wild." },
 }
 Lister.nQuickTimeout = 10    -- s: max(10, 3 x the slowest list update Phase 0b saw, 0.343 s)
+-- s after a quick send before the storage list is first read: reading it
+-- while the game rebuilds it crashed the game natively (access violation in
+-- GetDataStoreContextAsTable, Y: 2026-10-18 20:20, dump 3f4d438e: the third
+-- quick trade of a run, at the 250 ms look; the row leaves at ~0.33 s)
+Lister.nQuickFirstLook = 1
 Lister.nQuickErrWait = 3     -- s: a database error during the wait shortens it to this
 Lister.nQuickMissStop = 2    -- animals in a row without a fresh page report that stop a quick run
 Lister.nMaxKeys = 5000       -- per Resolve
@@ -1525,12 +1530,13 @@ end
 -- with its look than at the send), "unreadable" (loading, or another count).
 -- _QuickGone waits until gone reads twice in a row, or stops at the deadline.
 Lister._QuickState = function(self, tCur)
-	local tList = self:_List()
-	if tList == nil then
-		return "unreadable"
-	end
+	-- the cheap flag first: the list itself is not read while it loads
 	local ctx = context("hubAnimalsData", "network")
 	if ctx ~= nil and element(ctx, "loadingItems") == true then
+		return "unreadable"
+	end
+	local tList = self:_List()
+	if tList == nil then
 		return "unreadable"
 	end
 	local nRows = 0
@@ -1584,7 +1590,11 @@ Lister._End = function(self, tRun, sPhase, sMessage)
 	if tCur ~= nil and tCur.bSent and tQ ~= nil then
 		-- a quick animal sent: one last look at the list
 		local tRes = tRun.tResults[tRun.nIndex]
-		local bOk, sState = pcall(self._QuickState, self, tCur)
+		-- not while the game may still be rebuilding the list (nQuickFirstLook)
+		local bOk, sState = false, nil
+		if now() - (tCur.nSentAt or 0) >= self.nQuickFirstLook then
+			bOk, sState = pcall(self._QuickState, self, tCur)
+		end
 		if bOk and sState == "gone" then
 			tRes.status, tRes.kind, tRes.detail = tQ.sDone, nil, ""
 			mark(tResultMarks[tQ.sDone])
@@ -2500,6 +2510,9 @@ end
 -- run stops. Ambiguous: the run stops.
 Lister._QuickGone = function(self, tRun, tCur, t)
 	local tQ = self:_Q(tRun)
+	if t - tCur.nSentAt < self.nQuickFirstLook and t < tCur.nDeadline then
+		return
+	end
 	if t - tCur.nLastPoll < self.nConfirmPoll and t < tCur.nDeadline then
 		return
 	end
