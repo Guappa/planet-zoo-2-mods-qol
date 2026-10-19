@@ -15,7 +15,7 @@ local ipairs   = global.ipairs
 
 local Core = module(...)
 
-Core.sVersion = "3.0.1"
+Core.sVersion = "3.0.2"
 Core.bBooted = false
 
 -- lower-cased module name -> list of patch functions(tModule)

@@ -270,7 +270,7 @@ end
 -- exhibits:GetAllAnimalIDs during the intro, 2026-10-15).
 Kin._ParkWorld = function(self)
 	local oHM = self.oHeatMapManager
-	if oHM == nil or self.nLastTick == nil or now() - self.nLastTick > self.nTickFresh then
+	if self.bStartScreen or oHM == nil or self.nLastTick == nil or now() - self.nLastTick > self.nTickFresh then
 		return nil
 	end
 	local t = oHM.tWorldAPIs
@@ -279,6 +279,20 @@ Kin._ParkWorld = function(self)
 	end
 	mark("kin_park_world")
 	return t
+end
+
+-- The start screen (hub world) came up or went away (pz2qol.hub.lua). Exit to
+-- the main menu never shuts the park's HeatMapManager down, so its last tick
+-- stays "fresh" for nTickFresh: a scan asked for in that second called
+-- exhibits:GetAllAnimalIDs on the unloaded park and crashed natively (Y:
+-- 2026-10-18 21:05:57, dump 6d5c0b58, 0.5 s after StartScreenHUD.Activate).
+Kin.SetStartScreen = function(self, bActive)
+	self.bStartScreen = bActive and true or false
+	if bActive then
+		self.nLastTick = nil
+		self.tJob = nil
+		mark("kin_start_screen")
+	end
 end
 
 Kin._ParkAPIs = function(self)

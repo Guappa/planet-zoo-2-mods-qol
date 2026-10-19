@@ -23,7 +23,7 @@ import { installStorageSend } from '/js/mods/pz2qol/storagesend.js';
 import { installTradeJump } from '/js/mods/pz2qol/tradejump.js';
 import { installStorageFetch } from '/js/mods/pz2qol/storagefetch.js';
 
-export const VERSION = '3.0.1';
+export const VERSION = '3.0.2';
 
 // Debug builds: tell Lua how far the page got (written to dbg/trace.log).
 const trace = breadcrumb;

@@ -1,4 +1,4 @@
-# Mike's QoL Toolbox for Planet Zoo 2 (version 2.1.0)
+# Mike's QoL Toolbox for Planet Zoo 2 (version 3.0.0)
 
 *Breeding, market, storage and park quality-of-life tools for Planet Zoo 2, formerly Genes & Gold
 (and PZ2QoL before that). Installs as `Win64\ovldata\PZ2QoL`.*
@@ -30,8 +30,229 @@ time.
 
 ## Changelog
 
-### Unreleased
+### 3.0.2
 
+- Fixed: a game crash when exiting a park to the main menu. The inbreeding check could run in
+  the second after the park closed; it now stops as soon as the main menu comes up.
+
+### 3.0.1
+
+- Fixed: a game crash during a Market desk run that quick-trades listings the server refuses.
+  After each quick trade the desk now waits a second for Animal Storage to update before
+  checking that the animal left.
+
+### 3.0.0
+
+**Market and Animal Storage**
+- **Market desk**: list many animals at once. Filters (sex, age, fertility, rating, gene range,
+  per-gene ranges, keep the best N males and females, Keep tag, Kin, price), Tick all, live state
+  and result per animal, Stop and Retry. Always shows all of your storage.
+- **Quick trade and Quick release from the desk**, behind a confirmation that names every animal
+  and the total. Runs one animal at a time and stops on anything unexpected. Optionally quick-trades
+  (or releases) listings the server refuses. **Check storage** finds out what the game allows for
+  each animal. It never sells anything.
+- Plain-language reasons when the game or server won't trade an animal (sick, injured, not born in
+  a player zoo, pregnant...). Pregnant animals are never listed.
+- Listings go through the game's own listing call, by animal id. Animals the game can't identify are
+  flagged and never mixed up.
+- Prices: colour morphs are priced against their own morph; appeal no longer affects prices.
+- Fixed: every listing skipped with "the game didn't select it".
+
+**Breeding programme**
+- New optimiser: exact best pairs per habitat, a much wider search, a progress bar, and the same plan
+  every time for the same zoo.
+- **Deep optimiser** (Classic or Deep with Quick to Marathon presets, or Custom), with a CPU-use
+  setting. Runs in the background with Stop and Continue, and is never worse than Classic.
+- **Group make-up** per species (pairs, 1:2 to 1:5, harem, mixed), read from the game and
+  adjustable. Thin out follows it.
+- Pregnant animals are never moved by a plan. Contraception advice comes with a one-click
+  Contraception button.
+- Animals at the vet, in quarantine or in transit still count in their habitat and are never moved.
+- Fixed: plans going over a species' group limit (e.g. 1 ♂ + 2 ♀ Sumatran tigers).
+
+**Species board**
+- The trade centre is pinned on the right. In Franchise it also lists your stored adults.
+- **Bring <species> to the trade centre**: ticks that species in Animal Storage and sends it to
+  the zoo with the game's own Send to Zoo (3 s countdown, Cancel).
+- **Storage** and **Market** buttons for the species (also in Find a mate), and **Show in park**
+  for habitats and exhibits.
+- The pause between moves defaults to 0.5 s.
+- Fixed: a pinned habitat showing as a number after a restart.
+
+**Kin**
+- One alert per habitat, **Mute <species>**, and optional growing-up alerts with Needs you /
+  Heads-up levels.
+- **Find a mate** includes your stored adults (Franchise). Compare Mates shows kin badges on them.
+- A note for boxed animals with nowhere to go, with Locate and Find a habitat.
+- Sick animals bound for the trade centre go to quarantine first.
+- Species names appear in your game's language.
+- Lighter on big flocks.
+- Fixed: the kin card ran off the screen.
+
+**General**
+- Kin settings, pauses and Breeding programme choices are kept after the game closes (in the player
+  save, in every zoo).
+
+#### 3.0.0 in detail
+
+- **Animals away for a while still count.** An animal at the vet, in a quarantine or being carried counts in its own habitat on the Species board, in the Breeding programme and in Thin out (tagged "at the vet" etc.). It is never moved while it's away.
+- **Market desk: clearer and more reliable.**
+  - When the game won't trade an animal (infected, injured, infertile, pending transport, adoption terms...), the desk says why in plain words, keeps it unticked, and **Tick all** skips it. **Read storage again** checks again.
+  - A refusal from Frontier's server without a reason is explained, with a later retry suggested.
+  - The **Market desk** button now sits on the storage bar, under the Market lister switch.
+- **Market desk: a Quick trade category and Check storage.**
+  - Some animals can't go on the market (for example "Animal was not born in a player zoo"), but the game's **Quick trade** or **Quick release** takes them. The desk now shows them as their own category, **Quick trade**, with what the game offers and for how much ("Quick trade · $1,200", "Quick release · 85 CC"). They are never counted as sellable, never ticked by **Tick all** and never listed. Animals the game offers only **Rehome** for show "Rehome only".
+  - **Show** has a fifth choice, **Quick trade**; the species list and the header count them.
+  - The game says what an animal allows only once it is selected, so the desk learns it from every listing run and from the new **Check storage** button ("Check storage (N not checked, ≈ M min)"). Check storage selects each not-yet-checked animal of the species shown in Animal Storage, one at a time, and notes what the game allows. **It never sells, lists or sends anything**; Stop ends it at once, and the selection is cleared at the end. **Read storage again** forgets the categories and checks afresh.
+  - Animals that came from a Frontier zoo (the storage list says so) show as **Quick trade (from the storage list)** before they are checked; each one is still checked before anything is sent.
+- **Market desk: Quick trade and Quick release from the desk.** The right panel has a switch: **List on market | Quick trade | Quick release**. It always opens on List.
+  - In a quick mode the panel turns red and says what it does ("QUICK TRADE · sells for cash at once · can't be undone"). Every animal the game allows the action for can be ticked, market-listable ones included (not one on the market, being moved, or offered only Rehome). **Show: Quick trade** still lists just the ones the market won't take.
+  - **Animals the server refused to list**: the run card offers "Quick trade the N refused", and Quick trade mode a "Tick the N refused by the server" button. Some animals (in testing, a batch of Sumatran tigers) are refused by Frontier's server every time, by the game's own Trade too, but can be quick-traded.
+  - **When the server refuses a listing: Leave it / Quick trade / Release** (next to Duration; remembered in the player save; Leave it by default). With Quick trade or Release, an animal the server refuses during a List run is quick-traded (or released) in the same run, right after the refusal, if the game allows it then; the same checks as a quick run, and the run stops on anything unexpected. Only a server refusal counts, never a timeout or any other failure. An animal bought for cash is never released. Before Quick release's first confirmed run, only one animal per run is released. The panel and the List button say so before you click ("Refused ones: quick-traded at once (permanent)", "List 28 animals · refused → quick trade"); the run card counts them apart ("Listed 16 of 28; quick-traded 12 after refusal").
+  - The button ("Quick trade 7 animals ($8,400)…") opens a confirmation: every animal that will go (12 names, then "and N more"), the ticked ones that will be skipped and why, the exact total, and "These animals leave your storage for good. This can't be undone." Press **Quick trade now** / **Release now** (or Enter, or the gamepad's A); Cancel or Esc sends nothing.
+  - The run takes exactly the animals the confirmation showed, one at a time: each is selected, checked again (the game must allow it right now), sent with the same call the game's own Confirm makes, and counted as done only once it has left Animal Storage. A pause (at least 1 s) follows each one.
+  - **A quick run STOPS on anything unexpected**, unlike listing, which skips and carries on: an animal still in storage 10 s after sending ("not confirmed: check storage"), an animal that can't be told apart from another, no fresh reading of the selection twice in a row, a page reload ("Stopped: page reloaded"), or a mod error. It also stops if the selection or the storage list changed just before sending, or the game stayed busy. Only "the game doesn't allow it now" skips that animal and goes on. Stop ends the run after the current animal.
+  - While the game rebuilds Animal Storage after a quick trade, the animal can look half gone for about a second; the desk waits that out and counts it once it has really left.
+  - **Quick release, first time: one animal.** Quick trade is proven in game and takes several at once. Until one quick release of a single animal has been confirmed gone, Quick release takes one animal at a time ("First quick release: one animal, to check it works"). This is remembered in the player save.
+  - Debug builds also log the game's own Quick trade and Quick release buttons, without changing them.
+- **Quarantine sick animals first** (Kin settings, on by default): an infected or injured animal the mod sends to the trade centre goes to a quarantine first, because the market won't take it. When it passes, a notice offers **Send to trade centre**.
+- **Inbreeding alerts: one per habitat.** New related pairs in the same habitat, at once or while its alert is open, are counted in one alert ("3 inbreeding risks").
+- **Settings are kept.** The Kin settings and the pause between moves now survive a restart.
+  They are kept in the player save, like the optimiser choice, the same in every zoo. Before, they
+  reset whenever the game closed. **Animals growing up** is now off by default, and **Pop up for**
+  defaults to **Needs you**. Both are still in the same settings menu.
+- **Prices ignore appeal.** An animal's appeal on the market is its species' appeal, lowered by
+  how well the seller's zoo keeps it right now, so it says nothing about the animal itself. Within
+  a medal the price advisor now goes by the genes again, as it did before appeal was added.
+- **Breeding programme: a Deep optimiser.** The **Optimiser** button in the programme picks
+  **Classic** (the search so far, a few seconds) or **Deep**. Deep runs many more searches
+  ("starts") after the Classic plan, with exact repairs of two habitats at a time, so it is never
+  worse than Classic. On test zoos of 70–100 breeders, Classic was on average 2.6 % short of the
+  best known plan (up to 14 %); 30 s of Deep cut that to 0.6 %. On the two benchmark zoos where an
+  exact solver proved the best plan and Classic missed it, Standard finds it.
+  - Presets: Quick (4 starts), Standard (12), Thorough (32), Extreme (128, longer starts), Marathon
+    (1,024, until done or Stop), or Custom (up to 4,096 starts, effort, repair, time limit, stop
+    early). Every preset starts by itself when you open the programme with Deep chosen (a search running for another species is never stopped for it); **Run deep search** starts it again,
+    which shows an estimate.
+  - **CPU use** (Gentle, Light, Normal, Full) sets how much of the game's frame time the search
+    takes, for Classic too.
+  - Deep runs in the background: close the panel or the board and it carries on (the Breeding
+    programme button shows its progress). **Stop** keeps the best plan so far and **Continue**
+    picks it up again with the same result. A plan run (Execute) of that species stops it; a new
+    park drops it. A birth doesn't spoil a result; a breeder moving marks it "the breeders
+    changed".
+  - Your choice is kept as your default in every zoo, Franchise included (the player save, like
+    habitat assignments; nothing goes to Frontier).
+- **Market desk: animals the game won't identify.** In some Franchise saves the game gives the
+  listing engine no id for most storage animals, so a desk run of 39 ticked animals listed only 3
+  without saying why. The engine now also accepts the other id shapes the game returns, and for an
+  animal with no id at all it recognises it by what its row shows (species, name, sex, age, rating,
+  appeal, colour morph, genes) when no other animal in storage looks the same. Rows it still
+  can't identify show "No id from the game", can't be ticked and don't count in "List N"; a run
+  that holds fewer animals than you ticked says so ("Listing 3 of 39: 36 couldn't be identified by
+  the game"), and the summary repeats it. An animal is never listed when it can't be told apart
+  from another one right before the listing is sent. The desk also stops asking the game about
+  these animals every second.
+- **Pregnant animals are never sold and never moved by a plan.** The market won't take a pregnant
+  animal until she gives birth, so the Market desk shows her as "Pregnant: not until she gives
+  birth" (not under Sellable, never ticked by Tick all, never listed), the price panel's Sell
+  leaves her out (and says so), and the listing engine itself refuses one. On the Species board
+  the Breeding programme, Suggest fixes and Thin out never move a pregnant animal: she stays in
+  her habitat, still counts in her group, and the programme can bring partners to her. If you
+  drag her yourself the board allows it (the game does) and warns you; a pregnant move that came
+  from a plan is skipped when the plan runs.
+- **Breeding programme: contraception advice for pregnant females.** Under each habitat the
+  programme now says when a pregnant female should get contraception once she has given birth,
+  and why: no male in her habitat now or after the plan (a young male who grows up within 2 years
+  counts), only related males, genes at least 10 points below the other breeding females there
+  (e.g. "weakest genes in the group (52 vs median 71)"), or more females than the males can breed
+  under the group make-up and she is the weakest. A **Contraception** button sets it with one
+  click (the game's own toggle, that animal only). Nothing is set by itself.
+- **Species board: the trade-centre column also lists your stored adults** (Franchise). Under the
+  animals in your zoo's trade centre, a read-only **In Animal Storage (adults)** group shows the
+  adults of that species in your Animal Storage, with their relatives in your zoo named on the
+  card (hover one to light them up; no inbreeding badge, since a stored animal can't breed), and the column head says e.g. "3 here · +5 in
+  storage". Why the board showed fewer animals than Animal Storage: the park only sees the
+  stored animals that still exist in the park itself; the rest are records in the hub. The
+  game shows the park only the stored adults, so stored young are not listed. They can't be
+  dragged (a move needs an animal in the park); each card has a **Storage** button that opens
+  Animal Storage on that species. The first 6 show, then "N more". Read when you open the board,
+  pick a species or press Rescan.
+- **The Market desk always shows all of your storage.** When Animal Storage was filtered (to one
+  species, or by a search), the desk's species list showed only what that filter let through. Now
+  the desk clears the storage screen's filters while it is open (the same as the screen's own
+  Reset filters button) and puts them back when you close it, or when a listing run still going
+  ends. It starts on the species the screen was filtered to (or the one the Species board's
+  Storage button picked), with every other species on the left. If the game does not answer, the
+  desk shows what it can and says that storage is filtered.
+- **Find a mate looks in your Animal Storage too** (Franchise). The Kin planner's **Find a mate**
+  now also lists the adults in your own Animal Storage (not the market), the same ones the game's
+  Compare Mates offers, ranked with your zoo's animals (unrelated and best young first; on a tie
+  the zoo animal comes first) and tagged **storage** (and **listed** when on the market). Relatives
+  are spotted through the family records as for zoo animals. A **Storage too** switch hides them.
+  Compare Mates in the park now puts kin badges on those stored rows as well. Read-only. Idea: a
+  Nexus comment.
+- **Smarter Kin alerts: growing up.** A note when a young animal will grow up into a problem,
+  with a level that says whether you need to act: **Needs you** (red, stays a minute) when the
+  group will go over the game's limit, when a young male (or female) will be pushed out of its
+  group at maturity, or when it could inbreed with a relative once grown; **Heads-up** when the
+  group will be exactly full, or a youngster not on contraception joins a full group. A contracepted
+  youngster with room in its group gets no pop-up, only a line in the log. You also hear when an
+  animal that just grew up is pushed out of its group. Births never pop up. The existing alerts
+  now carry the same levels (inbreeding risk: Needs you; close kin: Heads-up). Settings: **Animals
+  growing up** and **Pop up for: Needs you | Heads-up too**. Nothing is done for you. Idea: a
+  Nexus comment.
+- **Storage and Market for a species, in one click.** The Species board's header has **Storage**
+  and **Market** buttons for the species you are looking at, plus how many adults of it are in
+  your Animal Storage ("2♂ 3♀ adults in storage", read live from the game when you open the board,
+  pick a species or press Rescan). **Storage** opens the hub's Animal Storage showing only that
+  species (a **"<species> only ✕"** chip in the storage toolbar; click it or Clear to see every
+  animal again); **Market** opens the Market filtered to that species, the way the game's own
+  Zoopedia button does. The game keeps that market filter until you change it, as it does after
+  the Zoopedia button. The same two buttons are in the Kin planner's **Find a mate**. The board or
+  planner closes when the hub opens; the buttons are greyed out, with the reason, when the game
+  would not open the hub (no trade centre, a move plan or Find a habitat running). Animals in your
+  zoo's trade centre are already on the board, in its pinned Trade centre column. Idea: a Nexus
+  comment.
+- **Bring a species from storage to the trade centre.** Stored animals listed at the bottom of the
+  Species board's Trade centre column can't be dragged: the game keeps them in your Animal Storage,
+  not in this zoo. The column now has a **Bring <species> to the trade centre** button. One click
+  opens Animal Storage, shows only that species and ticks every one of them (adults first, as many
+  as there is room for; animals on the market or already on the way are left alone), all behind a
+  "Bringing your <species> to the trade centre" screen so you don't watch the list being worked
+  on. After a 3-second countdown with **Cancel**, it presses the game's own **Send to Zoo** once. Back in the
+  zoo each animal goes to the trade centre, one at a time with your pause. From there you can drag
+  them on the board and the Breeding programme counts them. Anything the game won't take gets an
+  **Open the game's Move screen** button. In Franchise the trade centre's capacity is your whole
+  account's storage, so the board says "storage, all zoos 90/250". Idea: the developer.
+- **Faster plans: the pause between moves now defaults to 0.5 s** (was 1.5 s) and can go as low
+  as 0.5 s. Each move still waits for the game to confirm it first. A pause you set yourself is
+  kept.
+- **Fixed: a pinned habitat showing as a number after a restart.** Saved habitat assignments are
+  now found again by the habitat's name, its animals and the game's habitat id; ones whose habitat
+  is gone are hidden and cleaned up.
+- **Fixed: the kin card running off the right edge of the screen** (e.g. hovering the inbreeding
+  status on the Social welfare tab). It now opens on the side with room and always stays on screen.
+- **Mute a species' alerts** (per zoo): a **Mute <species>** button on every new-risk alert and a
+  **Mute alerts** switch on the Species board. Badges stay; muted species are listed in the
+  planner's settings (click to unmute) and dimmed at the end of the board's species list. Idea:
+  a Nexus comment (100 flamingos, low risk, constant alerts).
+- **Show in park** for habitats and exhibits: in the Kin planner's habitat view and on every
+  habitat column of the Species board, one click moves the camera there and opens its info panel.
+- **Kin is lighter on big flocks.** Scans that change nothing are no longer redrawn, family-tree
+  results are kept between scans, each related pair is worked out once, and the planner's matrix
+  and the Species board no longer rebuild what has not changed.
+- **Colour-morph prices.** An Albino (or any colour morph) is priced against listings of the same
+  morph, and normal animals are no longer priced up by morph listings. The lister shows the morph
+  and the morphs on sale. No extra market check is made.
+- **Boxed animals with nowhere to go:** a Needs-you note after 10 seconds (adjustable), with Locate
+  and a one-click Find a habitat.
+- **Species names in your game's language.** The Species board, Kin planner, habitat cards, Find
+  a habitat, the Market lister and the Market desk now show species names the way the game does
+  (e.g. "Warzenschwein" in a German game, "Common Warthog" in English) instead of internal names
+  ("Warthog Common"). Turn it off in the Kin planner's Settings ("Species names in the game's
+  language") to see the internal names in every language; like the other Kin settings, it resets
+  when the game starts. Thanks to salula1986 for the idea.
 - **Species board: the trade centre is pinned on the right.** It no longer scrolls away with the
   habitats: its animals are always in view, so you can drag them into any habitat (or a habitat's
   animals into it) and see at once who is related to whom. The board is a little wider so the
@@ -128,6 +349,8 @@ time.
 - **Surplus (keep N)**: everything beyond your best N per species and sex. These are trade or
   release candidates.
 - **Gene ≥ N** and **Sort** by gene or breeder score.
+- **"<species> only ✕"** (above the summary): set by the **Storage** button on the Species board
+  or in Find a mate; shows one species until you click it or Clear. It is not saved.
 - A summary line: counts, sexes, pregnant, species, breeding pairs, average gene score.
 - Safety: changing a filter clears the selection, and "select all" only selects the rows you can
   see, so a bulk trade or release never includes hidden animals.
@@ -161,6 +384,12 @@ storage toolbar; listing only starts when you click **Sell**):
     first: listings with the same medal, sex and age group, then the next medal up or down scaled
     by the price ratio seen between those medals, and only then the gene-score fit below; the
     panel names the medal it used and shows the species' prices by medal.
+  - **Colour morphs** (the game's "Colour morph" line, e.g. Albino) come before that: a normal
+    animal is compared only with normal listings, so a few expensive morphs no longer lift its
+    price; a morph is priced from listings of the same morph (3 or more), else of any morph, else
+    from normal listings times the price gap seen between morphs and normal animals (this species,
+    then all species, else a guessed ×2 with low confidence). The panel shows the morph and the
+    morphs on sale. The game shows no hidden (carried) morphs, so those can't be tracked.
   - Price is fitted against gene score with a fit that a few odd listings can't skew, then set 3%
     below the fit so it sells.
   - It's blended with the game's own suggested price when there are fewer than 6 comparables.
@@ -276,16 +505,23 @@ which male and female in the same habitat are related and would inbreed. Collect
   badge on each relative that lives in the same habitat and could breed with this animal.
 - **Kin planner** (from the toolbar, any kin card or an alert): one screen for the whole zoo.
   - **Zoo overview:** every related pair, worst first, grouped by habitat.
-  - **Habitat view:** for each species, a matrix of males × females. Each square shows the relation
+  - **Habitat view:** **Show in park** under the name moves the camera to the habitat or exhibit
+    and opens its info panel, to check and move animals there (the planner shrinks to a bar).
+    For each species, a matrix of males × females. Each square shows the relation
     ("sister", "cousin"), the kinship % and the expected quality of their young (0–100, from the
     game's gene model), coloured by risk; current mates are marked. Click a square for the
     explanation, the expected young's genes and one-click actions; click a name for **Find a
     mate**: every possible partner in the zoo, unrelated first, best expected young first, with
-    where they live.
-  - **Settings:** alerts on/off, alerts for close kin too, show covered pairs, **pair bonds count
+    where they live, and **Storage** / **Market** buttons that open the hub for that species. In a
+    Franchise zoo it also lists the adults in your own Animal Storage (**Storage too** switch),
+    tagged **storage**.
+  - **Settings:** alerts on/off, alerts for close kin too, **animals growing up** (off by
+    default), **pop up for** (Needs you only, the default, or Heads-up too), the muted species (click one to
+    unmute it), show covered pairs, **pair bonds count
     as protection** (on by default; off shows every bonded related pair as a risk, as before), and
-    how distant a relative still counts as close kin (1/8, 1/16 or 1/32 kinship). Plus Rescan and
-    the heat map.
+    how distant a relative still counts as close kin (1/8, 1/16 or 1/32 kinship), and **species
+    names in the game's language** (on by default; off shows the internal names, e.g. "Warthog
+    Common", everywhere in the mod). Plus Rescan and the heat map.
 - **Compare Mates** (in parks and in the hub): every candidate related to the animal you picked
   gets a badge ("Half-sister"), and the offspring box says how the pair is related, including
   cousins the game does not warn about. An optional **Unrelated first** toggle groups the safe
@@ -298,12 +534,18 @@ which male and female in the same habitat are related and would inbreed. Collect
   they would inbreed if housed together"). It never blocks or changes the send.
 - **Species board** (toolbar, or **Plan moves** on any kin card): pick a species and see all
   its habitats side by side as columns of animal cards, plus the suitable habitats it isn't in
-  yet, the trade centre, and animals elsewhere. Hover an animal to light up its relatives across
-  the board. Drag animals (or select them and click a column) to **stage moves into a plan**: the
+  yet, the trade centre, and animals elsewhere. Each habitat column has **Show**, which moves the
+  camera to that habitat and opens its info panel (the board closes). Hover an animal to light up
+  its relatives across the board. Drag animals (or select them and click a column) to **stage moves into a plan**: the
   plan shows its effect before anything happens ("fixes 3 inbreeding risks, creates 0"), and
   **Suggest fixes** proposes the fewest moves that clear a species' risks while keeping animals
   able to breed: it counts fertile, unrelated male–female pairs (no contraception, not infertile),
   never takes a habitat's last breeding pair, and avoids groups of only males or only females.
+  The header shows the species' adults in your Animal Storage and has **Storage** and **Market**
+  buttons that open the hub filtered to the species (the board closes). In a Franchise zoo the
+  trade-centre column also lists those stored adults (read-only, with kin badges; stored young
+  are not shown to the park), below the animals that are in the trade centre itself. The Market filter is the
+  game's own and stays set afterwards, as after the game's Zoopedia button.
 - **Breeding programme** (Species board, next to Suggest fixes): plans the best layout of a
   species' breeders for **genetics**: expected young (the game's gene formula) × the chance of
   conception (the game's own probability). It follows the species' **group make-up** (pairs; one
@@ -318,11 +560,14 @@ which male and female in the same habitat are related and would inbreed. Collect
   small species, and runs a guided search (with a progress bar, in the background) for big ones;
   the same zoo always gives the same plan. The preview shows breeding pairs, related pairs,
   expected young and chance of young before → after, and each habitat's target group ("Make-up
-  2 ♂ 6 ♀ · 1 open"); a slider trades **fewer moves** against **best genetics**.
+  2 ♂ 6 ♀ · 1 open"); a slider trades **fewer moves** against **best genetics** (Best genetics, the default, counts no cost for moving at all; moves that gain nothing are still left out; your last choice is kept for next time).
   **Use this plan** loads it into the normal plan (Execute, one move at a time). Breeders waiting
   at the **trade centre** (bought, or sent there) are part of it: the programme brings them into a
   group where they breed best ("1 from the trade centre"); **Use the trade centre (N waiting)**
   switches that off.
+  **Optimiser**: Classic (a few seconds) or Deep (many starts after the Classic plan, in the
+  background, with Stop and Continue; presets Quick to Marathon, or your own numbers, and CPU
+  use). Kept as your default in every zoo.
 - **Thin out** (Species board): picks who to send to the trade centre (to sell, trade or release).
   Each habitat keeps a target number of adults (its room for the species x **Core only** (just the
   breeding core: 1 male, 2 females) / Strict 55% / Lean 70% / Balanced 85% / Full 100%); over-full
@@ -368,6 +613,23 @@ which male and female in the same habitat are related and would inbreed. Collect
   screen within about 20 seconds, with **Show** and **Contraception** buttons. The game's own
   warning only comes once they have mated. On loading a park you get one summary if there are
   risks already. Alerts can be turned off (or extended to close kin) in the planner.
+  **Growing up:** a youngster about to grow up (within about half a game year) gets a note only
+  when it matters: **Needs you** when the group will go over the game's limit, when it will be
+  pushed out of its group at maturity (contraception does not help there), or when it could
+  inbreed with a relative; **Heads-up** when the group will be exactly full or a fertile
+  youngster joins a full group. Otherwise it goes to the log silently. It also tells you when an
+  animal that just grew up was pushed out of its group. Inbreeding-risk alerts are **Needs you**,
+  close-kin alerts **Heads-up**; **Pop up for** chooses whether heads-ups pop up too.
+  **Mute a species** (e.g. a big flamingo flock) with the alert's **Mute <species>** button or the
+  Species board's **Mute alerts** switch: no more alerts about it in this zoo, while its badges,
+  the planner and the board still show every pair. Muted species are listed (click to unmute) in
+  the planner's settings and sit dimmed at the end of the board's species list.
+- **Boxed with nowhere to go:** when an animal has waited in its transport box for 10 seconds with
+  no destination (outside any habitat, no keeper on the way), a **Needs you** note names it, with
+  **Locate** and **Find a habitat** (one click sends it to the best habitat, the same choice as
+  Find a habitat from storage). The game itself only warns after a long time. In the planner's
+  settings: on/off, after 5 s, 10 s, 30 s or 1 min, and whether animals waiting at the trade
+  centre count (off by default).
 - **Read-only and safe:** Kin only reads. The only things it changes are the ones you click, one
   animal per click, through the same calls the game's own buttons make (contraception, camera).
 

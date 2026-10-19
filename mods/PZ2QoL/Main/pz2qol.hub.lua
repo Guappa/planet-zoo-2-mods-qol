@@ -473,6 +473,11 @@ Hub._PatchStartScreenHUD = function(self, StartScreenHUD)
 			cp("hud_activate")
 			mk("x_ssh_activate")
 			self.oStartScreenHUD = oHUD
+			-- no park APIs from here on (the park may be unloading)
+			local Kin = global.package.loaded["pz2qol.kin"]
+			if Kin and Kin.SetStartScreen then
+				pcall(Kin.SetStartScreen, Kin, true)
+			end
 			local tResult = table.pack(fnActivate(oHUD, ...))
 			mk("x_ssh_activate_done")
 			return table.unpack(tResult, 1, tResult.n)
@@ -484,6 +489,10 @@ Hub._PatchStartScreenHUD = function(self, StartScreenHUD)
 			mk("x_ssh_deactivate")
 			if self.oStartScreenHUD == oHUD then
 				self.oStartScreenHUD = nil
+			end
+			local Kin = global.package.loaded["pz2qol.kin"]
+			if Kin and Kin.SetStartScreen then
+				pcall(Kin.SetStartScreen, Kin, false)
 			end
 			return fnDeactivate(oHUD, ...)
 		end
