@@ -18,6 +18,7 @@ import { TRADE, canMove, isPinned, moveText, simulatePlan } from './kinboardcore
 import { PROGRAMME_DEFAULT_STEP, PROGRAMME_STEPS, isBreeder, planProgramme } from './kinprogramme.js';
 import { FILL_STEPS, cullPlan } from './kincull.js';
 import { Sex, buildKinModel } from './kincore.js';
+import { applyTuning } from './kinprogtune.js';
 
 // How often a species' run comes round, in months of the park's calendar
 // (12 a year, 3 a season): game time, so it stops while the game is paused
@@ -42,8 +43,9 @@ export const AUTO_LIMITS = Object.freeze({
     cooldownYears: 1,           // an animal Auto mode moved stays put this long: as births and
                                 // ageing change the zoo, the programme's best layout shifts, and
                                 // without this it would move some animals back and forth
-    growUpYears: 0.5,           // young this close to growing up count as breeders (they are
-                                // moved away from a parent before they can breed with it)
+    growUpYears: 0.5,           // young this close to growing up count as breeders. 0: off;
+                                // youth is left alone until it is grown (the developer,
+                                // 2026-10-19: young were sent to the trade centre)
     reversalYears: 1,           // a move back to where it left within this counts as a reversal
     reversalsToStop: 2,         // that many reversals in the window: Auto stops for the species
     settleMs: 60000,            // after a zoo loads: watch this long first
@@ -66,13 +68,14 @@ export function normalizeSpecies(raw) {
 }
 
 // The programme's options for these settings (the board's programmeOptions
-// with the same slider step, trade switch and make-up).
-export function programmeOptionsFor(settings, ratio = 'auto', pinIds = null) {
+// with the same slider step, trade switch and make-up, and the player's
+// fine tuning, kinprogtune.js).
+export function programmeOptionsFor(settings, ratio = 'auto', pinIds = null, tune = null) {
     const st = PROGRAMME_STEPS[settings.step] || PROGRAMME_STEPS[PROGRAMME_DEFAULT_STEP];
     const o = { moveCost: st.cost, useTradeCentre: settings.trade !== false, ratio: ratio || 'auto' };
     if (st.outsider != null) o.outsiderCost = st.outsider;
     if (pinIds && pinIds.size) o.pinIds = pinIds;
-    return Object.assign(o, AUTO_SEARCH);
+    return applyTuning(Object.assign(o, AUTO_SEARCH), tune);
 }
 
 export function fillOf(settings) {
@@ -155,7 +158,7 @@ export function prepareAutoRun(input) {
         prep.model = simulatePlan(model, out.moves, destinations);
         for (const m of out.moves) prep.pins.add(m.id);
     }
-    prep.model = projectGrownUp(prep.model, species, info, AUTO_LIMITS.growUpYears);
+    if (AUTO_LIMITS.growUpYears > 0) prep.model = projectGrownUp(prep.model, species, info, AUTO_LIMITS.growUpYears);
     return prep;
 }
 
@@ -207,10 +210,18 @@ export function finishAutoRun(input, prep, programme) {
     const { out } = prep;
     out.programme = programme || null;
     const model = input.model;
-    // (young about to grow up count as breeders here: one with no place in
-    // a group goes to the trade centre rather than grow up next to a parent;
-    // the soak's inbred births went from 0 to 5 % when they stayed)
-    for (const m of (programme && programme.moves) || []) addMove(prep, model && model.animals.get(String(m.id)), m.to, m.reason || 'breeding programme', 'programme');
+    // (young about to grow up count as breeders here, so the programme can
+    // place them in another group before they can breed with a parent; but
+    // youth is left alone otherwise: a juvenile never goes to the trade
+    // centre, the developer 2026-10-19)
+    for (const m of (programme && programme.moves) || []) {
+        const a = model && model.animals.get(String(m.id));
+        if (a && a.juv && m.to === TRADE) {
+            out.held.push({ id: a.id, why: 'young: stays until grown up' });
+            continue;
+        }
+        addMove(prep, a, m.to, m.reason || 'breeding programme', 'programme');
+    }
     keepLastBreeders(input, out);
     if (out.held.some(x => x.why === 'the trade centre is full')) out.notes.push('The trade centre is full: some animals stay until there is room (sell or release the ones waiting there).');
     const idle = programme && programme.after ? programme.after.idle || 0 : 0;
@@ -252,7 +263,7 @@ export function planAutoRun(input) {
     if (!input.model || !input.species) return prep.out;
     const r = planProgramme(prep.model, input.species, input.info || {}, input.destinations || null, {
         assignments: input.assignments || null,
-        options: programmeOptionsFor(prep.settings, input.ratio || 'auto', prep.pins),
+        options: programmeOptionsFor(prep.settings, input.ratio || 'auto', prep.pins, input.tune || null),
     });
     return finishAutoRun(input, prep, r);
 }

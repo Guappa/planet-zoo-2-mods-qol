@@ -116,4 +116,27 @@ test('sellable filter: off by default, yes and no split the list', () => {
     assert.deepEqual(ids(stock.filter(isSellable)), yes);
     // combines with other filters
     assert.deepEqual(ids(applyStorageFilters(stock, f({ sellable: 'no', juveniles: true }))), ['infant']);
+    // a pregnant animal is never under Sellable, even a fertile adult one
+    assert.deepEqual(ids(applyStorageFilters(stock, f({ sellable: 'yes', pregnant: true }))), []);
+    assert.deepEqual(ids(applyStorageFilters(stock, f({ sellable: 'no', pregnant: true }))), ['pregnant']);
+    assert.equal(isSellable({ maturity: Maturity.YoungAdult, isPregnant: true }), false);
+});
+
+test('species: one species only (the trade shortcuts), off by default', () => {
+    assert.equal(DEFAULT_STORAGE_FILTERS.species, '');
+    assert.equal(storageFiltersActive(f({})), false);
+    assert.equal(storageFiltersActive(f({ species: 'Lion' })), true);
+    const zoo = [
+        { id: 'l1', species: '[Animal_Lion]', gender: 0, maturity: 2, genes: { size: 0.3, longevity: 0.3, fertility: 0.3, immunity: 0.3 } },
+        { id: 't1', species: '[Animal_Tiger]', gender: 0, maturity: 2, genes: { size: 0.9, longevity: 0.9, fertility: 0.9, immunity: 0.9 } },
+        { id: 'l2', species: '[Animal_Lion]', gender: 1, maturity: 0, genes: { size: 0.8, longevity: 0.8, fertility: 0.8, immunity: 0.8 } },
+        { id: 'a1', species: '[Animal_Leopard_African]', gender: 1, maturity: 2, genes: {} },
+    ];
+    assert.deepEqual(ids(applyStorageFilters(zoo, f({ species: 'Lion' }))), ['l1', 'l2']);
+    assert.deepEqual(ids(applyStorageFilters(zoo, f({ species: 'lion' }))), ['l1', 'l2'], 'case-insensitive');
+    assert.deepEqual(ids(applyStorageFilters(zoo, f({ species: '[Animal_Lion]' }))), ['l1', 'l2']);
+    assert.deepEqual(ids(applyStorageFilters(zoo, f({ species: 'Leopard_African' }))), ['a1']);
+    assert.deepEqual(ids(applyStorageFilters(zoo, f({ species: 'Lion', adults: true }))), ['l1'], 'with Adults');
+    assert.deepEqual(ids(applyStorageFilters(zoo, f({ species: 'Lion', sort: 'gene' }))), ['l2', 'l1'], 'with a sort');
+    assert.deepEqual(ids(applyStorageFilters(zoo, f({ species: 'Zebra' }))), []);
 });

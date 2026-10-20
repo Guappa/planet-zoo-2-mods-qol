@@ -37,7 +37,8 @@
 - `Editors.Shared.BaseUIMode.SetNewMode(sMode, tParams)` is a plain module function every in-park
   mode change goes through (`RequestNewModeWithCallback` → `ModeHelperComponent:OnModeEvent`); callers
   look it up as `BaseUIMode.SetNewMode` each time, so wrapping the module field intercepts them.
-  PZ2QoL StorageSend wraps it (`send_patched`). **offline**
+  PZ2QoL StorageSend wraps it (`send_patched`) and records the last mode name
+  (`StorageSend.sLastUIMode`, read by `Kin.AutoGate`). **offline**
 - `PZ2QoL.Guards` holds fail-soft wraps of vanilla functions that crash: currently
   `AnimalMovementEditMode.SetupAnimalMovementContext` (see `debugging.md`).
 
@@ -96,9 +97,26 @@
     raises an error; `SetData` creates missing levels. `SetData(nil, ...)` removes a key. **offline**
   - **PZ2QoL layout:** `tData.PZ2QoL.Assign[<zoo key>] = { S = "<write seq>", N = "<parts>",
     P1..Pn = <= 4000-char strings }` holding the UI's ASCII JSON (keys: `kinAssign` habitat
-    assignments, `kinRatio` the breeding programme's make-up per species). Total cap 64 KB over all zoos:
+    assignments, `kinRatio` the breeding programme's make-up per species, `kinMute` species whose kin alerts are muted). Total cap 64 KB over all zoos:
     the zoos written longest ago are dropped first; one zoo over the cap is refused (Kin also caps
     one zoo at 60 KB). `""`/`"{}"` removes the zoo's entry.
+  - **Prefs area (player-wide settings, 2026-10-18, offline):** `tData.PZ2QoL.Prefs = { S, N,
+    P1.. }`, the same chunked printable-ASCII JSON object, one set for the player across all zoos
+    (e.g. the breeding programme's optimiser choice). Own cap **4 000 characters**; a separate key
+    beside `Assign`, so the zoos' 64 KB cap/trim, `""`/`"{}"` zoo removals and `Cleanup` never touch
+    it (tested). `PlayerStore:ReadPrefs()` → text (`""` when none) or `nil, "noplayer"`;
+    `PlayerStore:WritePrefs(sText, nNow)` → `true` or `false, bad|toobig|noplayer|failed`;
+    `""`/`"{}"` removes it. A write uses the same `_Changed` → delayed `RequestSaveMainPlayer` as the
+    assignments. **Pitfall:** that delayed save runs only from the park tick (`Kin._StoreTick`); a
+    write made in the hub stays in the player table until the next park tick or the game's own
+    player save. Events (Kin, any view, no zoo key needed): `PZ2QoL_PrefsLoad(req)` →
+    `PZ2QoL_PrefsData(req, ok, text)` (one event; `ok = false` with `noplayer`/`unavailable` as the
+    text) and `PZ2QoL_PrefsSave(req, text)` → `PZ2QoL_PrefsSaved(req, ok)`. Marks `prefs_loaded`,
+    `prefs_empty`, `prefs_unavailable` (Kin), `prefs_written`, `prefs_refused` (store), and
+    `js_prefs_file|memory` from the page. UI side: `prefs.js` (`getPref`, `setPref`, `updatePref`,
+    `onPrefs`, `prefsStatus`, `prefsReason`, `loadPrefs`), read once per page with a 6 s timeout
+    → memory (a late answer or `PZ2QoL_Hello` still reads it), 400 ms debounced saves, changes
+    made before the read replayed on top; shares `storecore.js` with `userstore.js`.
   - **Zoo key** (`Kin._ZooKey`): Franchise `f_<GetPlanetHubGuid>_<GetCurrentZooGUID>` (both on the
     park's `tWorldAPIs.franchise`; `GetCurrentZooGUID()` is nil outside Franchise, which the game's
     own `exhibitanimalinfopopup` uses as its Franchise test, **offline**); any other park
@@ -127,6 +145,9 @@
   - With `"*"` it only loads the DLL, so `DllMain` runs.
   - With a function name it returns that export as a C function. That export must not use the Lua
     C API, because the exe exports no `lua_*` symbols.
+    Re-checked 2026-10-18 on 1.0.5 (export table, read only): 359 exports (Wwise, AGS, `fLog*`),
+    no `lua_*`. Free text still gets out by spelling it through one DLL per byte (`debugging.md`
+    "Detailed log").
 - `api.debug.Trace` output isn't visible in the Final build. **guess**: nothing found yet.
 
 ## `api.*` namespaces in use
@@ -141,7 +162,7 @@
 | `api.world.GetWorldAPIs().franchise` | Franchise API. Resolving the `DatabaseError_*` enum names from it **did not work in game** (logged as `code N`). From the open Animal Storage mode's `tWorldAPIs.franchise` the names **do resolve** (PZ2QoL 1.2.1: `Unknown`, `NotAllowed` seen). **proven** |
 | `franchise:IsDatabaseOperationInProgress()` | `(bBusy, nRequestType)`: a franchise request is still running. The game's own screens poll it before sending more. **offline** |
 | `franchise:RequestsInProgress()` | Any franchise request in flight (a method call); the world waits on it before unloading (`worlds.darwinworld.lua:703`). **offline** |
-| `api.planetHub.StorageUIStartAnimalAuction(key, nPrice, nHours)` / `StorageGetIDAndAIDType(key)` | List a storage animal; a row key → `(GUID, 2)`. See `game-data-and-events.md` "Listing a storage animal". **offline** |
+| `api.planetHub.StorageUIStartAnimalAuction(key, nPrice, nHours)` / `StorageGetIDAndAIDType(key)` | List a storage animal; a row key → `(id, type)`, usually `(GUID, 2)`, but in game often another type or an id the engine can't use (2026-10-18; shapes and the fingerprint fallback: `game-data-and-events.md` "Listing a storage animal"). **offline** |
 | `api.planetHub.StorageUISelectItem(id)` / `StorageUISetItemMultiSelected(id, b)` / `StorageUISelectAllItems` / `StorageUIClearSelectedItems` | What the storage UI events call. **offline** |
 | `api.planetHub.MarketUI*` | Market list filters, requests and display slot; see `game-data-and-events.md` "Market data". **offline** |
 | `api.debug.Error` / `api.debug.Assert` | Can be wrapped to surface errors (PZ2QoL Errors module). **proven** |
@@ -193,6 +214,12 @@
   Kin still sends JSON **strings**, ASCII-only (non-ASCII as `\uXXXX`), in ~12 KB chunks
   (`PZ2QoL_KinChunk(seq, i, n, text)`), so no single event is large and a cut never splits a UTF-8
   character. **offline**
+- Kin resends a snapshot only when its JSON (minus `seq`) changed, else answers `same`. Any
+  value that drifts every frame defeats that and makes the page rebuild its model every scan:
+  ages are rounded to 0.1 year (`roundAge`, 2026-10-18; whether `nAge` is a growing float is a
+  **guess**). Debug marks `kin_scan_same` / `kin_scan_changed` per scan and `kin_encode_slow`
+  (encode > 20 ms in one frame); JS `js_kin_build_slow` (model build > 50 ms). The
+  `CurrentLocationType_*` enum values are read once per scan (`tJob.tLocKinds`).
 - Game Lua has `utf8` and the 5.3 bitwise operators. **guess** (standard 5.3; used with a `pcall`
   fallback).
 - **Park managers bypass the require hook.** `Environment._LoadManagerModule` (GameMain
@@ -203,3 +230,20 @@
   now patches `Environment._LoadManagerModule` and applies module patches as each manager loads,
   before its instance exists (trace `manager_patched_<name>`, `kin_first_tick`).
 
+
+## Reaching the hub and the MainHUD from mod Lua (**offline**, 2026-10-18)
+
+| API | Use |
+|---|---|
+| `api.game.GetEnvironment():RequireInterface("Interfaces.IBackgroundWorldDataManager")` | The BWDM that carries hub start screen and filters across a world transition (`SetInitialHubScreen`, `SetAnimalMarketSpeciesFilter`); the game's own event actions use it. PZ2QoL TradeJump. |
+| `api.world.GetScript(api.world.GetActive()):GetHUD()` | The park's MainHUD (`OnWorldTransition_OpenHUB`, `OnOpenAnimalMarket`). |
+| `api.planetHub.GetAdultsOfSpeciesInStorageSplitByGender(sSpecies)` | Adult GUIDs in Animal Storage per sex, from the park (vanilla: Franchise Compare Mates). |
+
+## Loaders and a native return channel (**proven** 2026-10-18, D:, 1.0.5)
+
+- Retail game Lua has `loadfile`, `dofile`, `load` and `loadstring`.
+- It also has `package.loadlib`, `searchpath`, `searchers`, `loaders`, `path`, `cpath` and `preload`.
+- There is **no `io`** and **no `os`**.
+- A mod DLL loaded with `package.loadlib` can start its own thread from an exported function (never from `DllMain`). That thread can write a `.lua` file, and game Lua reads it back with `loadfile` or `dofile`, the read taking ~0 ms. This is the return channel the exe's missing Lua C API otherwise rules out. Data goes in through the spelling channel (`debugging.md`).
+- Probe: `pz2qol.probe.lua` and `tools/trace/pz2_probe.c`, in the native-helper worktree. Findings are in `docs/RESEARCH-native-helper.md`.
+- Shipping a DLL is the developer's decision (SKILL.md rules 1 and 6).

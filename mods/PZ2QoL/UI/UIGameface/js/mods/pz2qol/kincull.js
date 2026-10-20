@@ -32,7 +32,7 @@
 // the species' best genes overall (`keepBest` per sex).
 import { ownGrades, fertilityText, Sex } from './kincore.js';
 import { TRADE } from './kinboardcore.js';
-import { habitatCapacity, estimateSpacePerAdult, groupRule, ratioKey } from './kinprogramme.js';
+import { habitatCapacity, estimateSpacePerAdult, groupRule, ratioKey, youngByHabitat } from './kinprogramme.js';
 
 export const FILL_STEPS = Object.freeze([
     { id: 'core', label: 'Core only', fill: 0 },
@@ -173,9 +173,10 @@ export function cullPlan(model, species, info = {}, { options = {} } = {}) {
     const cullIds = opts.cullIds instanceof Set ? opts.cullIds : new Set(opts.cullIds || []);
     const rule = groupRule(info, opts.ratio);
     const system = rule.system;
-    const infoX = Object.assign({}, info);
-    if (!infoX.spacePerAdult) infoX.spacePerAdult = estimateSpacePerAdult(info);
     const all = Array.from(model.animals.values()).filter(a => a.species === species && !a.exhibit && a.alive !== false);
+    // juveniles share the game's space requirement and don't take adults' room
+    const infoX = Object.assign({}, info);
+    if (!infoX.spacePerAdult) infoX.spacePerAdult = estimateSpacePerAdult(info, youngByHabitat(all));
     const inHabitats = all.filter(a => a.hab);
     const atTrade = all.filter(a => !a.hab && a.lt === 'trade').length;
     const poorWhy = geneRules(inHabitats.filter(a => !a.juv), opts);

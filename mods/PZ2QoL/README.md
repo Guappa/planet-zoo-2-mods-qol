@@ -1,4 +1,4 @@
-# Mike's QoL Toolbox for Planet Zoo 2 (version 3.1.0)
+# Mike's QoL Toolbox for Planet Zoo 2 (version 3.2.0)
 
 *Breeding, market, storage and park quality-of-life tools for Planet Zoo 2, formerly Genes & Gold
 (and PZ2QoL before that). Installs as `Win64\ovldata\PZ2QoL`.*
@@ -30,6 +30,48 @@ click, except Auto mode (only for the species you turned it on for) and letting 
 animals (a setting, on by default).
 
 ## Changelog
+
+### 3.2.0
+
+- **Market desk: Quick trade and Quick release for any animal.** In the desk's Quick trade or
+  Quick release mode you can now tick any animal in storage, sellable ones included, without
+  running Check storage first: sometimes you just want them gone. Each one is still checked as it
+  goes; the game's no skips it. Animals on the market, being moved, Rehome-only or with no id from
+  the game still can't be ticked.
+- **Young are left alone.** The Breeding programme, the Breeding window and Auto mode never send
+  a juvenile to the trade centre any more, and young waiting there go back to a habitat: their
+  mother's, else their father's, else the one with the most room. Juveniles no longer take adults'
+  places when the programme works out a habitat's room, so habitats with young can hold more
+  adults. (Auto mode can still place a nearly grown youngster in another habitat so it doesn't
+  grow up beside a parent.)
+- **Bring all stored animals to the trade centre.** Under the Species board's "Bring <species>
+  to the trade centre" button (the trade centre column) is a second button that does the same for
+  every species at once: it opens Animal Storage, ticks every stored animal that isn't already in
+  this zoo (adults first, up to the trade centre's room; animals on the market, on the move or in
+  shoals stay), and sends them with the game's own Send to Zoo. Back in the zoo each one goes to
+  the trade centre, one at a time.
+- **Breeding programme keeps the group make-up**: adults that don't breed (on contraception,
+  infertile or too old) used to stay in their habitat for ever and fill it past its make-up
+  (e.g. a second, contracepted male in a 1:1 Eurasian lynx habitat). The programme now gives the
+  make-up's places to breeders first, keeps a non-breeder only where a place is still free
+  (contracepted ones before infertile or old ones), and sends the rest to the trade centre.
+  Pregnant animals and animals marked hands off still stay. Auto mode follows it too.
+- **Breeding window**: a third launcher button (under the Species board) opens the Breeding
+  programme in a small window where the game shows its info panels (top right). It takes the info
+  panel's place: the two are never on screen together. Pick a species (in your zoo, in Animal
+  Storage, or search every species), then:
+  - **Habitats**: **Pick habitats in the park** and click habitats in the world (a fence, a gate
+    or any animal in it) to set them aside for the species; the habitats it lives in and the ones
+    the game allows are one click away.
+  - **Programme**: the Breeding programme's numbers and moves with the board's settings
+    (make-up, Fewer moves to Best genetics, trade centre breeders), and **Run**, one move at a time.
+    **More options** opens every setting: the optimiser (Classic or Deep, Deep's search and custom
+    numbers, CPU use) and the rules it plans by (cost of a move, of joining a settled group, of
+    splitting a bonded pair; related pairs, habitat room, make-up limit, family-line mix, spare
+    adults, room when the game gives none; search length). Kept for every zoo, with Reset to
+    defaults; the Species board and Auto mode plan with them too.
+  - **Auto mode**: the species' full Auto mode panel.
+  The Species board is unchanged; both share the same habitats, settings and Auto mode.
 
 ### 3.1.0
 

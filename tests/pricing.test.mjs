@@ -294,42 +294,18 @@ test('few of the medal in this sex: same medal of any sex comes before scaling',
     assert.match(r.reason, /^3 Gold adult animals: median 2,100 CC/);
 });
 
-test('appeal adjusts the price within a medal', async () => {
-    const { appealAdjustment } = await import('../mods/PZ2QoL/UI/UIGameface/js/mods/pz2qol/pricing.js');
-    // five gold lions, price rising with appeal (5,000 -> 1,000 CC ... 9,000 -> 1,400 CC)
-    const gold = [5000, 6000, 7000, 8000, 9000].map((a, i) => listing('g' + i, { medal: 'gold', appeal: `[SEPERATED_INT_VALUE:Value={${a}}]`, price: 1000 + 100 * i }));
-    const high = recommendPrice(animal({ medal: 'gold', appeal: '8,500' }), gold, {});
-    assert.equal(high.method, 'appeal');
-    assert.equal(high.appealAdj.how, 'fit');
-    // fit 1,350 at appeal 8,500, -3% = 1,309.5 -> 1,310
-    assert.equal(high.price, 1310);
-    assert.match(high.reason, /appeal 8,500 vs median 7,000 of 5 Gold: \+13%/);
-    const low = recommendPrice(animal({ medal: 'gold', appeal: 5500 }), gold, {});
-    assert.ok(low.price < high.price);
-    // without the animal's appeal: the gene-score path as before
-    assert.notEqual(recommendPrice(animal({ medal: 'gold' }), gold, {}).method, 'appeal');
-    // two listings: half the relative difference, capped at +33%
-    const two = gold.slice(0, 2);
-    const adj = appealAdjustment(animal({ appeal: 6600 }), two);
-    assert.equal(adj.how, 'ratio');
-    assert.ok(Math.abs(adj.factor - 1.1) < 1e-9);
-    assert.ok(Math.abs(appealAdjustment(animal({ appeal: 60000 }), two).factor - 4 / 3) < 1e-9);
-    // scaled listings of another medal never set the appeal baseline
-    const scaled = two.map(l => Object.assign({}, l, { medalFactor: 1.5 }));
-    assert.equal(appealAdjustment(animal({ appeal: 6600 }), scaled), null);
-});
-
-test('parseAppeal reads the formats the game uses', async () => {
-    const { parseAppeal, appealOf } = await import('../mods/PZ2QoL/UI/UIGameface/js/mods/pz2qol/pricing.js');
-    assert.equal(parseAppeal('[SEPERATED_INT_VALUE:Value={12345}]'), 12345);
-    assert.equal(parseAppeal('[AnimalList_AppealValue:Value=(1234)]'), 1234);
-    assert.equal(parseAppeal('12,345'), 12345);
-    assert.equal(parseAppeal('12.345'), 12345);
-    assert.equal(parseAppeal(800), 800);
-    assert.equal(parseAppeal(''), undefined);
-    assert.equal(parseAppeal('[SEPERATED_INT_VALUE:Value={0}]'), undefined);
-    assert.equal(parseAppeal(undefined), undefined);
-    assert.equal(appealOf({ appeal: '2,000' }), 2000);
+test('appeal never changes the price: the gene score does', () => {
+    // five gold lions: appeal rising with price (the seller's welfare), genes the other way
+    const gold = [5000, 6000, 7000, 8000, 9000].map((a, i) => listing('g' + i, { medal: 'gold', appeal: `[SEPERATED_INT_VALUE:Value={${a}}]`, score: 80 - 2 * i, price: 1000 + 100 * i }));
+    const plain = recommendPrice(animal({ medal: 'gold', genes: g(82) }), gold, {});
+    const high = recommendPrice(animal({ medal: 'gold', genes: g(82), appeal: '9,500' }), gold, {});
+    const low = recommendPrice(animal({ medal: 'gold', genes: g(82), appeal: 1000 }), gold, {});
+    assert.notEqual(plain.method, 'appeal');
+    assert.equal(high.price, plain.price);
+    assert.equal(low.price, plain.price);
+    assert.equal(high.method, plain.method);
+    assert.doesNotMatch(high.reason, /appeal/i);
+    assert.equal(high.appealAdj, undefined);
 });
 
 test("the game's limits always win and the reason says so", () => {
@@ -356,12 +332,6 @@ test('confidence: same medal can be high, scaled at most medium, guessed at most
     assert.equal(recommendPrice(animal({ medal: 'gold' }), learned, {}).confidence, 'medium');
     // fewer than 3 in all: low
     assert.equal(recommendPrice(animal({ medal: 'silver' }), many(2), {}).confidence, 'low');
-});
-
-test('mergeListings keeps a known appeal when a later read has none', () => {
-    let book = mergeListings([], [listing('a', { appeal: 4000 })], 1000);
-    book = mergeListings(book, [listing('a', { price: 1100 })], 2000);
-    assert.equal(book[0].appeal, 4000);
 });
 
 test('without medal data the price is the same as before', () => {
@@ -394,4 +364,97 @@ test('mergeListings keeps a known medal when a later read has none', () => {
     // the medal is not part of the listing key (v2 keys stay valid)
     const row = { species: 'Lion', name: 'Leo', gender: 0, maturity: 2, genes: g(60), price: 1000, isCC: true };
     assert.equal(listingKey(Object.assign({ medal: 'gold' }, row)), listingKey(row));
+});
+
+// ------------------------------------------------------------ colour morphs
+import { morphOf, morphPremium, normalMorphLabel, DEFAULT_MORPH_PREMIUM } from '../mods/PZ2QoL/UI/UIGameface/js/mods/pz2qol/pricing.js';
+
+test('colour morph: labels', () => {
+    assert.equal(morphOf({ colormorph: '' }), '');
+    assert.equal(morphOf({}), '');
+    assert.equal(morphOf({ colormorph: 'Normal' }), '');
+    assert.equal(morphOf({ colormorph: '[InfoPanel_Animal_Colourmorph_None]' }), '');
+    assert.equal(morphOf({ colormorph: ' Albino ' }), 'Albino');
+    assert.equal(morphOf({ colormorph: '[Lion_variation_colourmorph0]' }), '[Lion_variation_colourmorph0]');
+    // the label nearly every listing of the species carries is the normal one
+    const book = [1, 2, 3, 4].map(i => listing('n' + i, { colormorph: 'Tawny' })).concat([listing('w', { colormorph: 'White' })]);
+    assert.equal(normalMorphLabel('Lion', book), 'Tawny');
+    assert.equal(morphOf({ colormorph: 'Tawny' }, 'Tawny'), '');
+    assert.equal(normalMorphLabel('Lion', book.slice(0, 2)), '', 'too few to tell');
+});
+
+test('colour morph: a normal animal ignores morph listings', () => {
+    const book = [800, 900, 1000].map((p, i) => listing('n' + i, { price: p }))
+        .concat([5000, 6000].map((p, i) => listing('m' + i, { price: p, colormorph: 'Albino' })));
+    const comp = comparables(animal(), book);
+    assert.deepEqual(comp.list.map(l => l.id).sort(), ['n0', 'n1', 'n2']);
+    assert.equal(comp.morphLeftOut, 2);
+    const rec = recommendPrice(animal(), book);
+    assert.ok(rec.price < 1100, `normal price ${rec.price}`);
+    assert.match(rec.reason, /2 colour-morph listings left out/);
+    // with no morph listings at all: exactly the old result
+    const plain = [800, 900, 1000].map((p, i) => listing('n' + i, { price: p }));
+    assert.deepEqual(recommendPrice(animal(), plain), recommendPrice(animal(), plain.concat([listing('x', { species: 'Tiger', colormorph: 'Albino' })])));
+});
+
+test('colour morph: priced from 3+ listings of the same morph', () => {
+    const book = [800, 900, 1000, 1100].map((p, i) => listing('n' + i, { price: p }))
+        .concat([4000, 4500, 5000].map((p, i) => listing('a' + i, { price: p, colormorph: 'Albino' })))
+        .concat([9000].map((p, i) => listing('l' + i, { price: p, colormorph: 'Leucistic' })));
+    const me = animal({ colormorph: 'Albino' });
+    const comp = comparables(me, book);
+    assert.equal(comp.morphMode, 'same');
+    assert.deepEqual(comp.list.map(l => l.id).sort(), ['a0', 'a1', 'a2']);
+    const rec = recommendPrice(me, book, {}, { morphName: s => s.toUpperCase() });
+    assert.ok(rec.price > 3500 && rec.price < 5500, `albino price ${rec.price}`);
+    assert.equal(rec.morph, 'Albino');
+    assert.match(rec.reason, /^ALBINO: 3 ALBINO listings/);
+});
+
+test('colour morph: too few of the morph -> normal listings x the observed premium', () => {
+    // Lion: 2 albino + 3 normal (premium 4x observed in this species)
+    const book = [1000, 1000, 1000].map((p, i) => listing('n' + i, { price: p }))
+        .concat([4000, 4000].map((p, i) => listing('a' + i, { price: p, colormorph: 'Albino', gender: Gender.Female })));
+    const me = animal({ colormorph: 'Leucistic' });
+    const comp = comparables(me, book);
+    assert.equal(comp.morphMode, 'scaled');
+    assert.equal(comp.morphFactor.source, 'this species');
+    assert.equal(comp.morphFactor.ratio, 4);
+    assert.ok(comp.list.every(l => l.rawPrice === 1000 && l.price === 4000));
+    const rec = recommendPrice(me, book);
+    assert.ok(rec.price > 3500, `scaled price ${rec.price}`);
+    assert.notEqual(rec.confidence, 'high');
+    assert.match(rec.reason, /Leucistic: no Leucistic listed; normal × 4\.0 \(ratio from this species\)/);
+});
+
+test('colour morph: no premium anywhere -> a guessed one, low confidence at most', () => {
+    const book = [900, 1000, 1100, 1000, 950, 1050, 1000].map((p, i) => listing('n' + i, { price: p }));
+    const me = animal({ colormorph: 'Melanistic' });
+    assert.deepEqual(morphPremium('Lion', book), { ratio: DEFAULT_MORPH_PREMIUM, source: 'default guess', guessed: true });
+    const rec = recommendPrice(me, book);
+    assert.equal(rec.comps.morphMode, 'scaled');
+    assert.equal(rec.confidence, 'low');
+    assert.match(rec.reason, /guessed ratio/);
+    // another species' premium is used before the guess
+    const other = book.concat([1000, 1000].map((p, i) => listing('tn' + i, { species: 'Tiger', price: p })))
+        .concat([3000, 3000].map((p, i) => listing('ta' + i, { species: 'Tiger', price: p, colormorph: 'White' })));
+    assert.deepEqual(morphPremium('Lion', other), { ratio: 3, source: 'all species', guessed: false });
+    assert.equal(recommendPrice(me, other).confidence, 'medium');
+});
+
+test('colour morph: not part of the listing key; the price book keeps a known label', () => {
+    const a = { species: 'Lion', name: 'Leo', gender: 0, maturity: 2, price: 500, isCC: true, genes: g(50) };
+    assert.equal(listingKey(Object.assign({ colormorph: 'Albino' }, a)), listingKey(a));
+    const first = mergeListings([], [listing('k', { colormorph: 'Albino' })], 1000);
+    const later = mergeListings(first, [listing('k', {})], 2000);
+    assert.equal(later[0].colormorph, 'Albino');
+    assert.equal(later[0].seenAt, 2000);
+});
+
+test('colour morph: market summary lists the morphs on sale', () => {
+    const book = [1000, 1000, 1000].map((p, i) => listing('n' + i, { price: p }))
+        .concat([4000, 5000].map((p, i) => listing('a' + i, { price: p, colormorph: 'Albino' })));
+    const s = speciesMarketSummary('Lion', book);
+    assert.deepEqual(s.byMorph, { Albino: { count: 2, median: 4500 } });
+    assert.deepEqual(speciesMarketSummary('Lion', book.slice(0, 3)).byMorph, {});
 });

@@ -192,3 +192,16 @@ test('the group make-up decides how many breeding males a habitat keeps', () => 
     assert.deepEqual(plan.moves.map(m => m.id), ['a2']);
     assert.match(plan.moves[0].reason, /extra male \(1 ♂ : 3 ♀: room for 1 breeding male here\)/);
 });
+
+test('a pregnant female is never sent away, not even by the player\'s choice', () => {
+    n = 0;
+    // over-full habitat (6 adults, room 3) with a pregnant poor-gene female
+    const animals = [an(M, '1', 5), an(F, '1', 1, { preg: true }), an(F, '1', 2), an(F, '1', 3), an(F, '1', 4), an(F, '1', 5)];
+    const m = model(animals);
+    for (const opts of [{ fill: 0.5 }, { fill: 0.5, genes: 'strict' }, { fill: 1, cullIds: new Set(['a2']) }, { fill: 0.5, oldAlways: true, zeroFertility: true }]) {
+        const plan = cullPlan(m, 'Lemur', { social: { max: 3 } }, { options: opts });
+        assert.ok(!plan.moves.some(x => x.id === 'a2'), JSON.stringify([opts, plan.moves]));
+        const keep = plan.habitats[0].keep.find(x => x.id === 'a2');
+        assert.equal(keep.why, 'pregnant');
+    }
+});

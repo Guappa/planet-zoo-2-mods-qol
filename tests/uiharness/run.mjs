@@ -37,6 +37,11 @@ const HEADED = flag('--headed');
 const KIN_ONLY = flag('--kin-only'); // only the kin_*.mjs scenarios (faster)
 const ONLY = opt('--only', ''); // with --kin-only: only the kin/desk scenarios whose name contains this
 const VANILLA = !flag('--no-vanilla') && !KIN_ONLY;
+// --jobs N: run the kin/desk scenarios in N lanes at once, beside the built-in
+// Frontend ones; scenarios sharing a name prefix (desk_*, board*, programme*)
+// form a group that runs in file order on its own fresh HUD / Frontend pages.
+// Default 4; 1 = the old sequence on one HUD page and one Frontend page.
+const JOBS = Math.max(1, Number(opt('--jobs', process.env.PZ2H_JOBS || 4)) || 1); // default 4: stable; 6 made board scenarios flaky
 
 let chromium;
 try {
@@ -171,6 +176,14 @@ async function openFrontend(browser, url, label) {
     await page.goto(url, { waitUntil: 'load' });
     await page.waitForSelector('.FrontendModule_root', { timeout: 30000 });
     await page.waitForTimeout(1500);
+    // the detailed debug log (debuglog.js) as a debug build has it: Lua
+    // says 'on' and receives PZ2QoL_Log batches; here they are collected
+    // in window.__dlog for the scenarios to check
+    await page.evaluate(() => {
+        window.__dlog = [];
+        engine.on('PZ2QoL_Log', text => { for (const l of String(text).split(String.fromCharCode(10))) window.__dlog.push(l); });
+        engine.trigger('PZ2QoL_LogState', 'on');
+    }).catch(() => {});
     return { page, rec };
 }
 
@@ -268,6 +281,8 @@ async function installFakeNative(page) {
         for (const k of keys()) {
             DS.setValue(LIST.concat(k), 'auctionTimerSeconds', 0);
             DS.setValue(LIST.concat(k), 'isMoving', false);
+            // pregnant animals are left out of every listing (checked on their own below)
+            DS.setValue(LIST.concat(k), 'isPregnant', false);
             // the generator picks any maturity; elderly infertile (6) animals
             // are skipped by the lister on purpose (checked on their own below)
             if (DS.getValue(LIST.concat(k), 'maturity') == 6) DS.setValue(LIST.concat(k), 'maturity', 2);
@@ -293,6 +308,7 @@ async function installFakeNative(page) {
             const settle = () => {
                 if (!key) return;
                 DS.setValue(LIST.concat(key), 'isMoving', false);
+                DS.setValue(LIST.concat(key), 'isPregnant', false);
                 const pin = (window.__fake.pinned || {})[key];
                 if (pin) for (const [prop, v] of Object.entries(pin)) DS.setValue(LIST.concat(key), prop, v);
                 if (!(window.__fake.listed || []).includes(key)) DS.setValue(LIST.concat(key), 'auctionTimerSeconds', 0);
@@ -332,7 +348,7 @@ async function installFakeNative(page) {
             if (window.__fake.calls.length == window.__fake.failOnCall) {
                 // as the game reports it: an unnamed code for request type 42;
                 // the game stays busy a while (the lister must wait for it)
-                window.__fake.busyUntil = Date.now() + 9000;
+                window.__fake.busyUntil = Date.now() + (window.__fake.failBusyMs || 9000);
                 setTimeout(() => engine.trigger('PZ2QoL_Error', 'server', window.__fake.failMessage || 'Server error: code 255', '(request #42)'), 400);
                 return;
             }
@@ -363,7 +379,8 @@ async function runListerScenario(page) {
         const k = withGenes[0];
         // a Silver adult (the medal is the row's `ratings`, as in the game's
         // Rating column); the fake debug panel must not randomise it away
-        const pin = { ratings: 'silver', maturity: 2 };
+        // colormorphLabel '': a normal animal (the schema generator fills random words)
+        const pin = { ratings: 'silver', maturity: 2, colormorphLabel: '' };
         window.__fake.pinned = { [k]: pin };
         for (const [prop, v] of Object.entries(pin)) DS.setValue(LIST.concat(k), prop, v);
         const a = { id: DS.getValue(LIST.concat(k), 'id'), key: k, species: DS.getValue(LIST.concat(k), 'species'), gender: DS.getValue(LIST.concat(k), 'gender') };
@@ -417,6 +434,31 @@ async function runListerScenario(page) {
     facts.recommended = Number((recText.replace(/,/g, '').match(/(\d+)/) || [])[1]);
     await shot(page, '8_lister_single');
 
+    // Colour morph: the same animal as an Albino with 3 Albino listings is priced
+    // from those (and shows a morph pill); then back to normal for the rest
+    await page.evaluate(async t => {
+        const DS = await import('/js/common/core/DataStore.js');
+        const LIST = ['hubAnimalsData', 'animalStorageData', 'list'];
+        window.__fake.pinned[t.key].colormorphLabel = 'Albino';
+        DS.setValue(LIST.concat(t.key), 'colormorphLabel', 'Albino');
+        const { mergeIntoPriceBook } = await import('/js/mods/pz2qol/pricebook.js');
+        mergeIntoPriceBook([0, 1, 2].map(i => ({ id: 'fakeM' + i, species: t.species, gender: t.gender, maturity: 2, isShoal: false, score: 60, medal: 'silver', colormorph: 'Albino', price: 4000 + 100 * i, isCC: true, source: 'market' })));
+    }, target);
+    await page.waitForTimeout(900);
+    facts.morph = await page.evaluate(() => ({
+        pill: Array.from(document.querySelectorAll('.PZ2QoL_lister .PZ2QoL_medalPill')).map(e => e.className + ':' + e.textContent),
+        why: document.querySelector('.PZ2QoL_lister .PZ2QoL_recWhy')?.textContent || '',
+        chips: Array.from(document.querySelectorAll('.PZ2QoL_lister .PZ2QoL_medalChip.morph')).map(e => e.textContent),
+        rec: Number(((document.querySelector('.PZ2QoL_listerRecPrice')?.textContent || '').replace(/,/g, '').match(/(\d+)/) || [])[1]),
+    }));
+    await shot(page, '8b_lister_morph');
+    await page.evaluate(async t => {
+        const DS = await import('/js/common/core/DataStore.js');
+        window.__fake.pinned[t.key].colormorphLabel = '';
+        DS.setValue(['hubAnimalsData', 'animalStorageData', 'list', t.key], 'colormorphLabel', '');
+    }, target);
+    await page.waitForTimeout(600);
+
     // Background market check: a fake of the mod's Lua (PZ2QoL.MarketPeek)
     // fills the market list for the species while the screen stays on
     // Animal Storage; the page must record the prices and release.
@@ -443,6 +485,7 @@ async function runListerScenario(page) {
                 DS.setValue(ctx, 'auctionIsConservationCredits', true);
                 DS.setValue(ctx, 'auctionPrice', 2000 + 111 * i + 1000 * n);
                 DS.setValue(ctx, 'ratings', ['gold', 'silver', 'bronze'][i]);
+                DS.setValue(ctx, 'colormorphLabel', '');
             });
             DS.setValue(DATA, 'pages', 3);
             DS.setValue(DATA, 'pageIndex', n);
@@ -483,6 +526,7 @@ async function runListerScenario(page) {
         });
     }, target.species);
     const knownBefore = await page.evaluate(async s => (await import('/js/mods/pz2qol/pricebook.js')).countForSpecies(s), target.species);
+    const logFrom = await page.evaluate(() => (window.__dlog || []).length);
     await page.locator('.PZ2QoL_lister .PZ2QoL_btn', { hasText: /Check market prices|Refresh prices/ }).click();
     try {
         await page.waitForSelector('.PZ2QoL_peekStatus.done', { timeout: 15000 });
@@ -536,6 +580,9 @@ async function runListerScenario(page) {
         throw new Error('single sell did not finish: ' + JSON.stringify(diag).slice(0, 1500));
     }
     facts.singleCalls = await page.evaluate(() => window.__fake.calls.slice());
+    // the debug log of the market check and the single sell (batches go every 150 ms)
+    await page.waitForTimeout(500);
+    facts.dlogSingle = await page.evaluate(n => (window.__dlog || []).slice(n), logFrom);
     await shot(page, '9_lister_single_done');
     // back to no offset for the runs below
     await page.locator('.PZ2QoL_lister .PZ2QoL_offsetValue').click();
@@ -571,6 +618,8 @@ async function runListerScenario(page) {
     const shortListings = facts.batchCalls.filter(c => c.hours !== 12);
     if (shortListings.length) throw new Error('lister must list for the maximum 12h, got: ' + shortListings.map(c => c.hours).join(', '));
     facts.batchGapsMs = facts.batchCalls.slice(1).map((c, i) => c.t - facts.batchCalls[i].t);
+    await page.waitForTimeout(500);
+    facts.dlogBatch = await page.evaluate(n => (window.__dlog || []).slice(n), logFrom + facts.dlogSingle.length);
     facts.bannerAfterBatch = (await domFacts(page)).errorBanner;
     await shot(page, '10_lister_batch_stopped');
     // several selected: the pause slider under the Sell button
@@ -581,6 +630,12 @@ async function runListerScenario(page) {
     // player's Stop ends a run (the developer's decision, 2026-10-16).
     const fatalKeys = batchKeys.slice(0, 3);
     facts.fatal = [];
+    // harness speed: these runs check outcomes only (the batch above checked
+    // the 3 s pace and the wait while the game is busy), so 1 s pace and 2 s busy
+    await page.evaluate(async () => {
+        (await import('/js/mods/pz2qol/pace.js')).setPace('lister', 1);
+        window.__fake.failBusyMs = 2000;
+    });
     for (const message of ['Server error: NotEnoughCC', 'Server error: code 255']) {
         await page.evaluate(async ({ keys, message }) => {
             const DS = await import('/js/common/core/DataStore.js');
@@ -603,7 +658,13 @@ async function runListerScenario(page) {
             calls: await page.evaluate(() => window.__fake.calls.length),
         });
     }
-    await page.evaluate(() => { window.__fake.failMessage = ''; window.__fake.busyUntil = 0; });
+    await page.evaluate(async () => {
+        window.__fake.failMessage = '';
+        window.__fake.busyUntil = 0;
+        delete window.__fake.failBusyMs;
+        // back to the default before the screenshots and the big-selection height
+        (await import('/js/mods/pz2qol/pace.js')).setPace('lister', 3);
+    });
     await shot(page, '11_lister_fatal_stop');
 
     // A large selection (every stored animal) stays compact
@@ -616,6 +677,10 @@ async function runListerScenario(page) {
     facts.bigPanelHeight = await page.evaluate(() => Math.round(document.querySelector('.PZ2QoL_lister').getBoundingClientRect().height));
     facts.bigGroups = await page.locator('.PZ2QoL_lister .PZ2QoL_groupChip').count();
     await shot(page, '11b_lister_big_selection');
+    // harness speed: the runs below check outcomes, not gaps (the batch above
+    // checked the 3 s default), so they go at the 1 s minimum, which shows the
+    // pace warning in the later lister screenshots; 3 s again at the end
+    await page.evaluate(async () => (await import('/js/mods/pz2qol/pace.js')).setPace('lister', 1));
 
     // Several species selected: one click checks them one after another,
     // every page of each, with the cooldown between species
@@ -741,6 +806,49 @@ async function runListerScenario(page) {
         throw new Error(`elderly infertile animal not skipped: keys ${JSON.stringify(elderlyKeys)}, sent ${JSON.stringify(facts.elderlyCalls)}, status "${facts.elderlyStatus}"`);
     }
 
+    // A pregnant animal is never listed: the market won't take her until she
+    // gives birth. Two selected, one pregnant -> "Sell 1", left out up front.
+    const pregKeys = await page.evaluate(async () => {
+        const DS = await import('/js/common/core/DataStore.js');
+        const LIST = ['hubAnimalsData', 'animalStorageData', 'list'];
+        const free = window.__fake.keys().filter(k => !(DS.getValue(LIST.concat(k), 'auctionTimerSeconds') > 0)).slice(0, 2);
+        window.__fake.calls = [];
+        for (const k of free) {
+            DS.setValue(LIST.concat(k), 'isMoving', false);
+            DS.setValue(LIST.concat(k), 'maturity', 2);
+        }
+        DS.setValue(LIST.concat(free[0]), 'isPregnant', true);
+        DS.setValue(LIST.concat(free[1]), 'isPregnant', false);
+        DS.setValue(['hubAnimalsData', 'animalStorageData'], 'selectedAnimalIDs', free);
+        return free;
+    });
+    await page.waitForTimeout(800);
+    facts.pregButton = (await page.locator('.PZ2QoL_lister .PZ2QoL_btn.positive').textContent()).trim();
+    facts.pregTitle = await page.locator('.PZ2QoL_lister .PZ2QoL_btn.positive').getAttribute('title');
+    await page.locator('.PZ2QoL_lister .PZ2QoL_btn.positive').click();
+    await page.waitForFunction(() => /Stopped|Done:/.test(document.querySelector('.PZ2QoL_listerStatus')?.textContent || ''), null, { timeout: 60000 });
+    facts.pregStatus = (await page.locator('.PZ2QoL_listerStatus').first().textContent()).trim();
+    facts.pregCalls = await page.evaluate(() => window.__fake.calls.map(c => c.key));
+    await shot(page, '11p_pregnant_left_out');
+    // the single view of a pregnant animal: Sell is disabled, with the reason
+    await page.evaluate(async k => {
+        const DS = await import('/js/common/core/DataStore.js');
+        DS.setValue(['hubAnimalsData', 'animalStorageData'], 'selectedAnimalIDs', [k]);
+    }, pregKeys[0]);
+    await page.waitForTimeout(800);
+    facts.pregSingle = await page.evaluate(() => {
+        const b = document.querySelector('.PZ2QoL_lister .PZ2QoL_btn.positive');
+        return b ? { disabled: b.classList.contains('disabled'), title: b.title } : null;
+    });
+    await page.evaluate(async k => {
+        const DS = await import('/js/common/core/DataStore.js');
+        DS.setValue(['hubAnimalsData', 'animalStorageData', 'list', k], 'isPregnant', false);
+    }, pregKeys[0]);
+    if (pregKeys.length < 2 || !/Sell 1 at/.test(facts.pregButton) || !/pregnant/.test(facts.pregTitle || '') || facts.pregCalls.includes(pregKeys[0]) || facts.pregCalls.length != 1
+        || !/1 pregnant left out/.test(facts.pregStatus) || !facts.pregSingle || !facts.pregSingle.disabled || !/until she gives birth/.test(facts.pregSingle.title)) {
+        throw new Error(`pregnant animal not left out: keys ${JSON.stringify(pregKeys)}, button "${facts.pregButton}" (${facts.pregTitle}), sent ${JSON.stringify(facts.pregCalls)}, status "${facts.pregStatus}", single ${JSON.stringify(facts.pregSingle)}`);
+    }
+
     // "Not listed" hides the animals now on the market (the 9 just listed)
     const storageCount = () => page.evaluate(async () => {
         const { DataStoreCollection } = await import('/js/common/data/DataStoreCollection.js');
@@ -815,6 +923,24 @@ async function runListerScenario(page) {
     // The Sellable chip cycles: sellable -> not sellable -> off. Sellable
     // means not infant, not infertile (4-6), not pregnant, listed or moving.
     const sellChip = page.locator('.PZ2QoL_bar.storage .PZ2QoL_chip', { hasText: /^(Sellable|Not sellable)/ });
+    // one fertile adult pregnant for sure (the dummy rows are random): never under Sellable
+    facts.sellPregKey = await page.evaluate(async () => {
+        const DS = await import('/js/common/core/DataStore.js');
+        const LIST = ['hubAnimalsData', 'animalStorageData', 'list'];
+        const k = window.__fake.keys().find(x => !(DS.getValue(LIST.concat(x), 'auctionTimerSeconds') > 0));
+        DS.setValue(LIST.concat(k), 'isMoving', false);
+        DS.setValue(LIST.concat(k), 'maturity', 2);
+        DS.setValue(LIST.concat(k), 'isPregnant', true);
+        return k;
+    });
+    const pregShown = () => page.evaluate(async k => {
+        const { DataStoreCollection } = await import('/js/common/data/DataStoreCollection.js');
+        const c = new DataStoreCollection(['hubAnimalsData', 'animalStorageData', 'list']);
+        await new Promise(r => setTimeout(r, 200));
+        const on = c.source.some(x => x[x.length - 1] === k);
+        c.dispose();
+        return on;
+    }, facts.sellPregKey);
     const readSellable = () => page.evaluate(async () => {
         const { DataStoreCollection } = await import('/js/common/data/DataStoreCollection.js');
         const DS = await import('/js/common/core/DataStore.js');
@@ -830,19 +956,26 @@ async function runListerScenario(page) {
     await sellChip.click();
     await page.waitForTimeout(800);
     facts.sellableYes = await readSellable();
+    facts.sellableYes.pregnantShown = await pregShown();
     await shot(page, '11d_storage_sellable');
     await sellChip.click();
     await page.waitForTimeout(800);
     facts.sellableNo = await readSellable();
+    facts.sellableNo.pregnantShown = await pregShown();
     facts.storageBarHeightSellable = await page.evaluate(() => Math.round(document.querySelector('.PZ2QoL_bar.storage').getBoundingClientRect().height));
     await shot(page, '11e_storage_not_sellable');
     await sellChip.click();
     await page.waitForTimeout(500);
     const y = facts.sellableYes, n = facts.sellableNo;
     if (!y.shown || y.shown != y.sellable || y.shownOk != y.shown || !/^Sellable/.test(y.chip || '')
-        || !n.shown || n.shown != n.total - n.sellable || n.shownOk != 0 || !/^Not sellable/.test(n.chip || '') || facts.storageBarHeightSellable > 90) {
+        || !n.shown || n.shown != n.total - n.sellable || n.shownOk != 0 || !/^Not sellable/.test(n.chip || '') || facts.storageBarHeightSellable > 90
+        || y.pregnantShown !== false || n.pregnantShown !== true) {
         throw new Error(`"Sellable" filter wrong: ${JSON.stringify({ y, n, h: facts.storageBarHeightSellable })}`);
     }
+    await page.evaluate(async k => {
+        const DS = await import('/js/common/core/DataStore.js');
+        DS.setValue(['hubAnimalsData', 'animalStorageData', 'list', k], 'isPregnant', false);
+    }, facts.sellPregKey);
 
     // The game rebuilds the storage list when something sells, so list keys
     // can point at other animals mid-run. Swap a selected animal's row with
@@ -890,6 +1023,7 @@ async function runListerScenario(page) {
         if (got.slice().sort().join() != shuffle.want.slice().sort().join()) throw new Error(`list rebuilt mid-run: listed ${got}, expected ${shuffle.want}: ${status}`);
     }
 
+    await page.evaluate(async () => (await import('/js/mods/pz2qol/pace.js')).setPace('lister', 3));
     // Turning it off hides the panel again
     await page.locator('.PZ2QoL_bar.storage .PZ2QoL_switch').click();
     await page.waitForTimeout(800);
@@ -909,6 +1043,10 @@ async function runListerScenario(page) {
         if (!(Array.isArray(c.selected) && c.selected.length == 1 && c.selected[0] == target.key)) problems.push('animal was not the sole selection when listed');
     }
     if (!/silver/.test(facts.medal.pill || '')) problems.push(`no Silver medal on the selected animal: ${facts.medal.pill}`);
+    if (!facts.morph.pill.some(p => /morph:Albino/.test(p))) problems.push(`no colour-morph pill on the Albino: ${JSON.stringify(facts.morph.pill)}`);
+    if (!/^Albino: 3 Albino listings/.test(facts.morph.why)) problems.push(`Albino not priced from Albino listings: ${facts.morph.why}`);
+    if (!(facts.morph.rec > facts.recommended)) problems.push(`Albino price ${facts.morph.rec} not above the normal ${facts.recommended}`);
+    if (!facts.morph.chips.some(c => /Albino ×3/.test(c))) problems.push(`no colour-morph summary: ${facts.morph.chips}`);
     if (!/^\d+ Silver adult (males|females|animals): median [\d,]+ CC/.test(facts.medal.why)) problems.push(`recommendation does not use the Silver listings: ${facts.medal.why}`);
     if (!(facts.medal.chips.some(c => /Gold ×2/.test(c)) && facts.medal.chips.some(c => /Silver ×\d/.test(c)))) problems.push(`no per-medal summary: ${facts.medal.chips}`);
     const p = facts.peek;
@@ -951,6 +1089,46 @@ async function runListerScenario(page) {
         if (f.calls != 3 || !/^Done: listed 2, skipped 1/.test(f.status)) problems.push(`"${f.message}" did not skip and carry on: ${f.calls} calls, ${f.status}`);
     }
     if (facts.panelVisibleAfterOff) problems.push('panel still visible after turning the lister off');
+    // the debug log: the market check, then one animal end to end (the old
+    // path here: no Lua engine in this scenario), in order, with its values
+    {
+        const L = facts.dlogSingle || [];
+        const at = (re, from = 0) => { for (let i = from; i < L.length; i++) if (re.test(L[i])) return i; return -1; };
+        const gid = c => `guid=id${c}`;
+        const single = facts.singleCalls[0] || {};
+        const want = [
+            [/ peek start species=/, 'peek start'],
+            [/ peek request species=\S+ uid=/, 'peek request'],
+            [/ peek reply .*state=loading/, 'peek loading'],
+            [/ peek page_read .*page=0 rows=\d+/, 'peek page 0'],
+            [/ peek done .*listings=9 .*pages=3/, 'peek done'],
+            [/ lister sell_click keys=1/, 'sell click'],
+            [/ lister list_request n=1 hours=max/, 'list request'],
+            [/ lister list_path engine=false/, 'list path (old path, no engine)'],
+            [/ lister legacy_start n=1/, 'run start'],
+            [new RegExp(` lister legacy_animal run=legacy i=1 ${gid(target.id)} key=${target.key} found=true`), 'animal'],
+            [new RegExp(` lister legacy_select run=legacy i=1 ${gid(target.id)}`), 'select'],
+            [new RegExp(` lister legacy_selected run=legacy i=1 ${gid(target.id)}`), 'selected'],
+            [new RegExp(` pricing decision run=legacy i=1 ${gid(target.id)} where=legacy .*price=${single.price} `), 'price decision'],
+            [new RegExp(` lister legacy_send run=legacy i=1 ${gid(target.id)} key=${target.key} price=${single.price} hours=12`), 'send'],
+            [new RegExp(` lister legacy_answer run=legacy i=1 ${gid(target.id)} listed=true`), 'answer'],
+            [new RegExp(` lister legacy_result run=legacy i=1 ${gid(target.id)} status=listed price=${single.price}`), 'confirmed'],
+            [/ lister legacy_end listed=1 skipped=0 total=1/, 'summary'],
+        ];
+        let from = 0;
+        for (const [re, what] of want) {
+            const i = at(re, from);
+            if (i < 0) {
+                problems.push(`debug log: no "${what}" after line ${from} (${re}); log: ${L.slice(Math.max(0, from - 2), from + 6).join(' | ').slice(0, 900)}`);
+                break;
+            }
+            from = i + 1;
+        }
+        if (L.some(l => !/^js#\d+@\d\d:\d\d:\d\d\.\d{3} \S+ \S+/.test(l))) problems.push(`debug log: a line not in the js#seq@time area event format: ${L.find(l => !/^js#\d+@/.test(l))}`);
+        const B = facts.dlogBatch || [];
+        if (!B.some(l => / lister legacy_result run=legacy i=3 .*status=skipped kind=refused/.test(l))) problems.push('debug log: the refused 3rd batch listing has no skip line');
+        if (!B.some(l => / lister legacy_end listed=6 skipped=1 total=7/.test(l))) problems.push('debug log: no batch summary line');
+    }
     // worst case: a finished run block with a 3-line status plus Sell and Refresh
     if (facts.bigPanelHeight > 380) problems.push(`lister panel too tall for ${facts.bigSelection} selected: ${facts.bigPanelHeight}px`);
     if (!(facts.bigGroups > 0)) problems.push('no per-species summary for a big selection');
@@ -1072,20 +1250,26 @@ for (const f of fs.readdirSync(HERE).filter(n => /^(kin|desk)_.*\.mjs$/.test(n) 
     const mod = await import('./' + f);
     const sname = f.replace(/^kin_|\.mjs$/g, '');
     if (ONLY && !sname.includes(ONLY)) continue;
-    KIN_SCENARIOS.push(Object.assign({ name: sname }, mod));
+    KIN_SCENARIOS.push(Object.assign({ name: sname }, mod, { file: sname }));
 }
 const kinCtx = { shot, OUT, gotoMarketTab, facts: results => results };
 
 // ------------------------------------------------------------------ main
 const srv = await startServer({ roots: [OVERLAY, GAME] });
 const browser = await chromium.launch({ executablePath: EDGE, headless: !HEADED });
-const results = { screenshots: {}, facts: {}, records: [], harnessErrors: [] };
+const results = { screenshots: {}, facts: {}, records: [], harnessErrors: [], timings: {} };
+const T0 = Date.now();
 const step = async (name, fn) => {
+    const t = Date.now();
     try { return await fn(); }
     catch (e) { results.harnessErrors.push(`${name}: ${e.message.split('\n')[0]}`); return undefined; }
+    finally { results.timings[name] = Date.now() - t; }
 };
 
 try {
+    // the built-in Frontend scenarios (vanilla, modded market, lister): one
+    // page each, so with --jobs they run beside the kin lanes
+    const runBuiltinFrontend = async () => {
     if (VANILLA) {
         const { page, rec } = await openFrontend(browser, `${srv.url}/Frontend.html`, 'vanilla');
         results.records.push(rec);
@@ -1161,6 +1345,78 @@ try {
     });
     await page.close();
     }
+    };
+
+    // kin/desk scenario parts; the facts sink is kept even when one throws
+    const runPart = (mod, part, page) => step(`kin ${mod.name} (${part === 'hud' ? 'HUD' : 'Frontend'})`, async () => {
+        const key = 'kin_' + mod.name + '_' + part;
+        const sink = {};
+        try {
+            results.facts[key] = await mod[part](page, Object.assign({}, kinCtx, { facts: sink }));
+        }
+        finally {
+            if (!results.facts[key]) results.facts[key] = sink;
+        }
+    });
+
+    if (JOBS > 1) {
+        // Lanes: groups of scenarios by name prefix, longest first (from the
+        // last report's timings when there is one), handed to the next free lane.
+        let last = {};
+        try { last = JSON.parse(fs.readFileSync(path.join(OUT, 'report.json'), 'utf8')).timings || {}; } catch (e) { /* first run */ }
+        const groups = new Map();
+        if (!KIN_ONLY) groups.set('#zoo', [{ name: '#zoo', zoo: true }]);
+        for (const mod of KIN_SCENARIOS) {
+            const g = mod.file.split('_')[0]; // file name: modules export their own `name`
+            if (!groups.has(g)) groups.set(g, []);
+            groups.get(g).push(mod);
+        }
+        const cost = mods => mods.reduce((s, m) => s + (m.zoo ? last['zoo animal filters'] || 0
+            : (last[`kin ${m.name} (HUD)`] || 0) + (last[`kin ${m.name} (Frontend)`] || 0)), 0);
+        // no timings yet (a new --out): the heavy groups of 2026-10-18 first
+        const HEAVY = ['storagefetch', 'desk', 'programme', 'board', 'mates', 'hud', 'cull', 'planner'];
+        const rank = g => { const i = HEAVY.indexOf(g); return i < 0 ? HEAVY.length : i; };
+        const queue = [...groups.entries()].sort((a, b) => cost(b[1]) - cost(a[1]) || rank(a[0]) - rank(b[0]));
+        // Every group gets fresh pages, so it runs exactly as `--only <group>`
+        // does (sharing a lane's pages across groups broke kin_hud and
+        // desk_market_log: they rely on the page state of a fresh page).
+        const lane = async n => {
+            const ran = (results.lanes = results.lanes || {})[n] = [];
+            for (let next; (next = queue.shift());) {
+                const [g, mods] = next;
+                const label = g.replace(/\W/g, '');
+                ran.push(...mods.map(m => m.name));
+                let hud = null, fe = null;
+                try {
+                    for (const mod of mods) {
+                        if (!mod.zoo && typeof mod.hud !== 'function') continue;
+                        if (!hud) {
+                            hud = await openHud(browser, srv.url + '/PZ2QoLHUD.html', `hud_${label}`);
+                            results.records.push(hud.rec);
+                        }
+                        if (mod.zoo) await step('zoo animal filters', async () => { results.facts.zoo = await runZooScenario(hud.page); });
+                        else await runPart(mod, 'hud', hud.page);
+                    }
+                    // as in the sequence: a group's Frontend parts after its HUD parts
+                    for (const mod of mods) {
+                        if (typeof mod.frontend !== 'function') continue;
+                        if (!fe) {
+                            fe = await openFrontend(browser, `${srv.url}/PZ2QoLFrontend.html`, `kin_frontend_${label}`);
+                            results.records.push(fe.rec);
+                        }
+                        await runPart(mod, 'frontend', fe.page);
+                    }
+                }
+                finally {
+                    if (hud) await hud.page.close();
+                    if (fe) await fe.page.close();
+                }
+            }
+        };
+        await Promise.all([runBuiltinFrontend(), ...Array.from({ length: JOBS }, (_, i) => lane(i + 1))]);
+    }
+    else {
+    await runBuiltinFrontend();
 
     // In-park HUD: zoo management Animals list filters
     const hud = await openHud(browser, srv.url + '/PZ2QoLHUD.html', 'hud');
@@ -1200,6 +1456,7 @@ try {
         }
         await fe.page.close();
     }
+    }
 }
 finally {
     await browser.close();
@@ -1236,6 +1493,8 @@ log('\n=== DOM facts ===');
 log(JSON.stringify(results.facts, null, 2));
 log('\n=== screenshots ===');
 for (const [k, v] of Object.entries(results.screenshots)) log(`  ${k}: ${v}`);
+log(`\n=== timings (total ${((Date.now() - T0) / 1000).toFixed(1)} s) ===`);
+for (const [k, v] of Object.entries(results.timings)) log(`  ${(v / 1000).toFixed(1).padStart(6)} s  ${k}`);
 if (results.harnessErrors.length) log('\n=== HARNESS ERRORS ===\n  ' + results.harnessErrors.join('\n  '));
 const report = lines.join('\n');
 console.log(report);

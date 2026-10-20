@@ -21,6 +21,99 @@ There is no `io` library and no visible log, so the mod logs by **loading tiny D
 - The crash reporter creates a 0-byte `.dmp` at game launch and fills it in on a crash, so ignore
   0-byte dumps.
 
+## Detailed log (debug builds, 2026-10-18)
+
+Free-text lines **with values** in the same `dbg\trace.log`, so one play session can be read back
+and every Market desk / lister animal followed end to end. Built for PZ2QoL 3.0.0. **Proven** on Y:
+2026-10-18 (1.0.5, Franchise): `log_channel_ok` at boot, 2,924 `LOG` lines from Lua and both pages in
+a 16-minute session, with one desk run readable animal by animal. Gap found: `lister resolve_keys`
+logged only which keys failed (the first 12), not what `StorageGetIDAndAIDType` returned for them,
+and the same line every second (724 identical lines in 10 minutes). Fixed 2026-10-18: `resolve_keys`
+only when the answer changes (`types`, `via`, `same`), plus one `resolve_fail` line per failure
+shape; the page backs failed keys off instead of asking every second.
+
+**How the text gets out (the channel).**
+- The exe exports **no Lua C API**. Checked 2026-10-18 on 1.0.5 by reading the export table
+  (read only): 359 names, all Wwise `AK::*`, AMD AGS, `D3D12SDK*`, `NvOptimusEnablement` and three
+  Frontier log calls `fLogSetGlobalLogLevel`, `fLogGetGlobalLogLevel`, `fLogSetLevel(const char*,
+  const char*)`. No `lua_*` names, not even as strings. So a DLL function cannot read its Lua
+  arguments. **offline (proven absent)**
+- Rejected: reading the string out of the `lua_State` memory by layout (Frontier's Lua has a
+  custom header and 32-bit floats, so the layout is unknown; a wrong guess reads wild memory, and
+  a vectored crash handler may see even a caught access violation). Rejected: calling `fLog*`
+  (changes the game's own logging; where its output goes is unknown, **guess**).
+- **Built: spelling.** `Core:LogText(s)` calls one `mark` per byte through more copies of the
+  tracer: `lg_clr.dll` (start the line), `lg_20.dll` … `lg_7e.dll` (append that printable ASCII
+  byte; anything else is written `?`), `lg_end.dll` (write the line). The copies keep the line in
+  `lg_core.dll` (loaded lazily from the first `mark`, never from `DllMain`), **per thread**
+  (SRW lock, 32 slots, 1500 bytes), so lines from different game threads never mix. The lg_* copies
+  write nothing when loaded. Still no Lua API and no game memory touched: a broken channel loses
+  lines, nothing else. Offline: 2000 lines of ~100 characters in 0.37 s with a 32-bit build and
+  cobra-tools' Lua 5.3 (`package.loadlib` + `mark`), i.e. ~0.2 ms a line including the file append.
+- Fail soft: no `lg_end`/`lg_clr` (a release build, or an older debug build) → `Core.bLogOff`, one
+  checkpoint `log_channel_missing`, and every later call returns at once. The first written line
+  marks `log_channel_ok`. A missing byte DLL only drops that character.
+- The build (`--debug-trace`) copies the 98 `lg_*` files next to the `cp_*` ones.
+- Not used: the game's own logs. `%LOCALAPPDATA%\Frontier Developments\Planet Zoo 2` holds only
+  `Config_Local` and `UserAudio`; `api.debug.Trace` and `api.debug.WriteStringToFile` reach no file
+  in retail (above, `lua-runtime.md`); Gameface `console.log` has no file (**guess**: none found).
+
+**Line format.** The DLL prefixes time and thread; Lua and the page add a source, a sequence, an
+area, an event, then `key=value` pairs:
+
+```
+<HH:MM:SS.mmm> tid=<thread> LOG lua#<seq> <area> <event> k=v k=v ...
+<HH:MM:SS.mmm> tid=<thread> LOG js#<seq>@<page time> <area> <event> k=v k=v ...
+```
+
+- Lead keys first when present: `run`, `i` (1-based place in the run), `guid`, `key` (storage
+  row), `step`; then Lua sorts the rest, JS keeps its order. Values with spaces, `=` or `"` are
+  quoted; tables print as `[a,b]` / `[k:v]` one level deep; values are cut at 160 characters
+  (`~`), lines at 900. Keys containing token/password/account/steam/session/email/user/auth are
+  written `[redacted]`. Animal GUIDs, species, prices and server codes are logged; nothing about
+  the player's account.
+- `js` lines reach Lua in batches every 150 ms (`PZ2QoL_Log`, `\n`-separated, at most 100 per
+  batch, 400 a second; extra lines are counted and reported as `log dropped n=<N>`), so their DLL
+  time can trail the page time (`@…`) by up to ~0.2 s plus a frame. Order by the page time inside
+  `js`, by the DLL time across sources.
+- APIs: Lua `Core:Log(area, event, tData)` / `Core:LogText(line)` (`pz2qol.core.lua`); JS
+  `dlog(area, event, data)`, `logPriceDecision(where, id, advice, extra)` (`debuglog.js`).
+  Both never throw. The page waits for Lua's `PZ2QoL_LogState` (`on` in a debug build, sent when
+  the view is ready); until then it keeps up to 500 lines; `off` (release) makes `dlog` a no-op.
+- **Ctrl+Shift+L** on the hub or park page opens a small panel with the newest lines (Area filter,
+  Older/Newer, Copy, Clear): the fallback when the file channel is missing. The page keeps the last
+  2000 lines. Copy: no clipboard in the game's UI (**guess**: shows "No clipboard"); take a
+  screenshot instead. Keyboard events reaching the page in game: **guess**.
+
+**Areas and events.**
+
+| Area | Events |
+|---|---|
+| `lua` | `view_ready` (view, version), `report` (src, title, detail, show: every Errors report) |
+| `server` | `error` (code, name, req, reqName, listeners): every franchise server error |
+| `lister` (Lua engine) | `storage_open/close`, `hello` (storage, rows, online, missing, running), `resolve_keys` (n, failed, failedKeys ≤ 12, types: id types of the found `[0:4,2:..]`, via: `[id:..,lossy:..,fp:..,none:..]`, same: identical answers since the last line; logged only on change), `resolve_fail` (one per failure shape: key (a sample), n, ok (pcall), idType, numType, id (tostring, ≤ 40), nType, row (found in the list), why: nil/zero/fraction/userdata/table/badstring/error/collision/duplicate + `+ambiguous`/`+nofp`), `start` (run, req, n, paceMs, online), `job` (one per animal: guid, hint key, price, hours), `animal`, `step` (step, from, secs, msg), `resolve` / `resolve_none` (key, via hint/list, rows, the row's timer, moving, maturity, species, gender), `watch`, `seen` (the page's report text, on change), `select` (key, native id, what the data showed before), `wait_data` (what it still waits for), `data_same`, `price` (job price, limits pmin/pmax/pdef, hours hmin/hmax/hdef, price, capped, usedDefault, src page/lua), `untradeable`, `busy` (why: db/requests/connecting/loading/peek), `busy_requests_ignored`, `quiet`, `changed` (key/selection), `data_changed`, `unselectable` (why, the page's last view), `send` (key, price, hours, data print), `server_error` (code, name, req, ignored: false or why not counted, afterSend), `result` (status, kind, detail, price, hours, sent, afterSend, err), `end` (phase, msg, counts), `stop`, `pace`, `desk_filters`, `desk_restore`, `error`, `tick_failed`; 2026-10-18 (`docs/PLAN-desk-quick-release.md` Phase 0): `start` has `mode` (list/check) and `releaseable`, `resolve` has the row's `source`, `select` has `net`, `select_net` (before, after, first, busy, luaBusy, pageConn, dbType: does a select send a request?), `quick` (trade, qt/qtValue/qtPrice/qtWhy, qr/qrValue/qrPrice/qrWhy, rehome, source, releaseable, src, v), the vanilla quick handlers' `probe_call` (kind, nargs, type, len, count, kmin, kmax, ktypes, net) / `probe_id` (k, vtype, v, key, via, guid) / `probe_after` / `probe_busy` / `probe_idle` / `probe_server_error` (code, name, req, ms) / `probe_gone` (guid, ms) / `probe_end`; Phase 2 quick runs: `send_quick` (key, mode, native, price, rows, fp, data), `quick_gone` (ms, key, mode, err), `quick_timeout` / `quick_ambiguous` (ms), `quick_nopage` (n), `quick_reloaded` (how: hello/report), `quick_server_error` (code, req, afterSend), `quick_transient` (state, ms), `quick_flags` (ms), `refused_then_quick` (key, mode, detail, n) |
+| `lister` (page) | `sell_click`, `list_request`, `list_path` (engine or old path, why), `caps`, `resolve` (rows, cached, asked, got, failed, mismatch, backedOff, retry, via), `job_built` (noIdBlocked), `job_left_out` (why: noid, noguid, pregnant, …), `list_started` (count, asked, noid), `engine_start`, `engine_started`, `engine_state` (on change), `engine_result` (each result as the page first sees it), `engine_stop`, `engine_pace`, `page_watch`, `page_seen`, `page_watch_end`, `stop_click`; the old click path: `legacy_start/animal/select/selected/send/answer/result/stop/end`, `legacy_server_state` |
+| `peek` (Lua) | `start`, `requested`, `state` (every state sent), `page`, `ready` (secs, frames), `release`, `dbstate` |
+| `peek` (page) | `start`, `request`, `reply`, `page_read` (rows, cc, pages, book), `page_stale`, `page_reply`, `done` (listings, cc, pages, added), `failed`, `all_start/all_species/all_end` |
+| `pricing` | `decision` (where job/desk/legacy, id, price, base, conf, method, comps, tier, medal, medalMode, sameMedal, morph, morphMode, guessed, score, market, game, offset, reason; once per animal and outcome), `book_recorded` (observed, valid, book, per species/source) |
+| `desk` | `refused_option` (value), `tick_refused` (asked, inStorage, ticked, notAllowed), `quick_confirm` / `quick_confirm_ignored` (how, ms), `mode` (mode, accepted), `quick_sheet` (go, skip, total, exact), `quick_hold_cancel` (why, ms), `quick_sheet_close` (why), `quick_start` / `quick_started` (mode, n, guids), `quick_accepted` (mode), `check_click` (n, species), `check_started` (ok, n, req, paceMs), `category` (guid, cat, block, was: a row's category from a verdict), `verdicts_cleared` (floor), `open` (keys, pageRows, scope, species, filters, hours, offset), `rail` (source, pageRows, rows, guids, engine, Lua rows), `rail_counts` (species:total/sellable/listed, six a line), `prices` (the shown species: rows, priced, min/median/max, conf counts, book, checked), `filters` (patch, shown, ticked), `tick`, `tick_shown`, `list_click` (ticked, listable, noId, noIdBlocked, noIdTotal), `list_result`, `retry`, `duration`, `scope`, `filters_ask/answer`, `notice`, `close` |
+| `ui` | `page_start`, `report` (every error banner entry, shown or silent) |
+
+**Reading a run (for an agent).** Copy `dbg\trace.log` out before the next install (installs
+replace it). Then:
+1. `grep " LOG "` for the log alone; keep the `cp_*` / `js_*` lines around a time for context
+   (boot, crashes, `report_*`).
+2. Find the run: `lister list_request` / `desk list_click` (page), then Lua `lister start run=<N>`
+   and its `job` lines (guid → hint key, price, hours).
+3. One animal: `grep "run=<N> i=<i> "` or `grep "guid=<guid>"` gives `animal` → `step` …
+   `resolve` → `select` → `wait_data` → `price` → `send` → `server_error`? → `result`, and the
+   page's `engine_result` for the same guid. `result` says why (`kind`, `detail`, `err`,
+   `afterSend`).
+4. The run's end: `lister end run=<N>` (phase, counts); a refusal or crash: the `server error` /
+   `lister server_error` lines right before, and the crash dump time (see below).
+5. Prices: `pricing decision where=job guid=<guid>` gives the inputs behind the job's price.
+6. Note: after a result the engine's `step=pause` line already carries the next `i` (no guid).
+
 ## Lister stalls
 
 - Every lister wait has a timeout: select 5 s, trade allowed 3 s, confirm 30 s. While waiting, the
@@ -84,6 +177,8 @@ There is no `io` library and no visible log, so the mod logs by **loading tiny D
 | 2026-10-16 03:07:54, second PC, Franchise park, 1.0.4 (dump `3af65885…`) | Access violation (0xc0000005) in PlanetZoo2.exe on fTask W8, 37 min in. No mod frames. 3 s after the server refused request 31 with code 5 (`NotAllowed`), the third refusal in 18 s. The last Kin move was 24 s earlier. Request 31 is also refused with no Kin moves at all (02:43, 02:51, 10:10). | **Probably vanilla** (the game's handling of the refusal, like the 10-15 crashes), not proven. |
 | 2026-10-16 10:40:59, second PC, Franchise park "Save the Euro", **1.0.5** | Lua panic: `ModeHelper.lua:77: Error running mode Select: AnimalMovementEditMode.lua:1158: table index is nil`. In 1.0.4 bytecode, line 1158 falls in `SetupAnimalMovementContext`, where `tSpeciesCounts[GetSpeciesFromGUID(guid)]` gets a nil species for a selected animal. PZ2QoL never opens that mode: the player did, with the game's own Move. 81 Kin moves in that session, the last 45 s before. | **Vanilla code**, no nil check. The likely trigger is a stale selection: an animal the game's UI still had selected, moved or sent away just before. The Kin moves may make that likelier. The 1.0.5 bytecode of this file is byte-identical to 1.0.4, so the mapping holds. **Guarded** by PZ2QoL.Guards: if a selected GUID has no species, it sets `bFailedToVerify` (the game's own path: "Move failed", leave the mode) and reports "Move cancelled to prevent a crash". Every species use in the mode is gated by that flag. Trace `guard_move_patched` / `guard_move_stale`. **offline** (Lua test 13). |
 | 2026-10-17 04:34:33 and 04:45:04, second PC, Franchise, **1.0.5** (dumps `d09a7218…`, `f854f941…`) | 0xFDEAD on fTask W15 / W12 while `startscreenglobe` is `activating`, Lua stack in `SaveAgent._ReturnToStartScreenNow` (**exit to main menu**, which in Franchise first saves the zoo: `SaveFranchiseZooNowWithoutMessage`). Both times the same sequence: park opened, the mod's autosave **Save now** about 10 s later, exit with save about 10 s after that, crash 1.5–2 s after the save (0.1 s after the post-`UnsetAutosave` `RequestSave`). No `report_*` marks (no Lua error or assert) before it. Park→hub trips without a save (60+ in the 4 h trace, many seconds after a mod autosave) never crashed; Save and quit to desktop after Save now did not crash either (10-16 14:20, 15:06). | **Open.** Exit-with-save to the menu crashed 2 of 2; no exit-with-save without a recent mod autosave has been traced yet, so mod autosave vs. save-API wrappers vs. vanilla is not settled. Repeating `x_*` marks (SaveAgent save/return, FrontEnd/HUD init/ready/shutdown, StartScreenHUD activate, ModeHelper.SetModes, park end) added to find the step. |
+| 2026-10-18 21:05:57, Y:, exit to main menu from a Franchise park, **PZ2QoL 3.0.1 debug** (dump `6d5c0b58…`) | Access violation on the **Main** thread in `exhibits:GetAllAnimalIDs` (`luaapi_perworld`) from `Kin:Scan` → `_StartPark`, 0.65 s after `StartScreenHUD.Activate` (world `startscreenglobe`). | **Mod**, fixed offline: exit to the menu never calls `HeatMapManager.Shutdown` (no `x_park_end` in the trace), so the last park tick stayed fresh for `nTickFresh` (1 s) and a JS scan request in that second reached the unloaded park. `Kin:SetStartScreen` (called from the StartScreenHUD Activate/Deactivate wrappers in `pz2qol.hub.lua`) now blocks every park API while the start screen is up. Lua test 10 (start screen up, tick fresh: no scan). |
+| 2026-10-18 20:20:37, Y:, Animal Storage, Market desk listing run, **PZ2QoL 3.0.0 debug** (dump `3f4d438e…`) | Access violation (0xc0000005) in PlanetZoo2.exe on fTask W20, the thread running the mod's Lua. **Mod frames on the Lua stack**: `Lister:Advance` → `_Step` → `_QuickGone` → `_QuickState` → `_List` → `GetDataStoreContextAsTable` on the storage list. The run's listings were refused (code 255, request 42) and each refused animal was quick-traded; the crash came at the first look (250 ms) after the **third** quick send (`StorageUIQuickTradeAnimals`), while the game rebuilds the list (the row leaves at ~0.33 s). The first two quick trades read the same window without crashing. | **Mod**, fixed offline: the lister waits `nQuickFirstLook` (1 s) after a quick send before reading the list (also when a run is stopped), and checks `network.loadingItems` before the list. Rule: never read the storage list as a table while a quick trade or release is being applied. Lua test `test_lister.lua` (no read in the second after a send). |
 | 2026-10-15 21:26:41 and 21:26:57, second PC (dumps `c225fb0e…`, `c8e76e3a…`) | Access violation in `exhibits:GetAllAnimalIDs` from Kin.lua at 6 s, `introsequence`. | **Mod**, fixed (see "per-world API called outside a park" below). |
 | 2026-10-14, local, while the hub world was deactivating (21:52, 22:00, 22:14) | 0xFDEAD | Probably the mod's overlay still mapped at shutdown. Fixed by unloading it in `OnPrepareToShutdown`. The unload runs cleanly on exit (2026-10-15); no crash since. |
 
@@ -183,7 +278,11 @@ There is no `io` library and no visible log, so the mod logs by **loading tiny D
   hands back APIs there, `habitat:GetHabitats()` even answers, but other per-world calls crash
   **natively**, which `pcall` cannot catch. **proven** (crash dump `c8e76e3a…`, trace ended at
   `kin_attached`).
+- Exit to the main menu does **not** shut the park's `HeatMapManager` down (proven, Y: 2026-10-18), so a
+  fresh tick alone is not enough: Kin also stops at `StartScreenHUD.Activate` (`Kin:SetStartScreen`).
 - Rule: only call park APIs while a park is really running. PZ2QoL Kin uses the world APIs of the
   park-only `HeatMapManager` instance (its `tWorldAPIs`) and only if its `Advance` ticked within
   the last second; otherwise it answers `nopark` and touches nothing.
 
+- **Boot crash in a feature Init** (1.0.5, Y:, 2026-10-19 15:06): the first `PZ2QoL.BoxTrace` Init iterated `pairs(api.messaging)` and then `RegisterGlobalReceiver` for native-only message types (NavAgentConnectedRegionChanged, WaterVolumeUpdate, ...). The game died with no `init_ok`/`init_fail` line and no dump, so `pcall` did not help. A second build registered only AnimalBoxed/AnimalUnboxed/HabitatBoundaryUpdated receivers, from the first `HeatMapManager.Advance` tick (a worker thread, tid differs from boot). It crashed at park load right after `boxtrace_receivers_begin` (**proven**). So `api.messaging.RegisterGlobalReceiver` outside boot is fatal, at least off the main thread. Only `PZ2QoL.Errors`' DatabaseError receiver at boot is proven safe. Don't add receivers; poll instead, and don't enumerate `api.*` tables.
+- **Access violation from an animal read on a gone animal** (**proven** from the dump, 1.0.5, Y: 2026-10-19 15:24, fTask W5, `PlanetZoo2.exe+0x45dc0f`, mod info `BoxTrace.lua _Scan`): `animals:IsAnimalBoxed(e)` on an entity id that no habitat lists any more (sold, moved, died) crashed the game, and `pcall` doesn't help. Only call `api.animals` reads on ids freshly listed by `habitat:GetAnimalsInHabitat` (or another live list) in the same tick, and never on ids kept from earlier ticks. The dump's mod-info Lua stack (`crashsum.py`) names the mod file and line.

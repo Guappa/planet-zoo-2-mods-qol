@@ -1,0 +1,524 @@
+/* =====================================================================
+   PZ2QoL Breeding window (breedwin.js): the Breeding programme in the
+   game's info panel spot (top right, 26.1rem wide, 8.33rem from the top,
+   7.22rem from the bottom, flush with the right edge), with the info
+   panel's land-green header and white body. Its body is a .PZ2QoL_kb box
+   so the board's kit (stats, make-up, slider, Auto mode panel) looks the
+   same; this file loads after pz2qol_kinboard.css and restates what the
+   board's ".PZ2QoL_kb *" catch-all would change.
+   Gameface: explicit display:flex, no CSS grid, no native scrolling.
+   ===================================================================== */
+
+/* the window's own parts; the body is a .PZ2QoL_kb box and takes the
+   board's catch-all and its column restatements as they are */
+.PZ2QoL_bw, .PZ2QoL_bw > *,
+.PZ2QoL_bwHead *, .PZ2QoL_bwSearchRow *, .PZ2QoL_bwTabs * {
+  display: flex;
+  flex-direction: row;
+  box-sizing: border-box;
+}
+.PZ2QoL_bw .hidden { display: none; }
+
+/* ------------------------------------------------------------- frame */
+
+.PZ2QoL_bw {
+  position: fixed;
+  z-index: 45;
+  right: 0;
+  top: 8.3333rem;
+  bottom: 7.2222rem;
+  width: 26.1111rem;
+  flex-direction: column;
+  border-top-left-radius: 0.5556rem;
+  border-bottom-left-radius: 0.5556rem;
+  background-color: #FFFFFF;
+  box-shadow: 0 0.4rem 1.4rem rgba(40, 30, 20, 0.28), 0 0.1rem 0.3rem rgba(40, 30, 20, 0.18);
+  color: var(--qol-ink);
+  font-size: 0.86rem;
+  overflow: hidden;
+  pointer-events: auto;
+  user-select: none;
+  -webkit-user-select: none;
+  animation: PZ2QoL_bwIn 0.15s ease-out 1;
+}
+.PZ2QoL_bw.hidden, .PZ2QoL_bw.away { display: none; }
+@keyframes PZ2QoL_bwIn {
+  from { opacity: 0; transform: translateX(1.5rem); }
+  to { opacity: 1; transform: translateX(0); }
+}
+
+/* -------------------------------------------------------------- head */
+
+.PZ2QoL_bwHead {
+  position: relative;
+  flex-shrink: 0;
+  flex-direction: column;
+  min-height: 5.3889rem;
+  padding: 0.75rem 0.6rem 0.6rem 0.75rem;
+  background-color: #899751;
+  color: #FFFFFF;
+}
+/* the game's own header pattern over the land green (the game tints a
+   white header with --land-tint, a coh-color-matrix only Gameface draws:
+   the green is the plain colour, the pattern only adds texture) */
+.PZ2QoL_bwPattern {
+  position: absolute;
+  left: 0;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  opacity: 0.35;
+  background-image: url(/img/InfoPanel/InfoPanelHeader_Land.png);
+  background-size: 26.1111rem;
+  background-position: top;
+  filter: var(--land-tint);
+}
+.PZ2QoL_bwHeadRow { position: relative; align-items: center; }
+.PZ2QoL_bwLogo {
+  flex-shrink: 0;
+  justify-content: center;
+  align-items: center;
+  width: 2.6rem;
+  height: 2.6rem;
+  margin-right: 0.65rem;
+  border-radius: 1.3rem;
+  background-color: rgba(60, 71, 46, 0.55);
+  border: 0.12rem solid rgba(255, 255, 255, 0.55);
+}
+.PZ2QoL_bwLogo .PZ2QoL_icon { width: 1.35rem; height: 1.35rem; margin: 0; }
+.PZ2QoL_bw .PZ2QoL_bwTitles { flex: 1; min-width: 0; flex-direction: column; }
+.PZ2QoL_bwTitle {
+  font-size: 0.72rem;
+  font-weight: bold;
+  letter-spacing: 0.06rem;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.85);
+  white-space: nowrap;
+}
+.PZ2QoL_bwSpecies {
+  align-items: center;
+  align-self: flex-start;
+  max-width: 100%;
+  margin-top: 0.15rem;
+  padding: 0.15rem 0.45rem 0.2rem 0.5rem;
+  margin-left: -0.5rem;
+  border-radius: 0.5rem;
+  cursor: pointer;
+  transition: background-color 0.12s ease-out;
+}
+.PZ2QoL_bwSpecies:hover { background-color: rgba(60, 71, 46, 0.35); }
+.PZ2QoL_bw .PZ2QoL_bwSpeciesText { flex-direction: column; min-width: 0; }
+.PZ2QoL_bwSpeciesName { font-size: 1.3rem; font-weight: bold; line-height: 1.55rem; white-space: nowrap; overflow: hidden; }
+.PZ2QoL_bwSpeciesMeta { font-size: 0.74rem; color: rgba(255, 255, 255, 0.85); white-space: nowrap; overflow: hidden; }
+/* a chevron drawn with borders */
+.PZ2QoL_bwChevron {
+  flex-shrink: 0;
+  width: 0.5rem;
+  height: 0.5rem;
+  margin: 0 0 0.35rem 0.6rem;
+  border-right: 0.15rem solid #FFFFFF;
+  border-bottom: 0.15rem solid #FFFFFF;
+  transform: rotate(45deg);
+}
+.PZ2QoL_bwHead .PZ2QoL_kpClose { align-self: flex-start; background-color: rgba(60, 71, 46, 0.45); }
+.PZ2QoL_bwHead .PZ2QoL_kpClose .PZ2QoL_kpCloseX { background-color: #FFFFFF; }
+.PZ2QoL_bwHead .PZ2QoL_kpClose:hover { background-color: var(--qol-red); }
+
+/* ------------------------------------------------------------ search */
+
+.PZ2QoL_bwSearchRow {
+  flex-shrink: 0;
+  align-items: center;
+  margin: 0.6rem 0.7rem 0.1rem 0.7rem;
+  padding: 0 0.6rem;
+  height: 2.1rem;
+  border-radius: 1.05rem;
+  background-color: var(--qol-chip);
+}
+.PZ2QoL_bwSearchRow.hidden { display: none; }
+/* a magnifier: a ring and a handle */
+.PZ2QoL_bwSearchIcon {
+  flex-shrink: 0;
+  width: 0.75rem;
+  height: 0.75rem;
+  margin-right: 0.5rem;
+  border: 0.14rem solid var(--qol-ink-soft);
+  border-radius: 0.5rem;
+}
+.PZ2QoL_bw input.PZ2QoL_bwSearch {
+  flex: 1;
+  min-width: 0;
+  height: 1.8rem;
+  padding: 0;
+  border: none;
+  background-color: transparent;
+  color: var(--qol-ink);
+  font-size: 0.86rem;
+}
+
+/* -------------------------------------------------------------- tabs */
+
+.PZ2QoL_bwTabs {
+  flex-shrink: 0;
+  margin: 0.55rem 0.7rem 0 0.7rem;
+  padding: 0.2rem;
+  border-radius: 1.1rem;
+  background-color: var(--qol-chip);
+}
+.PZ2QoL_bwTabs.hidden { display: none; }
+.PZ2QoL_bwTab {
+  flex: 1;
+  min-width: 0;
+  justify-content: center;
+  align-items: center;
+  height: 1.8rem;
+  padding: 0 0.4rem;
+  border-radius: 0.9rem;
+  font-size: 0.8rem;
+  font-weight: bold;
+  color: var(--qol-ink-soft);
+  white-space: nowrap;
+  overflow: hidden;
+  cursor: pointer;
+  transition: background-color 0.12s ease-out;
+}
+.PZ2QoL_bwTab:hover { background-color: var(--qol-chip-hover); color: var(--qol-ink); }
+.PZ2QoL_bwTab.on { background-color: var(--qol-olive); color: #FFFFFF; box-shadow: 0 0.08rem 0.3rem rgba(60, 71, 46, 0.35); }
+
+/* -------------------------------------------------------------- body */
+
+.PZ2QoL_bw .PZ2QoL_kb.PZ2QoL_bwBody {
+  position: relative;
+  z-index: auto;
+  left: auto;
+  top: auto;
+  width: auto;
+  max-width: none;
+  height: auto;
+  flex: 1;
+  min-height: 0;
+  flex-direction: column;
+  padding: 0.55rem 0.7rem 0.6rem 0.7rem;
+  border: none;
+  border-radius: 0;
+  box-shadow: none;
+  background-color: transparent;
+  font-size: 0.86rem;
+  animation: none;
+}
+.PZ2QoL_bw .PZ2QoL_kb .PZ2QoL_bwPane { flex: 1; min-height: 0; flex-direction: column; }
+.PZ2QoL_bw .PZ2QoL_kb .PZ2QoL_kpScroll.bwScroll { flex: 1; min-height: 0; }
+.PZ2QoL_bw .PZ2QoL_kb .PZ2QoL_kpScroll.bwScroll > .PZ2QoL_kpViewport > .PZ2QoL_kpContent { padding: 0 0.85rem 0.3rem 0; }
+.PZ2QoL_bw .PZ2QoL_kb .PZ2QoL_kpBtn { margin-left: 0; }
+.PZ2QoL_bw .PZ2QoL_kb .PZ2QoL_kpBtn.wide { justify-content: center; width: 100%; margin: 0; }
+.PZ2QoL_bw .PZ2QoL_kb .PZ2QoL_kpBtn.small { margin-left: 0.4rem; }
+
+.PZ2QoL_bw .PZ2QoL_kb .PZ2QoL_bwSection { flex-shrink: 0; flex-direction: column; margin-bottom: 0.6rem; }
+.PZ2QoL_bwSectionTitle {
+  flex-shrink: 0;
+  margin: 0.25rem 0 0.3rem 0.1rem;
+  font-size: 0.66rem;
+  font-weight: bold;
+  letter-spacing: 0.06rem;
+  text-transform: uppercase;
+  color: var(--qol-ink-faint);
+}
+.PZ2QoL_bwHint { flex-shrink: 0; margin: 0.15rem 0.1rem 0.35rem 0.1rem; font-size: 0.76rem; line-height: 1.05rem; white-space: normal; color: var(--qol-ink-soft); }
+.PZ2QoL_bwWarn {
+  flex-shrink: 0;
+  margin-bottom: 0.4rem;
+  padding: 0.35rem 0.55rem;
+  border-radius: 0.5rem;
+  font-size: 0.74rem;
+  line-height: 1.02rem;
+  white-space: normal;
+  background-color: rgba(217, 134, 42, 0.16);
+  color: #8A5A16;
+}
+.PZ2QoL_bw .PZ2QoL_kb .PZ2QoL_bwEmpty { flex-direction: column; align-items: center; padding: 1.4rem 0.8rem; text-align: center; }
+.PZ2QoL_bwEmptyTitle { font-size: 1rem; font-weight: bold; }
+.PZ2QoL_bwEmptyText { margin-top: 0.3rem; font-size: 0.78rem; line-height: 1.1rem; white-space: normal; color: var(--qol-ink-soft); text-align: center; justify-content: center; }
+.PZ2QoL_bwEmptyActions { margin-top: 0.7rem; }
+
+/* ------------------------------------------------------------- picker */
+
+.PZ2QoL_bwPick {
+  flex-shrink: 0;
+  flex-direction: column;
+  margin-bottom: 0.25rem;
+  padding: 0.4rem 0.6rem;
+  border-radius: 0.55rem;
+  background-color: var(--qol-card);
+  border-left: 0.22rem solid transparent;
+  cursor: pointer;
+  transition: background-color 0.12s ease-out;
+}
+.PZ2QoL_bw .PZ2QoL_kb .PZ2QoL_bwPick { flex-direction: column; }
+.PZ2QoL_bwPick:hover { background-color: #FFC5C5; }
+.PZ2QoL_bwPick.on { border-left-color: var(--qol-olive); background-color: var(--qol-card-2); }
+.PZ2QoL_bwPickName { font-size: 0.9rem; font-weight: bold; white-space: nowrap; overflow: hidden; }
+.PZ2QoL_bwPickMeta { margin-top: 0.05rem; font-size: 0.72rem; color: var(--qol-ink-soft); white-space: nowrap; overflow: hidden; }
+
+/* ----------------------------------------------------------- habitats */
+
+.PZ2QoL_bw .PZ2QoL_kb .PZ2QoL_bwActions { flex-shrink: 0; margin-bottom: 0.55rem; }
+.PZ2QoL_bwPickBanner {
+  flex-shrink: 0;
+  align-items: center;
+  margin-bottom: 0.55rem;
+  padding: 0.5rem 0.55rem 0.5rem 0.65rem;
+  border-radius: 0.65rem;
+  background-color: var(--qol-olive);
+  color: #FFFFFF;
+  box-shadow: 0 0.12rem 0.5rem rgba(60, 71, 46, 0.35);
+}
+.PZ2QoL_bw .PZ2QoL_kb .PZ2QoL_bwPickBannerText { flex: 1; min-width: 0; flex-direction: column; }
+.PZ2QoL_bwPickBannerTitle { font-size: 0.9rem; font-weight: bold; }
+.PZ2QoL_bwPickBannerSub { margin-top: 0.1rem; font-size: 0.72rem; line-height: 1rem; white-space: normal; color: rgba(255, 255, 255, 0.88); }
+.PZ2QoL_bwPickBanner .PZ2QoL_kpBtn { background-color: rgba(255, 255, 255, 0.92); color: var(--qol-olive); }
+.PZ2QoL_bwPickBanner .PZ2QoL_kpBtn:hover { background-color: #FFFFFF; }
+/* a pulsing target ring while picking */
+.PZ2QoL_bwPulse {
+  flex-shrink: 0;
+  width: 1.1rem;
+  height: 1.1rem;
+  margin-right: 0.6rem;
+  border-radius: 0.55rem;
+  border: 0.18rem solid #FFFFFF;
+  animation: PZ2QoL_bwPulse 1.2s ease-in-out infinite;
+}
+@keyframes PZ2QoL_bwPulse {
+  0% { transform: scale(0.75); opacity: 1; }
+  70% { transform: scale(1.15); opacity: 0.35; }
+  100% { transform: scale(0.75); opacity: 1; }
+}
+
+.PZ2QoL_bwHab {
+  flex-shrink: 0;
+  align-items: center;
+  margin-bottom: 0.25rem;
+  padding: 0.38rem 0.35rem 0.38rem 0.45rem;
+  border-radius: 0.55rem;
+  background-color: var(--qol-card);
+}
+.PZ2QoL_bwHab.assigned { background-color: var(--qol-card-2); }
+.PZ2QoL_bwHab.refused { opacity: 0.7; }
+.PZ2QoL_bwHabMark { flex-shrink: 0; align-self: stretch; width: 0.22rem; margin-right: 0.5rem; border-radius: 0.11rem; background-color: rgba(114, 91, 74, 0.2); }
+.PZ2QoL_bwHab.assigned .PZ2QoL_bwHabMark { background-color: var(--qol-olive); }
+.PZ2QoL_bwHab.living .PZ2QoL_bwHabMark { background-color: var(--qol-teal); }
+.PZ2QoL_bw .PZ2QoL_kb .PZ2QoL_bwHabText { flex: 1; min-width: 0; flex-direction: column; }
+.PZ2QoL_bwHabName { font-size: 0.88rem; font-weight: bold; white-space: nowrap; overflow: hidden; }
+.PZ2QoL_bwHabMeta { margin-top: 0.05rem; font-size: 0.72rem; color: var(--qol-ink-soft); white-space: nowrap; overflow: hidden; }
+
+.PZ2QoL_bwIconBtn {
+  position: relative;
+  flex-shrink: 0;
+  justify-content: center;
+  align-items: center;
+  width: 1.75rem;
+  height: 1.75rem;
+  margin-left: 0.3rem;
+  border-radius: 0.875rem;
+  background-color: var(--qol-chip);
+  cursor: pointer;
+  transition: background-color 0.12s ease-out;
+}
+.PZ2QoL_bwIconBtn:hover { background-color: var(--qol-chip-hover); }
+.PZ2QoL_bwIconBtn.add { background-color: var(--qol-olive); }
+.PZ2QoL_bwIconBtn.add:hover { background-color: #687B4E; }
+.PZ2QoL_bwIconBtn.remove:hover { background-color: var(--qol-red); }
+.PZ2QoL_bwIconBtn.remove .PZ2QoL_kpCloseX { width: 0.75rem; margin-left: -0.375rem; }
+.PZ2QoL_bwIconBtn.remove:hover .PZ2QoL_kpCloseX { background-color: #FFFFFF; }
+/* plus: two bars */
+.PZ2QoL_bwPlusH, .PZ2QoL_bwPlusV { position: absolute; left: 50%; top: 50%; background-color: #FFFFFF; border-radius: 0.06rem; }
+.PZ2QoL_bwPlusH { width: 0.8rem; height: 0.14rem; margin: -0.07rem 0 0 -0.4rem; }
+.PZ2QoL_bwPlusV { width: 0.14rem; height: 0.8rem; margin: -0.4rem 0 0 -0.07rem; }
+/* an eye: an outline with a pupil */
+.PZ2QoL_bwEye {
+  justify-content: center;
+  align-items: center;
+  width: 0.95rem;
+  height: 0.6rem;
+  border: 0.13rem solid var(--qol-ink);
+  border-radius: 0.5rem 0.1rem;
+  transform: rotate(45deg);
+}
+.PZ2QoL_bwFetch { flex-shrink: 0; flex-direction: column; margin-top: 0.3rem; }
+
+/* ---------------------------------------------------------- programme */
+
+.PZ2QoL_bw .PZ2QoL_kb .PZ2QoL_bwControls { flex-shrink: 0; flex-wrap: wrap; align-items: center; margin-bottom: 0.45rem; }
+.PZ2QoL_bwControls .PZ2QoL_kbRatio { margin: 0 0.45rem 0.3rem 0; }
+.PZ2QoL_bwControls .PZ2QoL_kbRatioText { min-width: 5.2rem; }
+.PZ2QoL_bwControls .PZ2QoL_kbSteps { margin-bottom: 0.3rem; padding: 0 0.35rem; }
+.PZ2QoL_bwControls .PZ2QoL_kbStepEnd { font-size: 0.62rem; }
+.PZ2QoL_bwControls .PZ2QoL_kbStep { width: 1.35rem; }
+.PZ2QoL_bw .PZ2QoL_kb .PZ2QoL_bwRow { flex-shrink: 0; align-items: center; margin-bottom: 0.4rem; }
+.PZ2QoL_bwRow .PZ2QoL_kpSwitch { margin-left: 0; }
+
+/* two by two (no :nth-child: unproven in Gameface) */
+.PZ2QoL_bw .PZ2QoL_kb .PZ2QoL_bwStats { flex-shrink: 0; flex-wrap: wrap; justify-content: space-between; margin-bottom: 0.35rem; }
+.PZ2QoL_bw .PZ2QoL_kb .PZ2QoL_kbStat.PZ2QoL_bwStat { flex: 0 0 49%; flex-direction: column; margin: 0 0 0.3rem 0; padding: 0.28rem 0.5rem; }
+.PZ2QoL_bwStat .PZ2QoL_kbStatAfter { font-size: 1.15rem; }
+
+.PZ2QoL_bwMove {
+  flex-shrink: 0;
+  align-items: center;
+  margin-bottom: 0.2rem;
+  padding: 0.3rem 0.45rem;
+  border-radius: 0.5rem;
+  background-color: var(--qol-card);
+}
+.PZ2QoL_bwMove.out { background-color: rgba(217, 134, 42, 0.12); }
+.PZ2QoL_bwMove.held { opacity: 0.55; }
+.PZ2QoL_bwSex {
+  flex-shrink: 0;
+  justify-content: center;
+  align-items: center;
+  width: 1.4rem;
+  height: 1.4rem;
+  margin-right: 0.5rem;
+  border-radius: 0.7rem;
+  font-size: 0.8rem;
+  font-weight: bold;
+  color: #FFFFFF;
+  background-color: var(--qol-ink-faint);
+}
+.PZ2QoL_bwSex.sex_0 { background-color: var(--qol-male); }
+.PZ2QoL_bwSex.sex_1 { background-color: var(--qol-female); }
+.PZ2QoL_bw .PZ2QoL_kb .PZ2QoL_bwMoveText { flex: 1; min-width: 0; flex-direction: column; }
+.PZ2QoL_bwMoveName { font-size: 0.82rem; font-weight: bold; white-space: nowrap; overflow: hidden; }
+.PZ2QoL_bwMoveWhere { font-size: 0.72rem; color: var(--qol-ink-soft); white-space: nowrap; overflow: hidden; }
+.PZ2QoL_bwFoot { flex-shrink: 0; margin-top: 0.45rem; }
+
+.PZ2QoL_bwBusy, .PZ2QoL_bwRun {
+  flex-shrink: 0;
+  flex-wrap: wrap;
+  align-items: center;
+  margin-bottom: 0.45rem;
+  padding: 0.4rem 0.55rem;
+  border-radius: 0.55rem;
+  background-color: var(--qol-card-2);
+}
+.PZ2QoL_bwRun.running { background-color: rgba(79, 138, 134, 0.15); }
+.PZ2QoL_bwRun.done { background-color: var(--kin-ok-soft); }
+.PZ2QoL_bwBusyText, .PZ2QoL_bwRunText { flex: 1 1 100%; margin-bottom: 0.3rem; font-size: 0.78rem; font-weight: bold; white-space: normal; }
+.PZ2QoL_bwBar { flex: 1; height: 0.45rem; border-radius: 0.225rem; background-color: rgba(114, 91, 74, 0.15); overflow: hidden; }
+.PZ2QoL_bwBarFill { height: 100%; border-radius: 0.225rem; background-color: var(--qol-olive); }
+.PZ2QoL_bwRun.running .PZ2QoL_bwBarFill { background-color: var(--qol-teal); }
+.PZ2QoL_bwBusyPct { flex-shrink: 0; margin-left: 0.5rem; font-size: 0.72rem; color: var(--qol-ink-soft); }
+
+/* --------------------------------------------------- Auto mode panel */
+
+.PZ2QoL_bw .PZ2QoL_kb .PZ2QoL_bwAuto > .PZ2QoL_kbProg { flex: 1; min-height: 0; flex-direction: column; }
+.PZ2QoL_bw .PZ2QoL_kb .PZ2QoL_bwAuto .PZ2QoL_kbProgHead { flex-shrink: 0; flex-wrap: wrap; align-items: center; margin-bottom: 0.4rem; }
+.PZ2QoL_bw .PZ2QoL_kb .PZ2QoL_bwAuto .PZ2QoL_kbProgTitles { flex: 1 1 100%; flex-direction: column; min-width: 0; margin-bottom: 0.35rem; }
+.PZ2QoL_bw .PZ2QoL_kb .PZ2QoL_bwAuto .PZ2QoL_kbProgTitle { font-size: 0.95rem; }
+.PZ2QoL_bw .PZ2QoL_kb .PZ2QoL_bwAuto .PZ2QoL_kbProgSub { white-space: normal; }
+.PZ2QoL_bw .PZ2QoL_kb .PZ2QoL_bwAuto .PZ2QoL_kpFlex { display: none; }
+.PZ2QoL_bw .PZ2QoL_kb .PZ2QoL_bwAuto .PZ2QoL_kbProgHead .PZ2QoL_kpBtn { margin: 0 0.4rem 0 0; }
+.PZ2QoL_bw .PZ2QoL_kb .PZ2QoL_bwAuto .PZ2QoL_apRow { flex-wrap: wrap; }
+.PZ2QoL_bw .PZ2QoL_kb .PZ2QoL_bwAuto .PZ2QoL_apRow > * { margin-bottom: 0.3rem; }
+.PZ2QoL_bw .PZ2QoL_kb .PZ2QoL_bwAuto .PZ2QoL_apSeg { flex-wrap: wrap; max-width: 100%; height: auto; }
+.PZ2QoL_bw .PZ2QoL_kb .PZ2QoL_bwAuto .PZ2QoL_kbSegItem { padding: 0 0.5rem; font-size: 0.74rem; }
+.PZ2QoL_bw .PZ2QoL_kb .PZ2QoL_bwAuto .PZ2QoL_kpScroll.kbAutoBody > .PZ2QoL_kpViewport > .PZ2QoL_kpContent { padding: 0 0.85rem 0.5rem 0; }
+
+/* ------------------------------------------------------------ notice */
+
+.PZ2QoL_bwNotice {
+  flex-shrink: 0;
+  margin: 0 0.7rem 0.6rem 0.7rem;
+  padding: 0.45rem 0.6rem;
+  border-radius: 0.55rem;
+  font-size: 0.76rem;
+  line-height: 1.05rem;
+  white-space: normal;
+  background-color: var(--qol-card-2);
+  animation: PZ2QoL_bwIn 0.15s ease-out 1;
+}
+.PZ2QoL_bwNotice.hidden { display: none; }
+.PZ2QoL_bwNotice.tone_ok { background-color: var(--kin-ok-soft); color: #2F5E30; }
+.PZ2QoL_bwNotice.tone_warn { background-color: rgba(217, 134, 42, 0.16); color: #8A5A16; }
+.PZ2QoL_bwNotice.tone_bad { background-color: rgba(201, 67, 62, 0.14); color: #8E2E2A; }
+
+/* -------------------------------------------- More options (drop-down) */
+
+.PZ2QoL_bw .PZ2QoL_kb .PZ2QoL_bwMore {
+  flex-shrink: 0;
+  align-items: center;
+  margin-bottom: 0.45rem;
+  padding: 0.4rem 0.55rem 0.4rem 0.7rem;
+  border-radius: 0.55rem;
+  background-color: var(--qol-chip);
+  cursor: pointer;
+  transition: background-color 0.12s ease-out;
+}
+.PZ2QoL_bw .PZ2QoL_kb .PZ2QoL_bwMore:hover { background-color: var(--qol-chip-hover); }
+.PZ2QoL_bw .PZ2QoL_kb .PZ2QoL_bwMore.on { background-color: var(--qol-olive); color: #FFFFFF; }
+.PZ2QoL_bwMoreLabel { flex-shrink: 0; font-size: 0.82rem; font-weight: bold; }
+.PZ2QoL_bwMoreMeta { flex: 1; min-width: 0; margin-left: 0.55rem; font-size: 0.72rem; color: var(--qol-ink-soft); white-space: nowrap; overflow: hidden; }
+.PZ2QoL_bwMore.on .PZ2QoL_bwMoreMeta { color: rgba(255, 255, 255, 0.85); }
+.PZ2QoL_bwMoreChevron {
+  flex-shrink: 0;
+  width: 0.45rem;
+  height: 0.45rem;
+  margin: 0 0.25rem 0.2rem 0.5rem;
+  border-right: 0.14rem solid var(--qol-ink-soft);
+  border-bottom: 0.14rem solid var(--qol-ink-soft);
+  transform: rotate(45deg);
+  transition: transform 0.15s ease-out;
+}
+.PZ2QoL_bwMore.on .PZ2QoL_bwMoreChevron { margin-top: 0.3rem; margin-bottom: 0; border-color: #FFFFFF; transform: rotate(-135deg); }
+
+.PZ2QoL_bw .PZ2QoL_kb .PZ2QoL_bwOptions { flex: 1; min-height: 0; flex-direction: column; }
+.PZ2QoL_bw .PZ2QoL_kb .PZ2QoL_bwOpt {
+  flex-shrink: 0;
+  flex-direction: column;
+  margin-bottom: 0.3rem;
+  padding: 0.4rem 0.55rem 0.45rem 0.6rem;
+  border-radius: 0.55rem;
+  background-color: var(--qol-card);
+  border-left: 0.22rem solid transparent;
+}
+.PZ2QoL_bw .PZ2QoL_kb .PZ2QoL_bwOpt.changed { border-left-color: var(--qol-teal); }
+.PZ2QoL_bwOptHead { align-items: center; }
+.PZ2QoL_bwOptLabel { font-size: 0.82rem; font-weight: bold; }
+.PZ2QoL_bwOptDot { width: 0.45rem; height: 0.45rem; margin-left: 0.4rem; border-radius: 0.225rem; background-color: var(--qol-teal); }
+.PZ2QoL_bwOptHelp { margin: 0.1rem 0 0.1rem 0; font-size: 0.7rem; line-height: 0.95rem; white-space: normal; color: var(--qol-ink-soft); }
+.PZ2QoL_bw .PZ2QoL_kb .PZ2QoL_bwCustom { flex-shrink: 0; flex-direction: column; padding-left: 0.6rem; }
+
+.PZ2QoL_bw .PZ2QoL_kb .PZ2QoL_bwSeg { flex-shrink: 0; flex-wrap: wrap; margin-top: 0.3rem; }
+.PZ2QoL_bwSegItem {
+  flex-shrink: 0;
+  align-items: center;
+  height: 1.55rem;
+  margin: 0 0.3rem 0.25rem 0;
+  padding: 0 0.6rem;
+  border-radius: 0.775rem;
+  background-color: var(--qol-chip);
+  font-size: 0.74rem;
+  color: var(--qol-ink-soft);
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background-color 0.12s ease-out;
+}
+.PZ2QoL_bwSegItem:hover { background-color: var(--qol-chip-hover); color: var(--qol-ink); }
+.PZ2QoL_bwSegItem.on { background-color: var(--qol-olive); color: #FFFFFF; font-weight: bold; }
+.PZ2QoL_bw .PZ2QoL_kb .PZ2QoL_bwStepper { align-self: flex-start; margin-top: 0.3rem; }
+.PZ2QoL_bw .PZ2QoL_kb .PZ2QoL_bwFoot.split { justify-content: space-between; }
+.PZ2QoL_bw .PZ2QoL_kb .PZ2QoL_bwFoot.split .PZ2QoL_kpBtn { margin-left: 0; }
+
+.PZ2QoL_bw .PZ2QoL_kb .PZ2QoL_bwDeep {
+  flex-shrink: 0;
+  flex-wrap: wrap;
+  align-items: center;
+  margin-bottom: 0.45rem;
+  padding: 0.4rem 0.55rem;
+  border-radius: 0.55rem;
+  background-color: rgba(79, 138, 134, 0.12);
+}
+.PZ2QoL_bwDeep.done { background-color: var(--kin-ok-soft); }
+.PZ2QoL_bwDeep.stale, .PZ2QoL_bwDeep.stopped { background-color: rgba(217, 134, 42, 0.14); }
+.PZ2QoL_bwDeepText { flex: 1 1 60%; min-width: 0; font-size: 0.74rem; line-height: 1rem; white-space: normal; }
+.PZ2QoL_bwDeep.running .PZ2QoL_bwDeepText { flex-basis: 100%; margin-bottom: 0.3rem; }
+.PZ2QoL_bwDeep .PZ2QoL_bwBarFill { background-color: var(--qol-teal); }

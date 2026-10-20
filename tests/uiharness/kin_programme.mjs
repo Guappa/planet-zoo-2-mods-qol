@@ -42,7 +42,7 @@ const stats = page => page.evaluate(() => {
 // the panel with numbers that are not being worked out again
 const ready = (page, timeout = 8000) => page.waitForSelector('.PZ2QoL_kbProg:not(.busy) .PZ2QoL_kbStats', { timeout });
 
-async function seedProgramme(page) {
+export async function seedProgramme(page) {
     await page.evaluate(async () => {
         const kin = await import('/js/mods/pz2qol/kin.js');
         const snap = JSON.parse(JSON.stringify(window.__kinFixture.snapshot));
@@ -292,7 +292,7 @@ export async function hud(page, ctx) {
         if (facts.run.error || facts.run.done !== chosen) problems.push(`run: ${JSON.stringify(facts.run)}`);
         if (facts.run.moves.join() !== facts.plan.map(p => p.id).join()) problems.push('moves were not sent in plan order');
         if (facts.run.overlap) problems.push('two moves in flight at once');
-        for (let i = 1; i < facts.run.starts.length; i++) if (facts.run.starts[i] - facts.run.starts[i - 1] < 1500) problems.push('moves less than 1.5 s apart');
+        for (let i = 1; i < facts.run.starts.length; i++) if (facts.run.starts[i] - facts.run.starts[i - 1] < 450) problems.push('moves less than the 0.5 s pause apart');
 
         // 5. a species the game does not describe: estimates, said so
         await click(page.locator('.PZ2QoL_kbSpecies[data-species="Lion"]'));

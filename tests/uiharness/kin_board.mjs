@@ -257,6 +257,33 @@ export async function hud(page, ctx) {
         if (byId['9003'] && !/Ostrich 1/.test(byId['9003'].head)) problems.push('Plains does not show the ostrich sharing it');
         if (byId['away'] && byId['away'].cards !== 1) problems.push('the lion in transit is not under Elsewhere');
 
+        // 1b. "Mute alerts" in the header: Lion dimmed, tagged and listed last; badges stay
+        const muteSw = page.locator('.PZ2QoL_kb .PZ2QoL_kpSwitch.kbMute');
+        facts.muteSwitch = await muteSw.count() ? (await muteSw.first().innerText()).trim() : null;
+        if (facts.muteSwitch !== 'Mute alerts') problems.push('board header has no "Mute alerts" switch: ' + facts.muteSwitch);
+        else {
+            await muteSw.first().click();
+            await page.waitForTimeout(300);
+            const railNow = () => page.evaluate(() => [...document.querySelectorAll('.PZ2QoL_kb .PZ2QoL_kbSpecies')].map(n => ({
+                species: n.getAttribute('data-species'), muted: n.classList.contains('muted'),
+                meta: (n.querySelector('.PZ2QoL_kbSpeciesMeta') || {}).textContent || '',
+                risk: +(((n.querySelector('.PZ2QoL_kpCount.sev_risk .PZ2QoL_kpCountN') || {}).textContent) || 0),
+            })));
+            facts.mutedRail = await railNow();
+            facts.muteStore = await page.evaluate(async () => (await import('/js/mods/pz2qol/userstore.js')).getUserData('kinMute') || null);
+            const last = facts.mutedRail[facts.mutedRail.length - 1];
+            if (!last || last.species !== 'Lion' || !last.muted || !/muted/.test(last.meta)) problems.push('muted Lion is not tagged and last: ' + JSON.stringify(facts.mutedRail));
+            if (last && !(last.risk > 0)) problems.push('muting hid the Lion risk count (badges must stay)');
+            if (!(facts.muteStore && facts.muteStore.Lion)) problems.push('mute not stored: ' + JSON.stringify(facts.muteStore));
+            const on = await page.locator('.PZ2QoL_kb .PZ2QoL_kpSwitch.kbMute.on').count();
+            if (!on) problems.push('the Mute alerts switch is not on after the click');
+            await ctx.shot(page, 'kb_1b_muted');
+            await page.locator('.PZ2QoL_kb .PZ2QoL_kpSwitch.kbMute').first().click();
+            await page.waitForTimeout(300);
+            const back = await railNow();
+            if (back[0].species !== 'Lion' || back.some(r => r.muted)) problems.push('unmuting did not restore the rail: ' + JSON.stringify(back));
+        }
+
         // 2. hover: every relative lights up with how it is related
         await page.mouse.move(0, 0);
         const daughter = lion(3);
@@ -401,7 +428,7 @@ export async function hud(page, ctx) {
         if (facts.run.overlap) problems.push('two moves were in flight at once');
         for (let i = 1; i < facts.run.moves.length; i++) {
             const prev = facts.run.moves[i - 1], cur = facts.run.moves[i];
-            if (cur.start - prev.start < 1500) problems.push(`moves ${i} and ${i + 1} only ${cur.start - prev.start} ms apart`);
+            if (cur.start - prev.start < 450) problems.push(`moves ${i} and ${i + 1} only ${cur.start - prev.start} ms apart`);
             if (prev.end == null || cur.start < prev.end) problems.push(`move ${i + 1} was sent before move ${i} was answered`);
         }
         if (facts.run.done !== ids.length - 1 || !/1 move skipped.*cannot reach/.test(facts.run.error || '')) problems.push(`run result: ${JSON.stringify({ done: facts.run.done, error: facts.run.error })}`);
@@ -410,7 +437,7 @@ export async function hud(page, ctx) {
         if (facts.afterRunPlan.join() !== ids[refuseAt]) problems.push(`plan after the run ${facts.afterRunPlan}, expected only the refused move ${ids[refuseAt]}`);
         // the pause slider sits under the run controls
         facts.paceSlider = await text(page, '.PZ2QoL_kbActions .PZ2QoL_pace');
-        if (!/Pause between moves/.test(facts.paceSlider) || !/1\.5 s/.test(facts.paceSlider)) problems.push(`no pause slider: "${facts.paceSlider}"`);
+        if (!/Pause between moves/.test(facts.paceSlider) || !/0\.5 s/.test(facts.paceSlider)) problems.push(`no pause slider: "${facts.paceSlider}"`);
         facts.layoutStopped = await layoutFacts(page);
         layoutProblems('stopped', facts.layoutStopped, problems);
 
@@ -493,6 +520,27 @@ export async function hud(page, ctx) {
         await page.waitForTimeout(200);
         facts.openAfterEsc = await page.evaluate(async url => (await import(url)).isSpeciesBoardOpen(), BOARD);
         if (facts.openAfterEsc) problems.push('Esc did not close the board');
+
+        // 10. "Show" on a habitat column: one PZ2QoL_KinLocatePlace, the board closes
+        await page.evaluate(async url => {
+            window.__kbPlace = [];
+            if (!window.__kbPlaceHooked) {
+                window.__kbPlaceHooked = true;
+                engine.on('PZ2QoL_KinLocatePlace', (...a) => { if (window.__kbPlace) window.__kbPlace.push(a); });
+            }
+            (await import(url)).openSpeciesBoard({ species: 'Lion' });
+        }, BOARD);
+        await page.waitForSelector('.PZ2QoL_kb:not(.hidden) .PZ2QoL_kbCol', { timeout: 4000 });
+        await page.waitForTimeout(300);
+        facts.colShow = await page.evaluate(() => [...document.querySelectorAll('.PZ2QoL_kb .PZ2QoL_kbCol')].map(n => ({ id: n.getAttribute('data-col'), kind: n.getAttribute('data-kind'), show: !!n.querySelector('.PZ2QoL_kbColShow') })));
+        if (facts.colShow.some(c => (c.kind === 'habitat') !== c.show)) problems.push('Show button not on exactly the habitat columns: ' + JSON.stringify(facts.colShow));
+        await page.locator('.PZ2QoL_kb .PZ2QoL_kbCol[data-col="9000"] .PZ2QoL_kbColShow').click();
+        await page.waitForTimeout(250);
+        facts.colShowEvents = await page.evaluate(() => window.__kbPlace.slice());
+        facts.openAfterShow = await page.evaluate(async url => (await import(url)).isSpeciesBoardOpen(), BOARD);
+        if (facts.colShowEvents.length !== 1 || facts.colShowEvents[0][0] !== '9000' || !facts.colShowEvents[0][1]) problems.push('column Show sent ' + JSON.stringify(facts.colShowEvents));
+        if (facts.openAfterShow) problems.push('the board stayed open after Show');
+        await page.evaluate(() => { window.__kbPlace = null; });
     }
     finally {
         // leave the page as the other scenarios expect it

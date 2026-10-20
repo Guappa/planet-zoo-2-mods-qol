@@ -96,7 +96,7 @@ export async function hud(page, ctx) {
     await page.locator('.PZ2QoL_kbMenu .PZ2QoL_kbMenuItem', { hasText: 'Send to Trade Centre' }).click();
     await page.waitForTimeout(600);
     facts.moves = await page.evaluate(() => window.__kbcMoves.slice());
-    if (!(facts.moves.length === 1 && facts.moves[0][0] === '6000' && /^trade:/.test(facts.moves[0][1]))) problems.push('trade centre move not sent as one move: ' + JSON.stringify(facts.moves));
+    if (!(facts.moves.length === 1 && facts.moves[0][0] === '6000' && /^tradeq?:/.test(facts.moves[0][1]))) problems.push('trade centre move not sent as one move: ' + JSON.stringify(facts.moves));
     // habitat assignments: Small Plains for lions only; Suggest fixes then
     // moves lions only there
     // a fake Lua file store (PZ2QoL_StoreLoad/Save): assignments go to the

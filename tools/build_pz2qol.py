@@ -141,7 +141,12 @@ def build_trace(dest, tmp):
     names = [n.strip() for n in open(os.path.join(ROOT, "tools", "trace", "checkpoints.txt")) if n.strip()]
     for name in names:
         shutil.copyfile(dll, os.path.join(dbg, f"cp_{name}.dll"))
-    print(f"  debug trace: {len(names)} checkpoints -> {os.path.join(dbg, 'trace.log')}")
+    # the detailed log (Core:Log / debuglog.js): one copy per printable ASCII
+    # byte plus clear, end and the core holding the lines (pz2_trace.c)
+    log_names = [f"lg_{b:02x}" for b in range(0x20, 0x7f)] + ["lg_clr", "lg_end", "lg_core"]
+    for name in log_names:
+        shutil.copyfile(dll, os.path.join(dbg, f"{name}.dll"))
+    print(f"  debug trace: {len(names)} checkpoints + detailed log ({len(log_names)} lg_*) -> {os.path.join(dbg, 'trace.log')}")
 
 
 def main():

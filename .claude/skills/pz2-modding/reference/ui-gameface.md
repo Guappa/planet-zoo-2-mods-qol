@@ -8,6 +8,15 @@
   - `Frontend.html`: the hub (Market, Animal Storage, Franchise).
   - `HUD.html`: the in-park HUD, including zoo management. **HUD.html is also active in the hub.**
   **proven**
+  - **The Frontend page outlives the switch to the zoo and is drawn over the park** (**proven**,
+    D: 2026-10-18): a fixed card the mod added on Animal Storage stayed on screen in the zoo after
+    Send to Zoo, and Storage's header still measured as visible, so "hide when Storage is not
+    visible" never fired. Mod overlays on the hub page must end themselves (PZ2QoL
+    `storagefetch.js`: the curtain closes 8 s after the send at the latest).
+  - Pitfall (harness): starting work (`engine.trigger` calls) synchronously from inside an
+    `engine.on` handler, even via `setTimeout(fn, 0)` in that handler, lost those triggers in the
+    browser harness; driving it from the page's own interval worked. Whether Gameface does the same
+    is a **guess**.
 - The JS↔native bridge is a global `engine`:
   - `engine.trigger(name, ...args)` sends an event to Lua/native listeners **and** to JS `engine.on`
     handlers;
@@ -54,6 +63,14 @@
 
 ## Layout facts
 
+- **A scroll box inside a column-direction flex box needs `flex: 1 1 0; min-height: 0` on its
+  column**, and the strip around it `min-height: 0; overflow: hidden`. With `flex-shrink: 0` (set
+  for a sideways row of columns) the column grows with its cards and spills out instead of
+  scrolling. Seen in game (developer, 2026-10-18): the Species board's pinned trade column flipped
+  between scrolling and spilling over the footer every few seconds once stored adults were listed;
+  the harness (Edge) didn't show it. Fix in `pz2qol_kinboard.css` (`.PZ2QoL_kbCol.pinned`); the in-game
+  fix is **offline** until checked.
+
 - **In-park HUD (1.0.4/1.0.5, harness 1920×1080, 1rem = 18px × the UI scale), offline:**
   - Top-left column `.NotificationsModule_buttons` (0,20, 50 wide): Help, Zoopedia, Research,
     Timeline, Objectives, Challenges, Inspector, then the alert buttons. It grows down with alerts
@@ -74,6 +91,12 @@
 - The game's icons (`/img/icons/*.svg`) are not in the unpacked UI OVL, so they don't render in
   the harness. Names the game uses: `IconAnimals`, `save`, `Icon_SaveLoad`, `IconTime`.
 - `::before` / `::after` in Gameface: unproven. Mod widgets use real elements instead.
+- **Measuring an element just un-hidden** (`display: none` removed in the same tick, content
+  replaced): the Kin card ran off the right edge in game, flipping left only when it was already
+  showing (Nexus report, 2026-10-18). Likely Gameface returns the previous layout (0×0) for it:
+  **guess**. Floating cards are placed with `placement.js besideAnchor()`, the CSS width
+  (25rem) and a minimum height as floors for the measured size, left of anchors in the right half,
+  and placed again after `setTimeout` 0 and 60 ms (`kinui.js place`).
 
 - Management Animals panel root: `.ManagementAnimals_root`. Reserve toolbar space with
   `padding-top`. **proven** in harness.
@@ -93,9 +116,37 @@
   (`userDataReason()`: `wait` (zoo or player profile not known yet; a `PZ2QoL_StoreReset` follows,
   and changes made meanwhile are replayed), `noplayer`, `nopark`, `failed`, `nolua`). The Species
   board shows its "last until you close the game" notice only for reasons other than `wait`.
+  Keys in use: `kinAssign` (habitat assignments), `kinRatio` (make-up per species), `kinMute`
+  (`{ <species>: true }`, species whose kin alerts are muted in this zoo; `kinmute.js`).
   `PZ2QoL_StoreReset` (Lua to JS) makes the page read the store again when a park starts or ends
   or the zoo's store becomes known. The store is the truth once read: data the page held before
   (another zoo's, the localStorage mirror) is not merged in, only this view's pending changes.
+
+## Localisation (species names)
+
+- `/js/common/core/Localisation.js`: `translate(str)` wants a **bracketed** symbol
+  (`'[Animal_Warthog_Common]'`); `doesTextSymbolExist(id)` takes the id **without** brackets. Both
+  call `_impl`, which is set once the engine is ready, so they throw a TypeError before that: wrap
+  them in try/catch and retry later. In the detached Coherent player (the harness) an unbracketed
+  or unknown key comes back as `!key!`. **offline**
+- A species' display name is the symbol `Animal_<id>`, where `<id>` is what Lua `GetSpecies` gives
+  and what Kin snapshots carry (`Lion`, `Warthog_Common`); the market schema's `SPECIES_NAMES` are
+  `[Animal_Leopard_African]`… and storage rows' `species` is already bracketed. **offline**
+  (suggested by a player, salula1986 on Nexus; not yet checked in a non-English game).
+- PZ2QoL: `speciesnames.js` `speciesName(raw)` (game name, else the internal name with spaces;
+  caches successes only, reports a failure once, silently), pure logic in `speciesnamecore.js`
+  (node-tested; node tests can't import game modules). Kin setting `gameSpeciesNames` (default on,
+  session-only like every Kin setting; switch in the Kin planner's Settings) turns it off
+  everywhere: Species board, Kin planner, kin cards, Find a habitat, Market lister and desk.
+  Sorts, matching (`lister.js` `speciesUid`) and `data-species` keep the ids.
+- The harness has no loc files (`.locxml` 404, dictionary empty), so names fall back to the ids;
+  `_setSpeciesLocaliserForTests({ exists, translate })` plugs in a fake (`kin_speciesnames.mjs`).
+- **Reading the text outside the game** (**proven** 2026-10-19, 1.0.5): `ovl_tool_cmd.py extract
+  Content0\Localised\English\UnitedStates\Loc.ovl -o <dir>` writes one UTF-8 `.txt` per key, file name =
+  the key in lower case (42,962 files). Species: `animal_<id>.txt` (+ `_plural`),
+  `zoopedia_scientificname_<id>`, `zoopedia_description_<id>`, `zoopedia_funfacts_<id>_1..5`; groups
+  `zoopedia_cohabitation_<group>` (some groups have none); `terraintag_<tag>`, `biome_<name>`,
+  `continent_<name>`.
 
 ## Preact runtime: hooking game components (used by Kin)
 
@@ -126,12 +177,39 @@
 - `InfoPanelModule` (HUD) shows **one** info panel at a time; its context arrives with
   `InfoPanel_SetContext` (`ctx[2]` = entity) and it opens/closes on `InfoPanel_Show` / `InfoPanel_Hide`.
   **proven** in the harness.
+  - Its place (1.0.5 CSS, **offline**): `.InfoPanel_root` is `position: absolute`, flush right,
+    `top: 8.3333rem; bottom: 7.2222rem; width: 26.1111rem` (bottom grows with the build browser:
+    `browserHeight-N`); top-left radius 0.5556rem; header `InfoPanelTopBar` is a white
+    `InfoPanelHeader_*.png` pattern tinted with `filter: var(--land-tint)` (a `coh-color-matrix`,
+    Gameface only: in the Edge harness it stays white).
+  - Kinds in `ctx[1]`: a habitat's own panel is `habitatGateInfoPanel` (`ctx[2]` = habitat id, the
+    Kin model's habitat key); animal panels name an animal kind (`/animal/i`). **harness**; that a
+    click on a habitat's fence opens the gate panel too is a **guess**.
+  - Closing it from JS: `engine.trigger('InfoPanel_UI_Close')` (what its close button sends,
+    `InfoPanelComms.sendInfoPanelCloseEvent`); Lua then hides it. `isInfoPanelOpen()` in
+    `InfoPanelComms.js` tracks Show/Hide. **offline**
+  - PZ2QoL's Breeding window (`breedwin.js`) takes this place: opening it sends `InfoPanel_UI_Close`;
+    an `InfoPanel_Show` the player caused closes the window; in "Pick in the park" mode it reads the
+    clicked habitat (or an animal's habitat) from `InfoPanel_SetContext` and closes the game's
+    panel again (every 200 ms tick while it shows, for 2.5 s), all from the page's own timer.
+- **Zoopedia species list** (**guess**, not checked in game): DataStore `['Zoopedia','Animals']`
+  is a list (`Animal_<id>` keys; `id`, `name`, `isShoal`, `isExhibitAnimal`, `isLocked`,
+  `isDlcLocked`, `ZoopediaSchema.js`). The Breeding window reads it as the "every species" list for
+  its search; whether Lua fills it before the Zoopedia is first opened is unknown (trace
+  `bw_catalogue` / `bw_catalogue_empty`).
 - The HUD heat map panel opens on the JS event `ShowHeatmap(categoryIndex, subIndex)` (what Lua's
   `HUDUI:ShowHeatmap` sends); `-1, -1` closes it. Indexes are into `categories` of
   `js/project/modules/Heatmaps/HeatmapsData.js` (`items[]`); InbreedingRisk is Animals/1.
   Don't send `Heatmaps_Select` alone. **offline**
 - `.PZ2QoL_x *` "display:flex" catch-all rules have the same specificity as single-class rules, so a
   later file's catch-all overrides an earlier file's `flex-direction: column`; restate it.
+  This also hits blocks one panel renders inside another: Auto mode's panel inside the Species
+  board came out as rows (`pz2qol_kinboard.css` loads after `pz2qol_autopilot.css`), so the latter
+  prefixes its rules with `.PZ2QoL_kb` (`.PZ2QoL_kb .PZ2QoL_apSection …`).
+- The Species board's column heads have a fixed height (`.PZ2QoL_kbColHead`, 9.2rem): a column
+  head can't take an extra row without a taller head.
+- `kinpanel.js makeScroll(cls)` adds `cls` as given, without the `PZ2QoL_` prefix: the box is
+  `.PZ2QoL_kpScroll.<cls>`, so CSS must target that (a `.PZ2QoL_<cls>` rule never matches).
 
 ## Scrolling and big mod panels
 
@@ -166,3 +244,29 @@
   child elements with borders for anything that must show. **guess**
 - `title` tooltips are probably not drawn by Gameface; put what matters in visible text or an
   expandable row. **guess**
+
+## HUD hub flags and events (1.0.5, **offline**)
+
+- DataStore `['park'].hasBuildingForAnimalStorage` (bound by `HUDModule`; the TaskBar's Market &
+  Storage tab is disabled and shows `IconTradeCentre` without it) and `['ui','HUD'].hubDisabled`.
+  `HUDModule.canOpenHUB()` also needs the heat map panel not to be open.
+- `HUD_OpenHubAnimalMarket` (no args): what the tab sends (after closing the build browser);
+  Lua `MainHUD.OnOpenAnimalMarket` opens the hub on the Market. `Zoopedia_FilterMarketToSpecies(sAnimal_X)`
+  only stores a pending filter nothing reads in 1.0.5.
+- PZ2QoL trade shortcuts (`tradejump.js`) read both flags to grey out their buttons with a visible
+  reason, and fall back to `HUD_OpenHubAnimalMarket` when Lua can't reach the MainHUD. The storage
+  toolbar's one-species chip sits above the stats (`.PZ2QoL_statsCol`), not among the filter chips:
+  one more chip there wrapped the bar to a third row (108 px; harness).
+
+## No WebAssembly, no Web Workers (**proven** 2026-10-18, D:, 1.0.5)
+
+- On the hub page, `typeof WebAssembly` and `typeof Worker` are both missing, so `kinprogdeep.js` logs `ui_caps wasm=false worker=false`.
+- `navigator.hardwareConcurrency` is not given.
+- So mod JS runs on the UI thread only, and long work must be sliced (as `planProgrammeAsync` is). Multi-core work needs a native helper (`lua-runtime.md`, "Loaders and a native return channel").
+
+- **Settings must not live in localStorage** (**proven**: the developer's Kin settings reset on every restart, 2026-10-18). Keep player-wide settings in `prefs.js` (the player save) and per-zoo data in `userstore.js`. `marketdesk.js` filters, `kinmates.js` sort, `bars.js` collapsed bars and `lister.js` enabled/offset are still session-only.
+
+- **Gamepad buttons on a mod panel** (2026-10-18, **offline**; harness proven): `import { onShouldBlockInput } from '/js/common/core/Input.js'`
+  and add a listener `e => ...`: every UI input (`e.inputName` `UI_Select` = A, `UI_Cancel` = B/back; `e.button.isPressed()` /
+  `isReleased()`) passes it before the focus system and the game; returning `true` blocks it. The Market desk's quick sheet
+  uses it for A = Confirm and to keep the game's own back-out from closing the screen (`marketdesk.js sheetInput`).

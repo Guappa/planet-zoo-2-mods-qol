@@ -15,6 +15,9 @@
 //   game's own Send to Zoo once, armed for 'trade' (storagesend.js
 //   armAndSend). Back in the zoo storagesend.js sends each arrival to the
 //   trade centre, one at a time.
+// "Bring all" (fetchAllRow, the developer 2026-10-19): the same with every
+//   species at once (species ALL_SPECIES): no species chip, every stored
+//   animal not already in this zoo is ticked, up to the room.
 // Nothing new is sent to Frontier: the game's own Send to Zoo, then the game's
 // own Move-screen trade-centre sequence per animal.
 import { loadCSS } from '/js/common/util/CSSUtil.js';
@@ -30,7 +33,7 @@ import { armAndSend } from '/js/mods/pz2qol/storagesend.js';
 import { canOpenTrade, getStorageCounts, getTradeCentreInfo, requestStorageCounts } from '/js/mods/pz2qol/tradejump.js';
 import { h, icon } from '/js/mods/pz2qol/ui.js';
 import {
-    COUNTDOWN_MS, excludeList, sameSpecies, fetchBlockReason, fetchNote, leftLines, parseExclude, pickedText, pickRows, sameKeys, START_ERRORS, TICK_WAIT_MS,
+    ALL_SPECIES, COUNTDOWN_MS, excludeList, fetchName, isAllSpecies, sameSpecies, fetchBlockReason, fetchNote, leftLines, parseExclude, pickedText, pickRows, sameKeys, START_ERRORS, TICK_WAIT_MS,
 } from '/js/mods/pz2qol/storagefetchcore.js';
 
 const ANSWER_TIMEOUT_MS = 6000;
@@ -113,19 +116,33 @@ async function start(model, species, opts) {
 // column). opts: { onOpened(), onError(text) }. null outside the park page.
 export function fetchRow(model, species, opts = {}) {
     if (!species || !isHudPage()) return null;
-    const { onOpened = () => {}, onError = () => {} } = opts;
-    requestStorageCounts([species]);
-    const name = speciesName(species);
-    const c = getStorageCounts(species);
+    return buildRow(model, species, opts);
+}
+
+// "Bring all stored animals to the trade centre": every species at once, in
+// the same place (any species picked on the board asks for the room).
+export function fetchAllRow(model, opts = {}) {
+    if (!isHudPage()) return null;
+    return buildRow(model, ALL_SPECIES, opts);
+}
+
+function buildRow(model, species, opts) {
+    const { onOpened = () => {}, onError = () => {}, countsFor = null } = opts;
+    const all = isAllSpecies(species);
+    requestStorageCounts([all ? countsFor : species].filter(Boolean));
+    const name = fetchName(species, speciesName);
+    const c = all ? null : getStorageCounts(species);
     const tc = getTradeCentreInfo() || {};
     const hasTradeCentre = model && model.tradeCentre ? true : tc.tc === false ? false : undefined;
-    const state = { tradeBlock: canOpenTrade(), hasTradeCentre, tcNow: tc.tcNow, tcMax: tc.tcMax, adults: c ? c.m + c.f : null, speciesName: name, mode: model && model.mode };
+    const state = { tradeBlock: canOpenTrade(), hasTradeCentre, tcNow: tc.tcNow, tcMax: tc.tcMax, adults: c ? c.m + c.f : null, speciesName: name, mode: model && model.mode, all };
     const why = fetchBlockReason(state);
     const err = lastError && lastError.species === species && Date.now() < lastError.until ? lastError.text : '';
     const note = h(`div.PZ2QoL_kbFetchNote${why || err ? '.warn' : ''}`, { text: why || err || fetchNote(state) });
-    const btn = h(`div.PZ2QoL_kbFetchBtn${why ? '.disabled' : ''}`, {
+    const btn = h(`div.PZ2QoL_kbFetchBtn${why ? '.disabled' : ''}${all ? '.all' : ''}`, {
         'data-fetch': species,
-        title: `Opens Animal Storage, ticks every stored ${name} and sends them with the game's own Send to Zoo. Back in the zoo each one goes to the trade centre, one at a time. Adults first; young too if there is room.`,
+        title: all
+            ? "Opens Animal Storage, ticks every stored animal of every species that isn't already in this zoo and sends them with the game's own Send to Zoo. Back in the zoo each one goes to the trade centre, one at a time. Adults first; young too if there is room."
+            : `Opens Animal Storage, ticks every stored ${name} and sends them with the game's own Send to Zoo. Back in the zoo each one goes to the trade centre, one at a time. Adults first; young too if there is room.`,
         onClick: () => {
             if (btn.classList.contains('disabled')) return;
             btn.classList.add('disabled');
@@ -152,8 +169,8 @@ export function fetchRow(model, species, opts = {}) {
                 }
             }, e => reportError('mod', 'Bring to the trade centre failed', e));
         },
-    }, icon('Icon_Animal_Trading', 'white', 'sm'), h('span', { text: `Bring ${name} to the trade centre` }));
-    return h('div.PZ2QoL_kbFetch', null, btn, note);
+    }, icon('Icon_Animal_Trading', all ? 'brown' : 'white', 'sm'), h('span', { text: all ? 'Bring all stored animals to the trade centre' : `Bring ${name} to the trade centre` }));
+    return h(`div.PZ2QoL_kbFetch${all ? '.all' : ''}`, null, btn, note);
 }
 
 // ------------------------------------------------------------------- hub
@@ -275,7 +292,7 @@ function panel(title, lines, { busy = false, buttons = [] } = {}) {
 }
 
 function renderWaiting(p) {
-    panel(`Bringing your ${speciesName(p.species)} to the trade centre`, [h('div.PZ2QoL_ssLine', { text: 'Opening your Animal Storage…' })], { busy: true });
+    panel(`Bringing your ${fetchName(p.species, speciesName)} to the trade centre`, [h('div.PZ2QoL_ssLine', { text: 'Opening your Animal Storage…' })], { busy: true });
 }
 
 function render() {
@@ -363,12 +380,19 @@ async function waitFor(test, ms) {
 }
 
 async function runJob(p) {
-    const j = job = { seq: p.seq, species: p.species, name: speciesName(p.species), room: p.room, fresh: p.fresh, phase: 'prepare', notes: [], keys: [], pick: null, timer: null };
+    const all = isAllSpecies(p.species);
+    const j = job = { seq: p.seq, species: p.species, name: fetchName(p.species, speciesName), room: p.room, fresh: p.fresh, phase: 'prepare', notes: [], keys: [], pick: null, timer: null };
     render();
     breadcrumb(p.fresh ? 'fetch_hub_start' : 'fetch_hub_again');
     const alive = () => job === j && j.phase === 'prepare';
-    setStorageFilters({ species: p.species });
-    j.chip = true;
+    // all species: no chip, and none left from an earlier species jump
+    if (all) {
+        if ((getStorageFilters() || {}).species) setStorageFilters({ species: '' });
+    }
+    else {
+        setStorageFilters({ species: p.species });
+        j.chip = true;
+    }
     // the game's own filters may hide some of them: clear them as the Market
     // desk does (put back when Storage closes)
     const active = nativeFiltersOn(k => get(STORAGE_DATA.concat('filters'), k));
@@ -378,7 +402,7 @@ async function runJob(p) {
         if (!a || !a.ok) j.notes.push('Your storage filters hide some animals; only the ones shown can be sent.');
         await wait(700);
     }
-    await waitFor(() => storageRows().some(r => sameSpecies(r.species, p.species)), ROWS_WAIT_MS);
+    await waitFor(() => storageRows().some(r => all || sameSpecies(r.species, p.species)), ROWS_WAIT_MS);
     if (!alive()) return;
     const exclude = parseExclude(p.exclude);
     // the park's animals are matched by GUID when the storage lineage is in
@@ -387,7 +411,7 @@ async function runJob(p) {
     const pick = pickRows(storageRows(), { species: p.species, room: p.room, exclude });
     j.pick = pick;
     j.notes.push(...leftLines(pick));
-    if (!pick.picked.length) return stop(`No ${j.name} in storage to bring.`);
+    if (!pick.picked.length) return stop(all ? 'Nothing in storage to bring.' : `No ${j.name} in storage to bring.`);
     j.keys = pick.picked.map(r => String(r.key));
     trigger('AnimalStorage_SelectAllToggled', false);
     for (const r of pick.picked) trigger('AnimalStorage_ItemCheckboxToggled', r.id, true);

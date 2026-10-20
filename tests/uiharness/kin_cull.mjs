@@ -109,15 +109,17 @@ async function seedLemurs(page) {
         window.__kcMoves = await import('/js/mods/pz2qol/kinmoves.js');
         const ok = { ok: true };
         const DEST = { bySpecies: { Lemur: Object.fromEntries(habs.map(([id]) => [id, ok])) }, habitats: [], tradeCentre: { id: '501', name: 'Trade Centre' } };
-        // 500 land per adult: Grove and Ridge have room for 6, the rest 10 (social max 8)
+        // 500 land per animal (the game's requirement covers the young too):
+        // Grove and Ridge have room for 6 adults, the rest 10 (social max 8)
         const adults = { 9030: 9, 9031: 10, 9032: 6, 9033: 8, 9034: 7 };
+        const youngIn = { 9030: 3, 9031: 2, 9032: 6, 9033: 4, 9034: 5 };
         const INFO = {
             social: { min: 2, max: 8 },
             fertilityAges: { maturity: 2, infertility: 15 },
             mating: 'polygyny',
             habitats: Object.fromEntries(habs.map(([id]) => [id, {
                 available: { land: id === '9030' || id === '9031' ? 3000 : 5000 },
-                required: { land: 500 * adults[id] },
+                required: { land: 500 * (adults[id] + youngIn[id]) },
                 adults: adults[id],
             }])),
         };
@@ -293,10 +295,10 @@ export async function hud(page, ctx) {
             return { done: r.done, error: r.error, moves: window.__kc.moves.map(m => [m.id, m.to]), starts: window.__kc.moves.map(m => m.start), overlap: window.__kc.overlap };
         });
         if (facts.run.error || facts.run.done !== sendN) problems.push(`run: done ${facts.run.done} of ${sendN}, ${facts.run.error}`);
-        if (!facts.run.moves.every(m => m[1] === 'trade:501')) problems.push(`targets: ${facts.run.moves.map(m => m[1])}`);
+        if (!facts.run.moves.every(m => m[1] === 'trade:501' || m[1] === 'tradeq:501')) problems.push(`targets: ${facts.run.moves.map(m => m[1])}`);
         if (facts.run.moves.map(m => m[0]).join() !== facts.plan.map(x => x.id).join()) problems.push('not sent in plan order');
         if (facts.run.overlap) problems.push('two moves in flight at once');
-        for (let i = 1; i < facts.run.starts.length; i++) if (facts.run.starts[i] - facts.run.starts[i - 1] < 1500) problems.push('moves less than 1.5 s apart');
+        for (let i = 1; i < facts.run.starts.length; i++) if (facts.run.starts[i] - facts.run.starts[i - 1] < 450) problems.push('moves less than the 0.5 s pause apart');
 
         // 7. Esc closes a preview first
         await click(thinOut);

@@ -1,13 +1,16 @@
-// In-park launcher: two round buttons docked on top of the game's own
-// tools column (bottom left: Paths, Barriers, Terrain ...), styled like it.
+// In-park launcher: round buttons docked on top of the game's own tools
+// column (bottom left: Paths, Barriers, Terrain ...), styled like it.
 //  - Species board: opens (or closes) the board in one click.
+//  - Breeding programme (under it): the small Breeding window, where the
+//    game opens its info panels (breedwin.js).
 //  - Autosave: shows the mod's autosave state; click for its settings.
 //
 // Our own element under <body>, placed every tick from the tools column's
 // box (.ToolsBar_root), never inside the game's preact tree (the game
 // recreates that column). Hidden whenever the column is hidden (management
 // screen, photo/camera mode, hidden UI, cinematics), and it gives up the
-// autosave button, then itself, when the alert buttons above leave no room.
+// autosave button, then the Breeding button, then itself, when the alert
+// buttons above leave no room.
 import { autosaveCard, getAutosaveSummary, installAutosave, onAutosave } from '/js/mods/pz2qol/autosave.js';
 import { breadcrumb, reportError } from '/js/mods/pz2qol/errors.js';
 import { h, icon, setClass, setText } from '/js/mods/pz2qol/ui.js';
@@ -16,10 +19,12 @@ const TICK_MS = 250;
 
 let dock = null;
 let boardBtn = null;
+let breedBtn = null;
 let saveBtn = null;
 let saveBadge = null;
 let card = null;
 let boardModule = null;
+let breedModule = null;
 
 function board() {
     if (boardModule) return Promise.resolve(boardModule);
@@ -34,6 +39,20 @@ function toggleBoard() {
         else m.openSpeciesBoard({});
         setTimeout(sync, 50);
     }).catch(e => reportError('ui', 'Species board could not open', e));
+}
+
+function breeding() {
+    if (breedModule) return Promise.resolve(breedModule);
+    return import('/js/mods/pz2qol/breedwin.js').then(m => (breedModule = m));
+}
+
+function toggleBreeding() {
+    breadcrumb('breed_launch');
+    closeCard();
+    breeding().then(m => {
+        m.toggleBreedingWindow({});
+        setTimeout(sync, 50);
+    }).catch(e => reportError('ui', 'Breeding window could not open', e));
 }
 
 // a round button with a hover label to its right, like the game's own
@@ -71,9 +90,10 @@ function toggleCard() {
 function build() {
     boardBtn = roundButton('IconAnimals', 'Species board', toggleBoard);
     saveBtn = roundButton('save', 'Autosave', toggleCard);
+    breedBtn = roundButton('Icon_Heart', 'Breeding programme', toggleBreeding);
     saveBadge = h('div.PZ2QoL_dockBadge');
     saveBtn.appendChild(saveBadge);
-    dock = h('div.PZ2QoL_dock', null, h('div.PZ2QoL_dockPanel'), saveBtn, boardBtn);
+    dock = h('div.PZ2QoL_dock', null, h('div.PZ2QoL_dockPanel'), saveBtn, boardBtn, breedBtn);
     document.body.appendChild(dock);
     document.addEventListener('click', e => {
         if (card && !card.contains(e.target) && !saveBtn.contains(e.target)) closeCard();
@@ -111,6 +131,14 @@ function sync() {
         open = false;
     }
     setClass(boardBtn, 'on', open);
+    let bw = false;
+    try {
+        bw = !!(breedModule && breedModule.isBreedingWindowOpen && breedModule.isBreedingWindowOpen());
+    }
+    catch (e) {
+        bw = false;
+    }
+    setClass(breedBtn, 'on', bw);
     if (card && card.__sync) card.__sync();
 }
 
@@ -130,9 +158,11 @@ function place() {
     const alerts = visibleBox(document.querySelector('.NotificationsModule_buttons'));
     const room = alerts ? tools.top - alerts.bottom - 4 : Infinity;
     setClass(saveBtn, 'displayNone', false);
+    setClass(breedBtn, 'displayNone', false);
     setClass(dock, 'displayNone', false);
     if (dock.getBoundingClientRect().height > room) {
         setClass(saveBtn, 'displayNone', true);
+        if (dock.getBoundingClientRect().height > room) setClass(breedBtn, 'displayNone', true);
         if (dock.getBoundingClientRect().height > room) setClass(dock, 'displayNone', true);
     }
     if (card) {

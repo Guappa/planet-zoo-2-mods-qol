@@ -34,7 +34,8 @@ local string   = global.string
 local Fetch = module(...)
 
 Fetch.nPendingSeconds = 600 -- a request older than this is dropped
-Fetch.nMaxExclude = 4000    -- characters of the exclude list
+Fetch.nMaxExclude = 16000   -- characters of the exclude list ("Bring all": the whole zoo)
+Fetch.sAllSpecies = "*"     -- "Bring all": every species in storage (the page's ALL_SPECIES)
 Fetch.tPending = nil        -- { nSeq, sSpecies, nRoom, sExclude, nTime, bDelivered }
 Fetch.tLastClick = nil      -- { sZoo, sMode, nTime }: read by StorageSend's arm
 Fetch.nSeq = 0
@@ -119,7 +120,12 @@ Fetch.Start = function(self, oUI, sReq, sSpecies, sExclude)
 	if TJ == nil or Kin == nil then
 		return answer(false, "nohub")
 	end
-	local sp = TJ.CleanSpecies(sSpecies)
+	local sp = nil
+	if tostring(sSpecies or "") == self.sAllSpecies then
+		sp = self.sAllSpecies
+	else
+		sp = TJ.CleanSpecies(sSpecies)
+	end
 	if sp == nil then
 		return answer(false, "badspecies")
 	end

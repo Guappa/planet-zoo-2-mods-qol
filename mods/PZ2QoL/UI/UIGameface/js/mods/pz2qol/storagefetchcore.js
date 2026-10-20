@@ -21,6 +21,18 @@ const BUSY_POLL_MS = 500;
 export const ERROR_PAUSE_MS = 8000; // after a refused or unconfirmed request online
 export const COUNTDOWN_MS = 3000;   // the hub card's last chance to cancel
 export const TICK_WAIT_MS = 3000;   // the game ticks the rows within this
+// "Bring all": every species in storage at once (the developer, 2026-10-19).
+// Carried as the species through Lua and the hub page.
+export const ALL_SPECIES = '*';
+
+export function isAllSpecies(species) {
+    return String(species == null ? '' : species) === ALL_SPECIES;
+}
+
+// What the cards call the animals: "Okapi" or "stored animals".
+export function fetchName(species, nameOf = x => x) {
+    return isAllSpecies(species) ? 'stored animals' : nameOf(species);
+}
 
 // ------------------------------------------------------------- exclusion
 
@@ -29,13 +41,15 @@ export function cleanName(s) {
     return String(s == null ? '' : s).toLowerCase().replace(/[^a-z0-9 _.-]/g, '').replace(/\s+/g, ' ').trim();
 }
 
-// The park's own animals of the species as the exclude list Lua carries to
-// the hub: "g:<guid>" and "n:<sex>:<name>" items, comma separated.
+// The park's own animals of the species (every species for ALL_SPECIES) as
+// the exclude list Lua carries to the hub: "g:<guid>" and "n:<sex>:<name>"
+// items, comma separated.
 export function excludeList(animals, species) {
+    const all = isAllSpecies(species);
     const want = normSpecies(species);
     const out = [];
     for (const a of animals || []) {
-        if (!a || normSpecies(a.species) !== want) continue;
+        if (!a || (!all && normSpecies(a.species) !== want)) continue;
         if (a.guid != null && /^[\w.-]+$/.test(String(a.guid))) out.push('g:' + String(a.guid));
         const n = cleanName(a.name);
         if (n) out.push(`n:${Number(a.sex) || 0}:${n}`);
@@ -66,15 +80,16 @@ function rank(r) {
 
 // rows: [{ id, key, name, species, sex, maturity, isShoal, isMoving,
 //   auctionTimerSeconds, guid? }] (the storage list, any species).
-// o: { species, room (-1 or null: unknown), exclude: parseExclude() }.
+// o: { species (ALL_SPECIES: every one), room (-1 or null: unknown), exclude: parseExclude() }.
 // -> { picked, left (no room), shoals, moving, listed, here }
 export function pickRows(rows, o = {}) {
+    const all = isAllSpecies(o.species);
     const want = normSpecies(o.species);
     const ex = o.exclude || { guids: new Set(), names: new Set() };
     const out = { picked: [], left: [], shoals: [], moving: [], listed: [], here: [] };
     const ok = [];
     for (const r of rows || []) {
-        if (!r || r.id == null || r.key == null || normSpecies(r.species) !== want) continue;
+        if (!r || r.id == null || r.key == null || (!all && normSpecies(r.species) !== want)) continue;
         if (r.isShoal) out.shoals.push(r);
         else if (r.isMoving) out.moving.push(r);
         else if (r.auctionTimerSeconds != undefined && r.auctionTimerSeconds > 0) out.listed.push(r);
@@ -144,6 +159,10 @@ export function fetchBlockReason(s = {}) {
 // The note under the button.
 export function fetchNote(s = {}) {
     const sp = s.speciesName || 'this species';
+    if (s.all) {
+        const where = s.mode === 'franchise' ? 'Storage, all zoos' : 'Trade centre';
+        return Number.isFinite(s.tcNow) && Number.isFinite(s.tcMax) ? `Every species · ${where} ${s.tcNow}/${s.tcMax}` : 'Every species in your Animal Storage';
+    }
     // Franchise: the trade centre's count is the whole account's storage (all
     // zoos; the developer saw 90/250, 2026-10-18)
     const where = s.mode === 'franchise' ? 'storage, all zoos' : 'trade centre';

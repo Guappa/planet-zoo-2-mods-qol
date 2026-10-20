@@ -194,10 +194,15 @@ end
 local function addAnimal(g, t)
 	t = t or {}
 	tAnimals[g] = {
-		timer = t.timer or -1, isMoving = t.isMoving == true, maturity = t.maturity or 2,
+		timer = t.timer or -1, isMoving = t.isMoving == true, isPregnant = t.isPregnant == true, maturity = t.maturity or 2,
 		tradeAllowed = t.tradeAllowed ~= false, reason = t.reason, limits = t.limits or defaultLimits(),
 		noSelect = t.noSelect, selectError = t.selectError, sendError = t.sendError,
 		outcome = t.outcome, onSelect = t.onSelect, aidType = t.aidType,
+		quickOutcome = t.quickOutcome, quickDelay = t.quickDelay, quickError = t.quickError,
+		-- the quick actions' fields the native writes for the selection (actions context)
+		quick = t.quick,
+		-- what StorageGetIDAndAIDType returns for its key (default: the GUID, 2)
+		aidFn = t.aidFn, name = t.name, species = t.species, gender = t.gender, source = t.source,
 	}
 	tOrder[#tOrder + 1] = g
 end
@@ -237,20 +242,42 @@ local function resetNative()
 		-- the flag nil and the array empty; the flag always false; tradeAllowed
 		-- and the limits nil
 		bLuaSelBroken = false, bLuaFlagFalse = false, bLuaDataBroken = false,
+		nGoneDelay = 0.33,
 	}
 end
 resetNative()
 
+-- a quick trade / release as the native does it (Phase 0b, Y: 2026-10-18):
+-- the row leaves the storage list ~0.33 s later; a.quickOutcome "stay"
+-- keeps it, a function does something else; a.quickError raises
+local function quickAct(t)
+	local sKey = type(t) == "table" and t[1] or nil
+	local g = sKey and guidAt(sKey)
+	local a = g and tAnimals[g]
+	if a == nil then return end
+	if a.quickError then error("quick call blew up") end
+	if a.quickOutcome == "stay" then return end
+	if type(a.quickOutcome) == "function" then return a.quickOutcome(g) end
+	after(a.quickDelay or tNative.nGoneDelay, function()
+		local tNew = {}
+		for _, x in ipairs(tOrder) do if x ~= g then tNew[#tNew + 1] = x end end
+		tOrder = tNew
+		tNative.tSelection = {}
+	end)
+end
 local tAuctions = {}
 local planetHub = {
 	StorageGetIDAndAIDType = function(sKey)
 		local g = guidAt(sKey)
+		if g ~= nil and tAnimals[g] and tAnimals[g].aidFn then return tAnimals[g].aidFn(sKey) end
 		if g ~= nil then return g, (tAnimals[g] and tAnimals[g].aidType) or 2 end
 		return 0, 0
 	end,
 	StorageUIClearSelectedItems = function()
 		record("Clear")
 		tNative.tSelection = {}
+		-- a native that also empties the selection's data on Clear (unknown in game)
+		if tNative.bClearResets then tNative.tActions, tNative.tLimits = {}, {} end
 	end,
 	StorageUISelectItem = function(sId)
 		local g = guidForNative(sId)
@@ -265,10 +292,14 @@ local planetHub = {
 		after(tNative.nSelectDelay, function() tNative.tSelection = { sKey } end)
 		after(tNative.nDataDelay, function()
 			tNative.tActions = { tradeAllowed = a.tradeAllowed, tradeDisallowedReason = a.reason }
+			for k, v in pairs(a.quick or {}) do tNative.tActions[k] = v end
 			tNative.tLimits = copy(a.limits)
 		end)
 		if a.onSelect then a.onSelect(sKey, g) end
 	end,
+	-- the permanent quick actions: the engine must never call them (Phase 1)
+	StorageUIQuickTradeAnimals = function(...) record("QuickTrade", ...); quickAct(...) end,
+	StorageUIReleaseAnimalsToWild = function(...) record("Release", ...); quickAct(...) end,
 	StorageUIStartAnimalAuction = function(sKey, nPrice, nHours)
 		local g = guidAt(sKey)
 		tAuctions[#tAuctions + 1] = { key = sKey, price = nPrice, hours = nHours, guid = g, t = nClock }
@@ -299,7 +330,7 @@ local function rowTable(sKey)
 		for _, k in ipairs(tNative.tSelection) do if k == sKey then bSelected = true end end
 		if tNative.bLuaFlagFalse then bSelected = false end
 	end
-	return { id = tNative.bIdOther and ("id_" .. gs(guidAt(sKey))) or sKey, auctionTimerSeconds = a.timer, isMoving = a.isMoving, maturity = a.maturity, name = "Animal", selected = bSelected }
+	return { id = tNative.bIdOther and ("id_" .. gs(guidAt(sKey))) or sKey, auctionTimerSeconds = a.timer, isMoving = a.isMoving, isPregnant = a.isPregnant, maturity = a.maturity, name = a.name or "Animal", species = a.species, gender = a.gender, selected = bSelected, source = a.source }
 end
 local ui2 = {
 	GetNoCreateDataStoreContext = function(a, ...)
@@ -334,6 +365,9 @@ local ui2 = {
 	GetDataStoreContextAsTable = function(ctx)
 		if ctx.sPath == "hubAnimalsData/animalStorageData/list" then
 			if tNative.bListUnreadable then error("not a table") end
+			-- when the list was read (no read may fall in the rebuild after a quick send)
+			tNative.tListReads = tNative.tListReads or {}
+			tNative.tListReads[#tNative.tListReads + 1] = nClock
 			local t = {}
 			for i in ipairs(tOrder) do t["animal_" .. i] = rowTable("animal_" .. i) end
 			return t
@@ -400,7 +434,19 @@ local StorageMode = {
 	TransitionIn = function(self) record("StorageIn") end,
 	TransitionOut = function(self) record("StorageOut") end,
 	Advance = function(self) record("StorageAdvance") end,
+	-- the game's quick handlers (one-line pass-throughs in 1.0.5): what they
+	-- were called with, and what they return (the wrappers must pass both on)
+	OnQuickTradeAnimals = function(...)
+		record("GameQuickTrade", ...)
+		if StorageModeThrow then error("game handler error") end
+		return "qt", nil, 3
+	end,
+	OnReleaseAnimalsToWild = function(...)
+		record("GameRelease", ...)
+		return "rel"
+	end,
 }
+local fnGameQuickTrade, fnGameRelease = StorageMode.OnQuickTradeAnimals, StorageMode.OnReleaseAnimalsToWild
 tPatches["startscreen.globe.animalstoragehubmode"](StorageMode)
 local oStorage = setmetatable({ tWorldAPIs = { franchise = franchise } }, { __index = StorageMode })
 
@@ -638,6 +684,27 @@ check(#tAuctions == 1 and tAuctions[1].guid == 205, "only the sellable one sent"
 check(tAuctions[1].t - nStart < 1.5, "no pause after local skips")
 check(#calls("Select") == 1, "skipped animals never selected")
 check(countMarks("lister_skip") == 5, "skips marked")
+
+-----------------------------------------------------------------------
+-- 5b. A pregnant animal is refused by the engine too (the page never puts
+--     one in a job; a stale or forced job must still not list her)
+-----------------------------------------------------------------------
+reset()
+oStorage:TransitionIn()
+addAnimal(211, { isPregnant = true })
+addAnimal(212, { isPregnant = true, maturity = 3 })
+addAnimal(213)
+sReq, nFrom = start(job(3000, { line(211, "500", "max"), line(212, "700", "max"), line(213, "500", "max") }))
+check(runToEnd(60), "pregnant run finished")
+s = lastState()
+for i = 1, 2 do
+	check(s.results[i].status == "skipped" and s.results[i].kind == "pregnant", "pregnant " .. i .. " skipped: " .. tostring(s.results[i].kind))
+	check(s.results[i].detail == "Pregnant: the market won't take it until she gives birth.", "pregnant " .. i .. " reason: " .. tostring(s.results[i].detail))
+end
+check(s.results[3].status == "listed", "the other one listed")
+check(#tAuctions == 1 and tAuctions[1].guid == 213, "a pregnant animal is never sent")
+check(#calls("Select") == 1, "a pregnant animal is never selected")
+check(countMarks("lister_skip_pregnant") == 2, "pregnant skips marked")
 
 -----------------------------------------------------------------------
 -- 6. untradeable (after a tradeable one: its data is still there for a
@@ -1189,7 +1256,7 @@ fnPageFrame = function()
 		tPage.nNext = nClock + 0.1
 		tPage.nReports = tPage.nReports + 1
 		tPage.nThis = tPage.nThis + 1
-		fire("PZ2QoL_ListerSeen", tPage.sFixedReq or tPage.sReq, pageText())
+		fire("PZ2QoL_ListerSeen", tPage.sFixedReq or tPage.sReq, (tPage.fnText or pageText)())
 	end
 end
 local function pageRun(tSetup, tSpec, sLabel)
@@ -1279,6 +1346,7 @@ check(nWatchSends >= 5, "watch asked again while nothing reports (" .. nWatchSen
 -- the page in a working game: Lua's reads fine too, still listed
 s = pageRun({}, { { 1695 }, { 1696 } }, "both")
 check(#tAuctions == 2 and countMarks("lister_diag_flag_true") == 1 and countMarks("lister_diag_arr_key") == 1, "both readable: listed, diagnosed")
+local fnPageFrameSaved = fnPageFrame
 fnPageFrame = nil
 
 -----------------------------------------------------------------------
@@ -1323,6 +1391,1163 @@ addAnimal(1711, { tradeAllowed = false })
 sReq, nFrom = start(job(1000, { line(1711, "500", "max") }))
 check(runToEnd(30), "untradeable: run finished")
 check(countMarks("lister_skip_untradeable") == 1, "skip kind traced")
+
+-----------------------------------------------------------------------
+-- The desk sees every animal: PZ2QoL_DeskFilters clears the game's own
+-- storage filters (as its Reset all filters does) and puts the kept
+-- settings back on close, after a run, or when Animal Storage closes.
+-----------------------------------------------------------------------
+do
+	local tSettings = { species = { 7 }, text = "Leo" }
+	planetHub.StorageUIGetSortFilterSettings = function() record("GetSettings") return tSettings end
+	planetHub.StorageUISetSortFilterSettings = function(t) record("SetSettings", t) end
+	planetHub.StorageUIResetFiltersToDefault = function() record("ResetFilters") end
+	planetHub.StorageUIClearFilterText = function() record("ClearText") end
+	planetHub.StorageUIRequestData = function() record("RequestData") end
+	local function deskAns(sReq)
+		local t = sent("PZ2QoL_DeskFiltersState")
+		local x = t[#t]
+		return x and x.tArgs[1] == sReq and decode(x.tArgs[2]) or nil
+	end
+	local function order()
+		local t = {}
+		for _, c in ipairs(tCalls) do
+			if c.sName == "GetSettings" or c.sName == "SetSettings" or c.sName == "ResetFilters" or c.sName == "ClearText" or c.sName == "RequestData" or c.sName == "StorageOut" then t[#t + 1] = c.sName end
+		end
+		return table.concat(t, ",")
+	end
+	check(oView.tListeners["PZ2QoL_DeskFilters"] ~= nil, "listener PZ2QoL_DeskFilters")
+
+	-- outside Animal Storage: nothing changes
+	reset()
+	oStorage:TransitionOut()
+	fire("PZ2QoL_DeskFilters", "d0", "clear")
+	local a = deskAns("d0")
+	check(a and a.ok == false and a.detail == "nostorage" and order() == "StorageOut", "desk clear outside storage refused, nothing called")
+
+	-- clear, then restore on close: the game's own sequences
+	reset()
+	oStorage:TransitionIn()
+	fire("PZ2QoL_DeskFilters", "d1", "clear")
+	a = deskAns("d1")
+	check(a and a.ok == true and a.cleared == true, "desk clear answered")
+	check(order() == "GetSettings,ResetFilters,ClearText,RequestData", "desk clear: settings kept, then Reset all filters (" .. order() .. ")")
+	check(countMarks("lister_desk_clear") == 1, "desk clear marked")
+	fire("PZ2QoL_DeskFilters", "d2", "clear")
+	a = deskAns("d2")
+	check(a and a.ok and a.detail == "again" and #calls("GetSettings") == 1, "desk clear again: settings not taken twice")
+	tCalls = {}
+	fire("PZ2QoL_DeskFilters", "d3", "restore")
+	a = deskAns("d3")
+	local tSet = calls("SetSettings")
+	check(a and a.ok == true and a.cleared == false, "desk restore answered")
+	check(order() == "SetSettings,RequestData" and tSet[1].tArgs[1] == tSettings, "desk restore: the kept settings back (" .. order() .. ")")
+	tCalls = {}
+	fire("PZ2QoL_DeskFilters", "d4", "restore")
+	check(deskAns("d4").detail == "none" and order() == "", "desk restore twice: nothing more")
+
+	-- a run going on keeps the full list until it ends
+	reset()
+	oStorage:TransitionIn()
+	addAnimal(1801)
+	addAnimal(1802)
+	fire("PZ2QoL_DeskFilters", "d5", "clear")
+	start(job(1000, { line(1801, "500", "max"), line(1802, "600", "max") }))
+	tick(2)
+	tCalls = {}
+	fire("PZ2QoL_DeskFilters", "d6", "restore")
+	check(deskAns("d6").detail == "later" and order() == "", "desk restore during a run: later")
+	check(runToEnd(40), "desk: run finished")
+	check(#tAuctions == 2, "desk: both listed with the filters cleared")
+	check(order() == "SetSettings,RequestData", "desk restore after the run (" .. order() .. ")")
+	check(countMarks("lister_desk_restore_later") == 1 and countMarks("lister_desk_restore") == 1, "desk restore later marked")
+
+	-- reopened before the run ended: stays cleared
+	reset()
+	oStorage:TransitionIn()
+	addAnimal(1811)
+	fire("PZ2QoL_DeskFilters", "d7", "clear")
+	start(job(1000, { line(1811, "500", "max") }))
+	tick(2)
+	fire("PZ2QoL_DeskFilters", "d8", "restore")
+	fire("PZ2QoL_DeskFilters", "d9", "clear")
+	tCalls = {}
+	check(runToEnd(40), "desk reopened: run finished")
+	check(order() == "" and Lister.tDesk ~= nil, "desk reopened during the run: filters stay cleared")
+
+	-- leaving Animal Storage restores them before the game saves its filters
+	tCalls = {}
+	oStorage:TransitionOut()
+	check(order() == "SetSettings,RequestData,StorageOut" and Lister.tDesk == nil, "desk: storage closed restores first (" .. order() .. ")")
+
+	-- no settings to put back: the player's filters are left alone
+	reset()
+	oStorage:TransitionIn()
+	planetHub.StorageUIGetSortFilterSettings = function() record("GetSettings") return nil end
+	fire("PZ2QoL_DeskFilters", "d10", "clear")
+	a = deskAns("d10")
+	check(a and a.ok == false and a.detail == "nosettings" and order() == "GetSettings", "desk clear without settings: nothing reset")
+	-- an older game without the calls
+	planetHub.StorageUIGetSortFilterSettings = nil
+	fire("PZ2QoL_DeskFilters", "d11", "clear")
+	a = deskAns("d11")
+	check(a and a.ok == false and string.find(a.detail, "missing", 1, true) == 1, "desk clear on a game without the calls refused")
+	planetHub.StorageUISetSortFilterSettings, planetHub.StorageUIResetFiltersToDefault = nil, nil
+	planetHub.StorageUIClearFilterText, planetHub.StorageUIRequestData = nil, nil
+	oStorage:TransitionOut()
+end
+
+-----------------------------------------------------------------------
+-- 18. The detailed log (Core:Log, debug builds): one animal can be
+-- followed end to end by run + guid, a skip says why, a server error
+-- carries its code and request, the end has the counts
+-----------------------------------------------------------------------
+do
+	local tLog = {}
+	Core.bTrace = true
+	Core.Log = function(_, sArea, sEvent, t) tLog[#tLog + 1] = { area = sArea, ev = sEvent, t = t or {} } end
+	reset()
+	oStorage:TransitionIn()
+	addAnimal(1801, { outcome = outcome({ { "err", 0.1, 8, 28 }, { "list", 0.5 } }) }) -- background error, then listed
+	addAnimal(1802, { maturity = 0 })                                                  -- juvenile: skipped
+	addAnimal(1803, { outcome = outcome({ { "err", 0.2, 5, 42 } }) })                  -- NotAllowed
+	sReq, nFrom = start(job(1000, { line(1801, "700", "max"), line(1802, "500", "max"), line(1803, "500", "max") }))
+	check(runToEnd(60), "log: run finished")
+	-- one animal's events in order, and whether each carried run and i
+	local function evs(sGuid)
+		local t, bAll = {}, true
+		for _, x in ipairs(tLog) do
+			if x.area == "lister" and x.t.guid == sGuid then
+				t[#t + 1] = x.ev
+				bAll = bAll and x.t.run ~= nil and x.t.i ~= nil
+			end
+		end
+		return t, bAll
+	end
+	local function inOrder(t, tWant)
+		local j = 1
+		for _, s in ipairs(t) do
+			if s == tWant[j] then j = j + 1 end
+		end
+		return j > #tWant
+	end
+	local function find(sEv, sGuid)
+		for _, x in ipairs(tLog) do
+			if x.ev == sEv and (sGuid == nil or x.t.guid == sGuid) then return x.t end
+		end
+	end
+	local t1, bAll1 = evs("1801")
+	check(inOrder(t1, { "job", "animal", "step", "resolve", "select", "price", "send", "server_error", "result" }), "log: listed animal end to end: " .. table.concat(t1, ","))
+	check(bAll1, "log: every line of the animal has run and i")
+	local tStart = find("start")
+	check(tStart and tStart.n == 3 and tStart.paceMs == 1000 and tStart.req == sReq, "log: start with count, pace and request")
+	local tSend = find("send", "1801")
+	check(tSend and tSend.price == 700 and tSend.hours == 12 and tSend.key == "animal_1", "log: send with key, price and hours")
+	local tPrice = find("price", "1801")
+	check(tPrice and tPrice.jobPrice == 700 and tPrice.price == 700 and tPrice.pmin == 100 and tPrice.pmax == 5000 and tPrice.hmax == 12, "log: price inputs (job price, limits)")
+	local tErr1 = find("server_error", "1801")
+	check(tErr1 and tErr1.ignored == "otherrequest" and tErr1.req == 28, "log: a background error is logged as ignored")
+	local tRes1 = find("result", "1801")
+	check(tRes1 and tRes1.status == "listed" and tRes1.sent == true and tRes1.afterSend ~= nil, "log: listed result with time after the send")
+	local t2 = evs("1802")
+	check(inOrder(t2, { "job", "animal", "resolve", "result" }), "log: skipped animal: " .. table.concat(t2, ","))
+	local tRes2 = find("result", "1802")
+	check(tRes2 and tRes2.status == "skipped" and tRes2.kind == "juvenile" and tRes2.sent == false, "log: skip kind")
+	local tRow2 = find("resolve", "1802")
+	check(tRow2 and tRow2.maturity == 0 and tRow2.key == "animal_2", "log: resolve shows the row's maturity")
+	local tErr3 = find("server_error", "1803")
+	check(tErr3 and tErr3.ignored == false and tErr3.code == 5 and tErr3.req == 42 and tErr3.name == "NotAllowed", "log: the listing's own error counts, with code, name, request")
+	local tRes3 = find("result", "1803")
+	check(tRes3 and tRes3.status == "refused" and tRes3.err == "NotAllowed", "log: refused with the server's name")
+	local tEnd = find("end")
+	check(tEnd and tEnd.phase == "done" and tEnd.counts.listed == 1 and tEnd.counts.skip_juvenile == 1 and tEnd.counts.refused == 1, "log: end counts")
+	-- every logged value is printable by the formatter (no functions, no userdata)
+	local bPlain = true
+	for _, x in ipairs(tLog) do
+		for _, v in pairs(x.t) do
+			local sT = type(v)
+			if sT ~= "string" and sT ~= "number" and sT ~= "boolean" and sT ~= "table" then bPlain = false end
+		end
+	end
+	check(bPlain, "log: only plain values")
+	-- Stop and pace are logged too
+	tLog = {}
+	reset()
+	oStorage:TransitionIn()
+	addAnimal(1811)
+	addAnimal(1812)
+	start(job(1000, { line(1811, "500", "max"), line(1812, "500", "max") }))
+	fire("PZ2QoL_ListerPace", 2500)
+	tick(2)
+	fire("PZ2QoL_ListerStop")
+	check(find("pace") and find("pace").ms == 2500, "log: pace change")
+	check(find("stop") and find("stop").run ~= nil, "log: stop")
+	check(find("end") and find("end").phase == "stopped", "log: stopped end")
+	Core.bTrace = nil
+	Core.Log = nil
+	oStorage:TransitionOut()
+end
+
+-----------------------------------------------------------------------
+-- 19. Ids the game gives in other shapes (in game 2026-10-18 only 4 of 63
+-- rows gave a plain decimal): big floats, strings, nothing, userdata; a
+-- float collision is no id; a row without an id is found by a unique
+-- fingerprint, never by an ambiguous one; the send checks again by the
+-- same rule; what failed is logged once per shape
+-----------------------------------------------------------------------
+do
+	local function resolve(sReq, tKeys)
+		fire("PZ2QoL_ListerResolve", sReq, table.concat(tKeys, ","))
+		local t = sent("PZ2QoL_ListerIds")
+		return decode(t[#t].tArgs[2])
+	end
+	local function lion(sName, t)
+		t = t or {}
+		t.species, t.name, t.gender = t.species or "Animal_Lion", sName, t.gender or 1
+		return t
+	end
+	local BIG = 2.0 ^ 63
+	-- the token rules themselves
+	local s, bLossy, sWhy = Lister.IdToken(true, BIG, 2)
+	check(s == string.format("%.0f", BIG) and string.match(s, "^922337203685477") and bLossy == true, "id: float 2^63 -> %.0f, lossy (" .. tostring(s) .. ")")
+	s, bLossy = Lister.IdToken(true, 2.0 ^ 64 + 4096.0 * 4096.0 * 4096.0, 2)
+	check(s == string.format("%.0f", 2.0 ^ 64 + 4096.0 * 4096.0 * 4096.0) and bLossy, "id: float above 2^64")
+	s, bLossy = Lister.IdToken(true, 12345.0, 2)
+	check(s == "12345" and not bLossy, "id: small whole float exact")
+	s, bLossy = Lister.IdToken(true, 77, 2)
+	check(s == "77" and not bLossy, "id: integer exact")
+	check(Lister.IdToken(true, "a1B2-c3:d_4", 2) == "a1B2-c3:d_4", "id: GUID-like string")
+	check(Lister.IdToken(true, " 991 ", 0) == "t0_991", "id: digit string, type 0")
+	check(Lister.IdToken(true, 5, nil) == "tx_5", "id: no type kept apart")
+	s, _, sWhy = Lister.IdToken(true, nil, 2)
+	check(s == nil and sWhy == "nil", "id: nil -> none")
+	s, _, sWhy = Lister.IdToken(true, io.stdout, 2)
+	check(s == nil and sWhy == "userdata", "id: userdata -> none (" .. tostring(sWhy) .. ")")
+	s, _, sWhy = Lister.IdToken(true, {}, 2)
+	check(s == nil and sWhy == "table", "id: table -> none")
+	check(Lister.IdToken(true, 0, 2) == nil and Lister.IdToken(true, "0", 2) == nil and Lister.IdToken(true, 0.0, 2) == nil, "id: zero -> none")
+	check(Lister.IdToken(true, 12.5, 2) == nil and Lister.IdToken(true, 0 / 0, 2) == nil, "id: fraction, NaN -> none")
+	check(Lister.IdToken(true, "a b", 2) == nil and Lister.IdToken(true, string.rep("x", 65), 2) == nil, "id: odd strings -> none")
+	s, _, sWhy = Lister.IdToken(false, "boom", nil)
+	check(s == nil and sWhy == "error", "id: call raised -> none")
+
+	local tLog = {}
+	Core.bTrace = true
+	Core.Log = function(_, sArea, sEvent, t) tLog[#tLog + 1] = { area = sArea, ev = sEvent, t = t or {} } end
+	local function logs(sEv)
+		local t = {}
+		for _, x in ipairs(tLog) do if x.ev == sEv then t[#t + 1] = x.t end end
+		return t
+	end
+
+	-- a. float >= 2^63, string, nil, userdata (the last two look the same: no fingerprint either)
+	reset()
+	oStorage:TransitionIn()
+	addAnimal(1901, lion("Big", { aidFn = function() return BIG, 2 end }))
+	addAnimal(1902, lion("Str", { aidFn = function() return "abc-1902:x", 2 end }))
+	addAnimal(1903, lion("Twin", { aidFn = function() return nil, nil end }))
+	addAnimal(1904, lion("Twin", { aidFn = function() return io.stdout, 2 end }))
+	tLog = {}
+	local r = resolve("r19a", { "animal_1", "animal_2", "animal_3", "animal_4" })
+	check(r.ids.animal_1 == string.format("%.0f", BIG) and r.via.animal_1 == "lossy", "a: big float resolved (lossy, unique)")
+	check(r.ids.animal_2 == "abc-1902:x" and r.via.animal_2 == "id", "a: string id resolved")
+	check(r.ids.animal_3 == nil and r.ids.animal_4 == nil and #r.failed == 2, "a: nil and userdata: no id, same fingerprint: failed")
+	local tKeysLog = logs("resolve_keys")
+	check(#tKeysLog == 1 and tKeysLog[1].failed == 2 and tKeysLog[1].via.lossy == 1 and tKeysLog[1].via.id == 1 and tKeysLog[1].via.none == 2 and tKeysLog[1].types["2"] == 2, "a: resolve_keys with the type and way mix")
+	local tFail = logs("resolve_fail")
+	check(#tFail == 2, "a: one resolve_fail line per shape (" .. #tFail .. ")")
+	local tByType = {}
+	for _, x in ipairs(tFail) do tByType[x.idType] = x end
+	check(tByType["nil"] and tByType["nil"].ok == true and tByType["nil"].nType == "nil" and tByType["nil"].row == true and tByType["nil"].n == 1 and string.find(tByType["nil"].why, "ambiguous"), "a: the nil shape")
+	check(tByType.userdata and tByType.userdata.nType == 2 and tByType.userdata.numType == nil and type(tByType.userdata.id) == "string" and #tByType.userdata.id <= 40, "a: the userdata shape (described, value cut)")
+	-- asked again with nothing changed: no new lines
+	resolve("r19a2", { "animal_1", "animal_2", "animal_3", "animal_4" })
+	check(#logs("resolve_keys") == 1 and #logs("resolve_fail") == 2, "a: same answer again: not logged again")
+	-- the send re-resolves by the same rule: both listed
+	start(job(1000, { r.ids.animal_1 .. " animal_1 500 max", r.ids.animal_2 .. " animal_2 600 max" }))
+	check(runToEnd(40), "a: run finished")
+	check(#tAuctions == 2 and tAuctions[1].guid == 1901 and tAuctions[2].guid == 1902, "a: big float and string ids listed")
+
+	-- b. float collision: no id; then the fingerprint if it is unique, else nothing
+	reset()
+	oStorage:TransitionIn()
+	addAnimal(1911, lion("Kaya", { aidFn = function() return BIG, 2 end }))
+	addAnimal(1912, lion("Zuri", { aidFn = function() return BIG, 2 end }))
+	addAnimal(1913, lion("Same", { aidFn = function() return BIG * 4, 2 end }))
+	addAnimal(1914, lion("Same", { aidFn = function() return BIG * 4, 2 end }))
+	tLog = {}
+	r = resolve("r19b", { "animal_1", "animal_2", "animal_3", "animal_4" })
+	check(r.via.animal_1 == "fp" and r.via.animal_2 == "fp" and r.ids.animal_1 ~= r.ids.animal_2, "b: colliding floats: no id, unique fingerprints used")
+	check(r.ids.animal_1 ~= string.format("%.0f", BIG) and r.ids.animal_2 ~= string.format("%.0f", BIG), "b: the colliding float is no id")
+	check(r.ids.animal_3 == nil and r.ids.animal_4 == nil, "b: colliding floats and the same fingerprint: no id")
+	tFail = logs("resolve_fail")
+	check(#tFail == 1 and tFail[1].numType == "float" and tFail[1].n == 2 and string.find(tFail[1].why, "collision") and string.find(tFail[1].why, "ambiguous"), "b: collision logged with its shape")
+
+	-- c. a unique fingerprint is listed (the right animal)
+	reset()
+	oStorage:TransitionIn()
+	addAnimal(1921, lion("Solo", { aidFn = function() return nil end }))
+	addAnimal(1922, lion("Other", { aidFn = function() return nil end }))
+	r = resolve("r19c", { "animal_1", "animal_2" })
+	check(r.via.animal_1 == "fp" and string.match(r.ids.animal_1, "^fp%d+$") and r.rows.animal_1.name == "Solo", "c: fingerprint token")
+	start(job(1000, { r.ids.animal_1 .. " animal_1 500 max" }))
+	check(runToEnd(30), "c: run finished")
+	check(#tAuctions == 1 and tAuctions[1].guid == 1921 and lastState().results[1].status == "listed", "c: listed the animal with that fingerprint")
+
+	-- d. two identical fingerprints: skipped as ambiguous, never sent
+	reset()
+	oStorage:TransitionIn()
+	addAnimal(1931, lion("Nala", { aidFn = function() return nil end }))
+	addAnimal(1932, lion("Sarabi", { aidFn = function() return nil end }))
+	r = resolve("r19d", { "animal_1", "animal_2" })
+	local sTok = r.ids.animal_1
+	tAnimals[1932].name = "Nala" -- a look-alike now (renamed): can't be told apart
+	start(job(1000, { sTok .. " animal_1 500 max" }))
+	check(runToEnd(30), "d: run finished")
+	check(#tAuctions == 0 and lastState().results[1].kind == "ambiguous", "d: ambiguous before selecting (" .. tostring(lastState().results[1].kind) .. ")")
+	check(countMarks("lister_skip_ambiguous") == 1, "d: traced")
+	-- ... and when the look-alike appears between the selection and the send
+	reset()
+	oStorage:TransitionIn()
+	addAnimal(1935, lion("Kiara", { aidFn = function() return nil end, onSelect = function() after(0.35, function() tAnimals[1936].name = "Kiara" end) end }))
+	addAnimal(1936, lion("Vitani", { aidFn = function() return nil end }))
+	r = resolve("r19d2", { "animal_1", "animal_2" })
+	start(job(1000, { r.ids.animal_1 .. " animal_1 500 max" }))
+	check(runToEnd(30), "d2: run finished")
+	check(#tAuctions == 0 and lastState().results[1].kind == "ambiguous", "d2: checked again at the send: ambiguous (" .. tostring(lastState().results[1].kind) .. ")")
+
+	-- e. the list reshuffled between Resolve and the send: the right key, or a skip
+	reset()
+	oStorage:TransitionIn()
+	addAnimal(1941, lion("Asha", { aidFn = function() return nil end }))
+	addAnimal(1942, lion("Bahati", { aidFn = function() return nil end }))
+	addAnimal(1943, lion("Chui", { aidFn = function() return BIG * 2, 2 end }))
+	r = resolve("r19e", { "animal_1", "animal_2", "animal_3" })
+	reshuffle({ 1943, 1942, 1941 })
+	start(job(1000, { r.ids.animal_1 .. " animal_1 500 max", r.ids.animal_3 .. " animal_3 600 max" }))
+	check(runToEnd(40), "e: run finished")
+	check(#tAuctions == 2 and tAuctions[1].guid == 1941 and tAuctions[1].key == "animal_3" and tAuctions[2].guid == 1943 and tAuctions[2].key == "animal_1", "e: fingerprint and lossy ids found under their new keys")
+	-- reshuffled while it settles (after the selection): changed, the animal now at the key not listed
+	reset()
+	oStorage:TransitionIn()
+	addAnimal(1945, lion("Dalila", { aidFn = function() return nil end, onSelect = function() after(0.35, function() reshuffle({ 1946, 1945 }) end) end }))
+	addAnimal(1946, lion("Eshe", { aidFn = function() return nil end }))
+	r = resolve("r19e2", { "animal_1", "animal_2" })
+	start(job(1000, { r.ids.animal_1 .. " animal_1 500 max" }))
+	check(runToEnd(30), "e2: run finished")
+	check(#tAuctions == 0 and lastState().results[1].kind == "changed", "e2: reshuffled before the send: changed (" .. tostring(lastState().results[1].kind) .. ")")
+	-- an id that follows the position, not the animal: the row no longer
+	-- shows what Resolve saw with it, so it is not listed
+	reset()
+	oStorage:TransitionIn()
+	local function byPos(sKey) return tonumber(string.match(sKey, "%d+")) + 500, 0 end
+	addAnimal(1951, lion("Fumo", { aidFn = byPos }))
+	addAnimal(1952, lion("Gamba", { aidFn = byPos }))
+	r = resolve("r19f", { "animal_1", "animal_2" })
+	check(r.ids.animal_1 == "t0_501", "f: position-like id resolved")
+	reshuffle({ 1952, 1951 })
+	start(job(1000, { r.ids.animal_1 .. " animal_1 500 max" }))
+	check(runToEnd(30), "f: run finished")
+	check(#tAuctions == 0 and lastState().results[1].status == "skipped", "f: the animal now at that position was not listed (" .. tostring(lastState().results[1].kind) .. ")")
+
+	Core.bTrace = nil
+	Core.Log = nil
+	oStorage:TransitionOut()
+end
+
+-----------------------------------------------------------------------
+-- 20. Quick trade / quick release (docs/PLAN-desk-quick-release.md,
+-- Phases 0 and 1): the page report v2, check runs (they never send), the
+-- Phase 0a log lines, and the log-only wrappers around the game's own
+-- quick handlers (Phase 0b)
+-----------------------------------------------------------------------
+do
+	-- encodeURIComponent, as the page writes v2's text fields
+	local function pct(s)
+		return (string.gsub(tostring(s or ""), "[^%w%-_%.!~%*'%(%)]", function(c) return string.format("%%%02X", string.byte(c)) end))
+	end
+	local sLong = "[AnimalExchange_Conditions_Concatenate:first=[AnimalExchange_Conditions_Concatenate:first=[AnimalList_SelectionCannotTrade]:second=[AnimalExchange_Conditions_NewLine]]:second=[AnimalList_Problem_NoBirthZoo]]"
+	local sOdd = "a|b,c%d 100% |x| \195\169"
+	local sV2 = table.concat({ "v2", "animal_3", "animal_3", "0", "100,5000,812.5,1,12,6", pct(sLong), "1", "", pct("$1,200"), "0", pct(sOdd), pct("85"),
+		"0", "1200,85", "1,0", "-", pct("[AnimalExchange_Source_Description:Value=|Wild|]") }, "|")
+	local p2 = Lister.ParseSeen(sV2)
+	check(p2 and p2.nV == 2 and p2.sKey == "animal_3" and p2.tSel[1] == "animal_3" and p2.bAllowed == false, "v2: key, selection, allowed")
+	check(p2 and p2.sReason == sLong and p2.tLimits.nPriceDefault == 812.5 and p2.tLimits.nHoursMax == 12, "v2: the long nested reason survives, limits")
+	check(p2 and p2.tQuick.bTrade == true and p2.tQuick.sTradeValue == "$1,200" and p2.tQuick.bRelease == false and p2.tQuick.sReleaseReason == sOdd and p2.tQuick.sReleaseValue == "85", "v2: quick fields with | , % decoded")
+	check(p2 and p2.tQuick.bRehome == false and p2.tQuick.nTradePrice == 1200 and p2.tQuick.nReleasePrice == 85, "v2: rehome and the numeric prices")
+	check(p2 and p2.tNet.bConn == true and p2.tNet.bLoading == false and p2.bReleaseable == nil and p2.sSource == "[AnimalExchange_Source_Description:Value=|Wild|]", "v2: network, filter, source")
+	local p1 = Lister.ParseSeen("v1|animal_3|animal_3|1|100,5000,812.5,1,12,6|[x|y]")
+	check(p1 and p1.nV == 1 and p1.bAllowed == true and p1.sReason == "[x|y]" and p1.tQuick == nil, "v1 still parsed")
+	check(Lister.ParseSeen("v2|animal_3|animal_3|1|1,2,3,4,5,6|") == nil and Lister.ParseSeen("v2||a|1|||||||||||||") == nil, "v2: too few fields or no key refused")
+	check(Lister.Unpct("%7C%2C%25") == "|,%" and Lister.CompactReason(sLong) == "[AnimalList_Problem_NoBirthZoo]" and Lister.CompactReason("plain") == "plain", "unpct, compact reason")
+	local tJ, nP, sM = Lister.ParseJob("v1 150 check\n11 animal_1 - default")
+	check(tJ and #tJ == 1 and nP == 150 and sM == "check", "job: check mode")
+	tJ, nP, sM = Lister.ParseJob("v1 3000\n11 animal_1 500 max")
+	check(tJ and sM == "list", "job: no word is a listing")
+	tJ, nP = Lister.ParseJob("v1 3000 sellall\n11 animal_1 500 max")
+	check(tJ == nil and string.find(nP, "Unknown job mode", 1, true), "job: an unknown mode is refused")
+
+	-- the fake page, v2: what the game shows, quick fields included
+	local function pageTextV2()
+		local A, L = tNative.tActions, tNative.tLimits
+		local function f(v) return v == true and "1" or v == false and "0" or "-" end
+		local function n(v) return type(v) == "number" and tostring(v) or "-" end
+		local tN = {}
+		for _, sName in ipairs({ "tradePriceMin", "tradePriceMax", "tradePriceDefault", "tradeDurationMin", "tradeDurationMax", "tradeDurationDefault" }) do tN[#tN + 1] = n(L[sName]) end
+		return table.concat({ "v2", tPage.sKey, table.concat(tNative.tSelection, ","), f(A.tradeAllowed), table.concat(tN, ","), pct(A.tradeDisallowedReason),
+			f(A.quickTradeAllowed), pct(A.quickTradeDisallowedReason), pct(A.quickTradeValue), f(A.quickReleaseAllowed), pct(A.quickReleaseDisallowedReason),
+			pct(A.quickReleaseValue), f(A.rehomeAllowed), n(L.quickTradePrice) .. "," .. n(L.quickReleasePrice), f(tNative.bConnecting) .. "," .. f(tNative.bLoading),
+			"-", pct(tPage.sSource or "") }, "|")
+	end
+	local function lim(t)
+		local l = defaultLimits()
+		for k, v in pairs(t or {}) do l[k] = v end
+		return l
+	end
+	local tMarket = { quick = { quickTradeAllowed = true, quickTradeValue = "$900", quickReleaseAllowed = true, quickReleaseValue = "40", rehomeAllowed = false }, limits = lim({ quickTradePrice = 900, quickReleasePrice = 40 }) }
+	local tQuickOnly = { tradeAllowed = false, reason = sLong, limits = lim({ quickTradePrice = 1200, quickReleasePrice = 85 }),
+		quick = { quickTradeAllowed = true, quickTradeValue = "$1,200", quickReleaseAllowed = false, quickReleaseDisallowedReason = sLong, quickReleaseValue = "85", rehomeAllowed = false } }
+	local tRehome = { tradeAllowed = false, reason = "[AnimalList_Problem_CantBeSold]", quick = { quickTradeAllowed = false, quickReleaseAllowed = false, rehomeAllowed = true } }
+	local function checkJob(tSpec, nPace)
+		local tLines = {}
+		for _, a in ipairs(tSpec) do tLines[#tLines + 1] = line(a[1], "-", "default") end
+		return "v1 " .. (nPace or 150) .. " check\n" .. table.concat(tLines, "\n")
+	end
+	local function checkRun(tSpec, tPageSetup, nPace)
+		reset()
+		oStorage:TransitionIn()
+		fnPageFrame = fnPageFrameSaved
+		pageReset(tPageSetup or { fnText = pageTextV2 })
+		for _, a in ipairs(tSpec) do addAnimal(a[1], a[2]) end
+		return start(checkJob(tSpec, nPace))
+	end
+
+	-- a check run: every animal selected and recorded, nothing sent, the selection cleared after
+	local tLog = {}
+	Core.bTrace = true
+	Core.Log = function(_, sArea, sEvent, t) tLog[#tLog + 1] = { area = sArea, ev = sEvent, t = t or {} } end
+	local function find(sEv, sGuid)
+		for _, x in ipairs(tLog) do
+			if x.ev == sEv and (sGuid == nil or x.t.guid == sGuid) then return x.t end
+		end
+	end
+	local function count(sEv)
+		local n = 0
+		for _, x in ipairs(tLog) do if x.ev == sEv then n = n + 1 end end
+		return n
+	end
+	local nListerPace = Lister.nPaceMs
+	checkRun({ { 2001, tMarket }, { 2002, tQuickOnly }, { 2003, tRehome } }, nil, 50)
+	check(runToEnd(60), "check: run finished")
+	local sc = lastState()
+	check(#tAuctions == 0 and #calls("QuickTrade") == 0 and #calls("Release") == 0, "check: nothing sent (" .. #tAuctions .. " listings)")
+	check(sc.mode == "check" and sc.phase == "done" and sc.message == "Checked 3 of 3." and sc.paceMs == 150, "check: state (" .. tostring(sc.message) .. ", pace " .. tostring(sc.paceMs) .. ")")
+	check(Lister.nPaceMs == nListerPace, "check: the listing pace is left alone")
+	check(sc.results[1].status == "checked" and sc.results[2].status == "checked" and sc.results[3].status == "checked", "check: every animal checked")
+	local v1, v2, v3 = sc.results[1].verdict, sc.results[2].verdict, sc.results[3].verdict
+	check(v1.trade == true and v1.quickTrade == true and v1.quickTradePrice == 900 and v1.src == "page" and v1.v == 2, "check: market animal's verdict")
+	check(v2.trade == false and v2.tradeWhy == "[AnimalList_Problem_NoBirthZoo]" and v2.quickTrade == true and v2.quickTradeValue == "$1,200" and v2.quickTradePrice == 1200, "check: quick-only animal's verdict")
+	check(v2.quickRelease == false and v2.quickReleaseWhy == "[AnimalList_Problem_NoBirthZoo]" and v2.quickReleasePrice == 85 and v2.rehome == false, "check: its release refused with the reason")
+	check(v3.trade == false and v3.rehome == true and v3.quickTrade == false and v3.tradeWhy == "[AnimalList_Problem_CantBeSold]", "check: rehome-only verdict")
+	local tSel3 = calls("Select")
+	local tClr = calls("Clear")
+	check(#tSel3 == 3 and #tClr >= 4 and tClr[#tClr].t >= tSel3[3].t and #tNative.tSelection == 0, "check: the selection ends cleared")
+	check(countMarks("lister_check_start") == 1 and countMarks("lister_check_cleared") == 1 and countMarks("lister_checked") == 3, "check: marked")
+	check(countMarks("lister_cat_market") == 1 and countMarks("lister_cat_quick") == 1 and countMarks("lister_cat_rehome") == 1 and countMarks("lister_quick_seen_page") == 1, "check: a category mark per animal")
+	check(countMarks("lister_select_net_quiet") == 3 and countMarks("lister_select_net_busy") == 0, "check: no request seen around the selects")
+	-- the pause between checks is the check pace (150 ms), not the listing pace
+	local nGap = tSel3[2].t - tSel3[1].t
+	check(nGap < 2.5, "check: quick between animals (" .. nGap .. " s)")
+	-- Phase 0a lines
+	local q2 = find("quick", "2002")
+	check(q2 and q2.qt == true and q2.qtPrice == 1200 and q2.qtValue == "$1,200" and q2.qr == false and q2.qrWhy == "[AnimalList_Problem_NoBirthZoo]" and q2.trade == false, "0a: the quick line (flags, value text, numeric price)")
+	local n2 = find("select_net", "2002")
+	check(n2 and n2.before == "c0l0d0" and n2.after == "c0l0d0" and n2.busy == false, "0a: the network before and after the select (" .. tostring(n2 and n2.before) .. ")")
+	check(find("start") and find("start").mode == "check", "0a: start logs the mode")
+
+	-- a select that shows a request (the database busy while it waits): marked busy, with the type
+	tLog = {}
+	checkRun({ { 2011, { quick = tMarket.quick, limits = tMarket.limits, onSelect = function()
+		after(0.05, function() tNative.bDbBusy = true end)
+		after(0.2, function() tNative.bDbBusy = false end)
+	end } } })
+	check(runToEnd(30), "0a busy: finished")
+	local n11 = find("select_net", "2011")
+	check(n11 and n11.busy == true and n11.dbType == 42 and countMarks("lister_select_net_busy") == 1, "0a: a request during the select is seen (" .. tostring(n11 and n11.dbType) .. ")")
+	-- the row's source text is logged by resolve
+	tLog = {}
+	checkRun({ { 2012, { source = "[AnimalExchange_Source_Description:Value=|Wild|]", quick = tMarket.quick, limits = tMarket.limits } } })
+	check(runToEnd(30), "0a source: finished")
+	check(find("resolve", "2012") and find("resolve", "2012").source == "[AnimalExchange_Source_Description:Value=|Wild|]", "0a: the row's source text logged")
+	-- a server error during a run: its request type marked
+	tLog = {}
+	checkRun({ { 2013, { quick = tMarket.quick, limits = tMarket.limits, onSelect = function() after(0.1, function() serverError(5, 28) end) end } } })
+	check(runToEnd(30), "0a error: finished")
+	check(countMarks("lister_server_error_type_28") == 1 and find("server_error") and find("server_error").req == 28, "0a: the request type of an error during the run")
+
+	-- Stop in the middle of a check: at once, the rest stays to do, nothing selected after
+	checkRun({ { 2021, tMarket }, { 2022, tQuickOnly }, { 2023, tMarket } })
+	check(tickUntil(function() local st = lastState(); return st and st.index == 1 and st.step == "select" end, 30), "check stop: reached the second select")
+	fire("PZ2QoL_ListerStop")
+	local sStop = lastState()
+	check(sStop.phase == "stopped" and sStop.results[1].status == "checked" and sStop.results[2].status == "pending" and sStop.results[3].status == "pending", "check stop: the rest stays to do")
+	seconds(1)
+	check(#tNative.tSelection == 0 and #tAuctions == 0 and Lister.tRun == nil, "check stop: nothing selected after, nothing sent")
+
+	-- by Lua's own reads alone (no page): still recorded, from Lua
+	checkRun({ { 2031, tQuickOnly } }, { bOn = false })
+	check(runToEnd(30), "check lua: finished")
+	sc = lastState()
+	check(sc.results[1].status == "checked" and sc.results[1].verdict.src == "lua" and sc.results[1].verdict.quickTrade == true and sc.results[1].verdict.quickTradePrice == 1200, "check: Lua's reads as the fallback")
+
+	-- a check needs no online Franchise (it sends nothing); a listing still does
+	reset()
+	oStorage:TransitionIn()
+	tNative.nHubType = 1
+	addAnimal(2041, tMarket)
+	start(checkJob({ { 2041 } }))
+	check(Lister.tRun ~= nil and Lister.tRun.sMode == "check", "check: runs offline")
+	fire("PZ2QoL_ListerStop")
+	start(job(1000, { line(2041, "500", "max") }))
+	check(Lister.tRun == nil and lastState().refused == true, "check: a listing offline is still refused")
+	-- a second start while a check runs is refused
+	tNative.nHubType = 2
+	start(checkJob({ { 2041 } }))
+	local nRun = Lister.tRun and Lister.tRun.nId
+	start(job(1000, { line(2041, "500", "max") }))
+	check(Lister.tRun ~= nil and Lister.tRun.nId == nRun and Lister.tRun.sMode == "check", "check: a second start is refused while it runs")
+	fire("PZ2QoL_ListerStop")
+
+	-- belt and braces: a check that somehow reaches the send step sends nothing
+	checkRun({ { 2051, tMarket } })
+	check(tickUntil(function() return Lister.tRun ~= nil and Lister.tRun.sStep == "selected" end, 30), "send guard: selected")
+	Lister.tRun.sStep = "send"
+	tick(2)
+	check(#tAuctions == 0 and countMarks("lister_check_send_blocked") == 1, "send guard: nothing sent")
+	runToEnd(30)
+
+	-- a listing run with a v2 page records the verdicts too, and lists as before
+	s = pageRun({ page = { fnText = pageTextV2 } }, { { 2061, tQuickOnly }, { 2062, tMarket } }, "list v2")
+	check(#tAuctions == 1 and tAuctions[1].guid == 2062 and s.mode == "list", "list v2: only the market animal listed")
+	check(s.results[1].kind == "untradeable" and s.results[1].verdict.quickTrade == true and s.results[2].status == "listed" and s.results[2].verdict.trade == true, "list v2: verdicts recorded")
+	fnPageFrame = nil
+
+	-- Phase 0b: the game's quick handlers, wrapped to log only
+	check(StorageMode.OnQuickTradeAnimals ~= fnGameQuickTrade and StorageMode.OnReleaseAnimalsToWild ~= fnGameRelease, "0b: both handlers wrapped")
+	reset()
+	oStorage:TransitionIn()
+	addAnimal(2101, { species = "Lion", name = "Kito" })
+	addAnimal(2102, { species = "Lion", name = "Nala" })
+	tLog = {}
+	local tIDs = { "animal_1" }
+	local tR = table.pack(oStorage:OnQuickTradeAnimals(tIDs))
+	local cq = calls("GameQuickTrade")
+	check(#cq == 1 and cq[1].tArgs.n == 2 and cq[1].tArgs[1] == oStorage and rawequal(cq[1].tArgs[2], tIDs), "0b: the game's handler got exactly self and the same table")
+	check(tR.n == 3 and tR[1] == "qt" and tR[2] == nil and tR[3] == 3, "0b: its results passed back")
+	check(#tIDs == 1 and tIDs[1] == "animal_1", "0b: the table unchanged")
+	check(#calls("Auction") + #calls("Select") + #calls("Clear") + #calls("QuickTrade") + #calls("Release") == 0, "0b: the wrapper sends nothing itself")
+	local tc = find("probe_call")
+	check(tc and tc.kind == "quicktrade" and tc.type == "table" and tc.len == 1 and tc.count == 1 and tc.kmin == 1 and tc.kmax == 1 and tc.nargs == 2, "0b: the _tIDs shape logged")
+	local ti = find("probe_id")
+	check(ti and ti.vtype == "string" and ti.v == "animal_1" and ti.guid == "2101" and ti.key == "animal_1" and ti.via == "key", "0b: each value, its type and the animal it names")
+	check(countMarks("lister_probe_quicktrade") == 1 and find("probe_after") ~= nil, "0b: marked, and the network right after")
+	seconds(2)
+	serverError(5, 31)
+	local te = find("probe_server_error")
+	check(te and te.code == 5 and te.req == 31 and te.ms >= 1900 and countMarks("lister_server_error_type_31") == 1, "0b: a server error in the next 10 s logged with its request type")
+	-- the sale: the row leaves the storage list
+	reshuffle({ 2102 })
+	seconds(1)
+	local tg = find("probe_gone")
+	check(tg and tg.guid == "2101" and tg.ms >= 2000 and tg.ms <= 3500, "0b: when the row left the list (" .. tostring(tg and tg.ms) .. " ms)")
+	check(find("probe_end") and find("probe_end").gone == 1 and Lister.tProbe == nil, "0b: the watch ends when every row is gone")
+	seconds(9)
+	local nErr = count("probe_server_error")
+	serverError(5, 31)
+	check(count("probe_server_error") == nErr, "0b: errors after 10 s are not the probe's")
+	-- odd ids and extra arguments: the game's handler still gets exactly them
+	local tOdd = { [0] = 12345.0, "x", n = 2 }
+	tR = table.pack(oStorage:OnReleaseAnimalsToWild(tOdd, "extra"))
+	local cr = calls("GameRelease")
+	check(#cr == 1 and cr[1].tArgs.n == 3 and rawequal(cr[1].tArgs[2], tOdd) and cr[1].tArgs[3] == "extra" and tR.n == 1 and tR[1] == "rel", "0b: release: the same arguments and result")
+	tc = nil
+	for _, x in ipairs(tLog) do if x.ev == "probe_call" and x.t.kind == "release" then tc = x.t end end
+	check(tc and tc.kmin == 0 and tc.kmax == 1 and tc.count == 3, "0b: release: a 0-based or odd table's keys logged")
+	oStorage:OnReleaseAnimalsToWild(nil)
+	check(#calls("GameRelease") == 2, "0b: no ids: the game's handler still runs")
+	-- the probe itself failing never keeps the game's handler from running
+	local fnProbe = Lister._ProbeQuick
+	Lister._ProbeQuick = function() error("probe broke") end
+	oStorage:OnQuickTradeAnimals({ "animal_1" })
+	Lister._ProbeQuick = fnProbe
+	check(#calls("GameQuickTrade") == 2 and countMarks("lister_probe_fail") == 1, "0b: a failing probe: the handler still runs")
+	-- the game's handler raising: the caller sees it, as in vanilla
+	StorageModeThrow = true
+	local bOkGame = pcall(oStorage.OnQuickTradeAnimals, oStorage, { "animal_1" })
+	StorageModeThrow = nil
+	check(not bOkGame, "0b: the game's own error is not swallowed")
+	-- no handler to wrap (another build): nothing breaks
+	local tBare = { TransitionIn = function() end, TransitionOut = function() end, Advance = function() end }
+	local bOkBare = pcall(Lister._PatchStorageMode, Lister, tBare)
+	check(bOkBare and tBare.OnQuickTradeAnimals == nil, "0b: a hub mode without the handlers is left alone")
+	Core.bTrace = nil
+	Core.Log = nil
+	oStorage:TransitionOut()
+	check(#calls("QuickTrade") == 0 and #calls("Release") == 0, "the engine never called the quick natives")
+end
+
+-----------------------------------------------------------------------
+-- 21. Quick trade / quick release from the desk (Phase 2,
+-- docs/PLAN-desk-quick-release.md 4.3): page-report-only sends of exactly
+-- { [1] = key }, the allowed flag, _IsSelected (page only) and _Holds in
+-- the send tick, _Busy and the data settle, the storage list deciding,
+-- the stops (two missing reports, timeout, ambiguity, reload, mod error),
+-- Stop after the current animal, the frozen job
+-----------------------------------------------------------------------
+do
+	local function pct(s)
+		return (string.gsub(tostring(s or ""), "[^%w%-_%.!~%*'%(%)]", function(c) return string.format("%%%02X", string.byte(c)) end))
+	end
+	local function lim(t)
+		local l = defaultLimits()
+		for k, v in pairs(t or {}) do l[k] = v end
+		return l
+	end
+	-- the page, v2 with its page id (listerlua.js PAGE)
+	local function pageTextQ()
+		local A, L = tNative.tActions, tNative.tLimits
+		local function f(v) return v == true and "1" or v == false and "0" or "-" end
+		local function n(v) return type(v) == "number" and tostring(v) or "-" end
+		local tN = {}
+		for _, sName in ipairs({ "tradePriceMin", "tradePriceMax", "tradePriceDefault", "tradeDurationMin", "tradeDurationMax", "tradeDurationDefault" }) do tN[#tN + 1] = n(L[sName]) end
+		local tSel = tPage.fnSel and tPage.fnSel() or tNative.tSelection
+		return table.concat({ "v2", tPage.sKey, table.concat(tSel, ","), f(A.tradeAllowed), table.concat(tN, ","), pct(A.tradeDisallowedReason),
+			f(A.quickTradeAllowed), pct(A.quickTradeDisallowedReason), pct(A.quickTradeValue), f(A.quickReleaseAllowed), pct(A.quickReleaseDisallowedReason),
+			pct(A.quickReleaseValue), f(A.rehomeAllowed), n(L.quickTradePrice) .. "," .. n(L.quickReleasePrice), f(tNative.bConnecting) .. "," .. f(tNative.bLoading),
+			"-", pct(""), tPage.sPageId or "PG1" }, "|")
+	end
+	local NBZ = "[AnimalExchange_Conditions_Concatenate:first=[AnimalList_SelectionCannotTrade]:second=[AnimalList_Problem_NoBirthZoo]]"
+	local function quick(t)
+		local o = { tradeAllowed = false, reason = NBZ, limits = lim({ quickTradePrice = 1200, quickReleasePrice = 85 }),
+			quick = { quickTradeAllowed = true, quickTradeValue = "[COST:Value={1200}]", quickReleaseAllowed = true, quickReleaseValue = "[INT_VALUE:Value={85}]", rehomeAllowed = false } }
+		for k, v in pairs(t or {}) do
+			if k == "q" then for kk, vv in pairs(v) do o.quick[kk] = vv end else o[k] = v end
+		end
+		return o
+	end
+	local nQ = 0
+	local function quickRun(tSpec, sMode, tOpt)
+		tOpt = tOpt or {}
+		reset()
+		oStorage:TransitionIn()
+		for k, v in pairs(tOpt.native or {}) do tNative[k] = v end
+		fnPageFrame = fnPageFrameSaved
+		pageReset(tOpt.page or { fnText = pageTextQ })
+		-- every animal with a species and its own name (as in game): its look is known
+		for _, a in ipairs(tSpec) do
+			local tA = a[2] or {}
+			tA.species = tA.species or "Lion"
+			tA.name = tA.name or ("Q" .. tostring(a[1]))
+			addAnimal(a[1], tA)
+		end
+		local tLines = {}
+		for _, a in ipairs(tSpec) do tLines[#tLines + 1] = (a.token or gs(a[1])) .. " " .. (keyOf(a[1]) or "-") .. " - default" end
+		nQ = nQ + 1
+		local sR = "R" .. (tOpt.pageId or "PG1") .. "_" .. nQ
+		local nF = #oView.tSent
+		fire("PZ2QoL_ListerStart", sR, "v1 " .. (tOpt.pace or 1000) .. " " .. sMode .. "\n" .. table.concat(tLines, "\n"))
+		return sR, nF
+	end
+	local tLog = {}
+	Core.bTrace = true
+	Core.Log = function(_, sArea, sEvent, t) tLog[#tLog + 1] = { area = sArea, ev = sEvent, t = t or {} } end
+	local function find(sEv, sGuid)
+		for _, x in ipairs(tLog) do
+			if x.ev == sEv and (sGuid == nil or x.t.guid == sGuid) then return x.t end
+		end
+	end
+	local function sends(sName)
+		local t = {}
+		for _, c in ipairs(calls(sName)) do t[#t + 1] = c end
+		return t
+	end
+
+	-- A. two animals quick-traded: one key each, exactly the handler's shape, the list decides
+	tLog = {}
+	quickRun({ { 3001, quick() }, { 3002, quick({ limits = lim({ quickTradePrice = 1250, quickReleasePrice = 88 }), q = { quickTradeValue = "[COST:Value={1250}]" } }) } }, "quicktrade")
+	check(runToEnd(60), "quick: run finished")
+	local s = lastState()
+	local q = sends("QuickTrade")
+	check(#q == 2 and #calls("Release") == 0 and #tAuctions == 0, "quick: two quick trades, nothing else (" .. #q .. ")")
+	check(q[1] and q[1].tArgs.n == 1 and type(q[1].tArgs[1]) == "table" and #q[1].tArgs[1] == 1 and q[1].tArgs[1][1] == "animal_1", "quick: { [1] = key }, one key per call")
+	local nKeys = 0
+	for _ in pairs(q[1] and q[1].tArgs[1] or {}) do nKeys = nKeys + 1 end
+	check(nKeys == 1, "quick: the table holds the key only")
+	check(s.mode == "quicktrade" and s.phase == "done" and s.message == "Quick-traded 2 of 2." and s.results[1].status == "traded" and s.results[2].status == "traded", "quick: done (" .. tostring(s.message) .. ")")
+	check(s.results[1].price == 1200 and s.results[1].verdict.quickTrade == true, "quick: the price and verdict with the result")
+	local g1 = find("quick_gone", "3001")
+	check(g1 and g1.ms >= 1000 and g1.ms <= 1600, "quick: quick_gone ms logged, gone read twice (" .. tostring(g1 and g1.ms) .. ")")
+	check(q[2] and q[2].t - q[1].t >= 1.0, "quick: a pause of at least 1 s between the two")
+	check(countMarks("lister_quick_send") == 2 and countMarks("lister_quick_gone") == 2, "quick: marked")
+
+	-- B. release: its own native and flag
+	quickRun({ { 3011, quick() } }, "release")
+	check(runToEnd(30), "release: finished")
+	s = lastState()
+	check(#calls("Release") == 1 and #calls("QuickTrade") == 0 and s.results[1].status == "released" and s.results[1].price == 85 and s.message == "Released 1 of 1.", "release: sent and confirmed")
+	-- release not allowed (CashSeeded): skipped with the reason, the next goes
+	quickRun({ { 3012, quick({ q = { quickReleaseAllowed = false, quickReleaseDisallowedReason = "[AnimalList_Problem_CashSeeded]" } }) }, { 3013, quick() } }, "release")
+	check(runToEnd(30), "release not allowed: finished")
+	s = lastState()
+	check(#calls("Release") == 1 and s.results[1].kind == "notallowed" and s.results[1].detail == "[AnimalList_Problem_CashSeeded]" and s.results[2].status == "released" and s.phase == "done", "release: not allowed skipped, the run goes on")
+	-- rehome offered: never quick-traded
+	quickRun({ { 3014, quick({ q = { rehomeAllowed = true } }) } }, "quicktrade")
+	check(runToEnd(30), "rehome: finished")
+	check(#calls("QuickTrade") == 0 and lastState().results[1].kind == "rehome", "rehome: skipped")
+
+	-- C. Lua's own reads only (no page report): nothing sent; two in a row stop the run
+	quickRun({ { 3021, quick() }, { 3022, quick() }, { 3023, quick() } }, "quicktrade", { page = { bOn = false } })
+	check(runToEnd(60), "no page: finished")
+	s = lastState()
+	check(#calls("QuickTrade") == 0, "no page: nothing sent on Lua's reads")
+	check(s.phase == "stopped" and s.results[1].kind == "nopage" and s.results[2].kind == "nopage" and s.results[3].status == "pending" and string.find(s.message, "no fresh report", 1, true), "no page: stopped after two (" .. tostring(s.message) .. ")")
+	-- stale reports (the page goes quiet after the select): no send either
+	quickRun({ { 3024, quick() } }, "quicktrade", { page = { fnText = pageTextQ, nMax = 3 } })
+	check(runToEnd(60), "stale: finished")
+	check(#calls("QuickTrade") == 0 and lastState().results[1].kind == "nopage", "stale reports: not sent")
+	-- a v1 page (no quick fields): never sent
+	quickRun({ { 3025, quick() } }, "quicktrade", { page = {} })
+	check(runToEnd(60), "v1 page: finished")
+	check(#calls("QuickTrade") == 0, "v1 page: not sent")
+
+	-- D. the send tick: the selection changed (page) -> not sent, the run STOPS (review 2026-10-18)
+	quickRun({ { 3031, quick({ onSelect = function()
+		after(0.4, function() tNative.bDbBusy = true end)
+		after(2.5, function() tPage.fnSel = function() return { "animal_2" } end end)
+		after(3.5, function() tNative.bDbBusy = false end)
+	end }) }, { 3032, quick() } }, "quicktrade")
+	check(runToEnd(60), "sel changed: finished")
+	s = lastState()
+	q = sends("QuickTrade")
+	check(#q == 0 and s.results[1].kind == "changed" and s.phase == "stopped" and s.results[2].status == "pending" and string.find(s.message, "selection changed", 1, true), "_IsSelected false: not sent, the run stopped (" .. tostring(s.results[1].kind) .. ", " .. tostring(s.message) .. ")")
+	-- the key moved to another animal -> _Holds false, not sent
+	quickRun({ { 3041, quick({ onSelect = function()
+		after(0.4, function() tNative.bDbBusy = true end)
+		after(2.5, function() reshuffle({ 3042, 3041 }) end)
+		after(3.5, function() tNative.bDbBusy = false end)
+	end }) }, { 3042, quick({ q = { quickTradeAllowed = false } }) } }, "quicktrade")
+	check(runToEnd(60), "holds: finished")
+	check(#calls("QuickTrade") == 0 and lastState().results[1].kind == "changed" and lastState().phase == "stopped" and lastState().results[2].status == "pending", "_Holds false: not sent, the run stopped (" .. tostring(lastState().results[1].kind) .. ")")
+	-- busy for good: wait, then stop (only "not allowed now" skips)
+	quickRun({ { 3051, quick({ onSelect = function() after(0.4, function() tNative.bDbBusy = true end) after(12, function() tNative.bDbBusy = false end) end }) }, { 3052, quick() } }, "quicktrade")
+	check(runToEnd(90), "busy: finished")
+	s = lastState()
+	check(#calls("QuickTrade") == 0 and s.results[1].kind == "busy" and s.phase == "stopped" and s.results[2].status == "pending", "_Busy: waited, then the run stopped")
+	-- the data changes under the send: settled again, then sent
+	quickRun({ { 3061, quick({ onSelect = function()
+		after(0.4, function() tNative.bDbBusy = true end)
+		after(1.5, function() tNative.tActions.quickTradeValue = "[COST:Value={1300}]"; tNative.tLimits.quickTradePrice = 1300 end)
+		after(2.5, function() tNative.bDbBusy = false end)
+	end }) } }, "quicktrade")
+	check(runToEnd(60), "settle: finished")
+	s = lastState()
+	check(#calls("QuickTrade") == 1 and countMarks("lister_data_changed") >= 1 and s.results[1].status == "traded" and s.results[1].price == 1300, "dataPrint changed: settled again, then sent at the new price")
+
+	-- the send needs a report that arrived after the send step began: a page
+	-- that goes quiet right then (a reload mid-step) gets nothing sent
+	quickRun({ { 3065, quick() } }, "quicktrade")
+	check(tickUntil(function() return Lister.tRun ~= nil and Lister.tRun.sStep == "send" end, 30), "mid-step: reached the send step")
+	tPage.bOn = false
+	check(runToEnd(30), "mid-step: finished")
+	check(#calls("QuickTrade") == 0 and lastState().results[1].kind == "nopage", "mid-step: no report after the step began, nothing sent")
+
+	-- E. still there after 10 s: not confirmed, the run stops, nothing more sent
+	quickRun({ { 3071, quick({ quickOutcome = "stay" }) }, { 3072, quick() } }, "quicktrade")
+	check(runToEnd(60), "timeout: finished")
+	s = lastState()
+	q = sends("QuickTrade")
+	check(#q == 1 and s.phase == "stopped" and s.results[1].status == "unconfirmed" and s.results[1].detail == "Not confirmed: check storage." and s.results[2].status == "pending", "timeout: stopped, not confirmed")
+	local tTo = find("quick_timeout")
+	check(tTo and tTo.ms >= 10000 and tTo.ms < 10600, "timeout: after 10 s (" .. tostring(tTo and tTo.ms) .. ")")
+	-- a database error during the wait shortens it; the list still decides
+	tLog = {}
+	quickRun({ { 3081, quick({ quickOutcome = function() after(0.1, function() serverError(5, 31) end) end }) } }, "quicktrade")
+	check(runToEnd(60), "error stay: finished")
+	tTo = find("quick_timeout")
+	check(lastState().results[1].status == "unconfirmed" and tTo and tTo.ms >= 3000 and tTo.ms < 3700, "a stray error: the wait shortened to 3 s (" .. tostring(tTo and tTo.ms) .. ")")
+	quickRun({ { 3082, quick({ quickDelay = 1.0, onSelect = function() end, quickOutcome = nil }) } }, "quicktrade")
+	tickUntil(function() return Lister.tRun ~= nil and Lister.tRun.sStep == "gone" end, 30)
+	serverError(255, 77)
+	check(runToEnd(30), "error gone: finished")
+	check(lastState().results[1].status == "traded", "a stray error, then gone: done (the list decides)")
+
+	-- F. a fingerprint-token animal: gone by its look; an ambiguous look stops the run
+	local function fpRun(fnOutcome)
+		reset()
+		oStorage:TransitionIn()
+		fnPageFrame = fnPageFrameSaved
+		pageReset({ fnText = pageTextQ })
+		local tA = quick({ aidFn = function() return nil end, species = "Lion", name = "Fp", gender = 1, quickOutcome = fnOutcome })
+		addAnimal(3091, tA)
+		addAnimal(3092, { species = "Lion", name = "Other", gender = 0 })
+		fire("PZ2QoL_ListerResolve", "rqfp", "animal_1,animal_2")
+		local tIds = sent("PZ2QoL_ListerIds")
+		local sTok = decode(tIds[#tIds].tArgs[2]).ids.animal_1
+		nQ = nQ + 1
+		fire("PZ2QoL_ListerStart", "RPG1_" .. nQ, "v1 1000 quicktrade\n" .. tostring(sTok) .. " animal_1 - default")
+		return sTok
+	end
+	local sTok = fpRun(nil)
+	check(sTok and string.match(sTok, "^fp%d+$"), "fp: a fingerprint token (" .. tostring(sTok) .. ")")
+	check(runToEnd(30), "fp: finished")
+	check(#calls("QuickTrade") == 1 and lastState().results[1].status == "traded", "fp: confirmed by its look leaving")
+	fpRun(function(g) addAnimal(3093, { species = "Lion", name = "Fp", gender = 1 }) end)
+	check(runToEnd(30), "fp ambiguous: finished")
+	s = lastState()
+	check(s.phase == "stopped" and s.results[1].status == "unconfirmed" and s.results[1].kind == "ambiguous", "fp: two rows with its look: stopped")
+
+	-- G. one run at a time; the frozen job never grows
+	quickRun({ { 3101, quick({ quickDelay = 2 }) }, { 3102, quick() } }, "quicktrade")
+	local nRunId = Lister.tRun.nId
+	tick(5)
+	fire("PZ2QoL_ListerStart", "RPG1_x", "v1 1000 quicktrade\n3103 animal_1 - default\n3104 animal_2 - default\n3105 animal_3 - default")
+	check(Lister.tRun and Lister.tRun.nId == nRunId and #Lister.tRun.tAnimals == 2 and #Lister.tRun.tResults == 2, "frozen: a second start is refused, the job never grows")
+	fire("PZ2QoL_ListerStart", "RPG1_y", "v1 1000 list\n3101 animal_1 500 max")
+	check(Lister.tRun and Lister.tRun.nId == nRunId, "frozen: nor a listing")
+	-- Stop while the first waits to leave storage: after it
+	tickUntil(function() return Lister.tRun ~= nil and Lister.tRun.sStep == "gone" end, 30)
+	fire("PZ2QoL_ListerStop")
+	check(Lister.tRun ~= nil, "stop: waits for the animal sent")
+	check(runToEnd(30), "stop: ended")
+	s = lastState()
+	check(s.phase == "stopped" and s.message == "Stopped by you." and s.results[1].status == "traded" and s.results[2].status == "pending" and #calls("QuickTrade") == 1, "stop: after the current animal")
+
+	-- H. a page reload stops the run: Hello from another page, or a report from one
+	quickRun({ { 3111, quick({ onSelect = function() after(0.4, function() tNative.bDbBusy = true end) after(5, function() tNative.bDbBusy = false end) end }) }, { 3112, quick() } }, "quicktrade")
+	tick(30)
+	fire("PZ2QoL_ListerHello", "LPG2_1")
+	s = lastState()
+	check(Lister.tRun == nil and s.phase == "stopped" and s.message == "Stopped: page reloaded." and countMarks("lister_quick_reloaded") == 1, "reload: stopped by the new page's hello")
+	seconds(6)
+	check(#calls("QuickTrade") == 0, "reload: nothing sent after")
+	local nStates = #sent("PZ2QoL_ListerState")
+	fire("PZ2QoL_ListerHello", "LPG2_2")
+	check(#sent("PZ2QoL_ListerState") == nStates, "reload: told once")
+	quickRun({ { 3113, quick() } }, "quicktrade")
+	tPage.sPageId = "PG3"
+	check(runToEnd(30), "reload by report: finished")
+	check(lastState().message == "Stopped: page reloaded." and #calls("QuickTrade") == 0, "reload: a report from another page stops it")
+	-- the same page's hello (the desk asks every 10 s) changes nothing
+	quickRun({ { 3114, quick() } }, "quicktrade")
+	tick(3)
+	fire("PZ2QoL_ListerHello", "LPG1_9")
+	check(runToEnd(30), "same page hello: finished")
+	check(lastState().results[1].status == "traded", "same page hello: carries on")
+
+	-- I. a mod error in the send (the game's call raising): not confirmed, the run stops
+	quickRun({ { 3121, quick({ quickError = true }) }, { 3122, quick() } }, "quicktrade")
+	check(runToEnd(30), "error: finished")
+	s = lastState()
+	check(s.phase == "stopped" and s.results[1].status == "unconfirmed" and s.results[1].kind == "error" and s.results[2].status == "pending", "a mod error stops a quick run")
+
+	-- L. in game (Y: 2026-10-18): "ambiguous" 250 ms after a quick trade that
+	-- worked, while the list was rebuilt; transient readings are waited out
+	tLog = {}
+	quickRun({ { 3201, quick({ quickOutcome = function(g)
+		-- at once: the GUID is gone but a row with its look is there (the rebuild)
+		local tNew = {}
+		for _, x in ipairs(tOrder) do if x ~= g then tNew[#tNew + 1] = x end end
+		tOrder = tNew
+		addAnimal(3209, { species = "Lion", name = "Q3201" })
+		-- 300 ms later the rebuild ends: one row fewer
+		after(0.3, function()
+			local tKeep = {}
+			for _, x in ipairs(tOrder) do if x ~= 3209 then tKeep[#tKeep + 1] = x end end
+			tOrder = tKeep
+		end)
+	end }) }, { 3202, quick({ limits = lim({ quickTradePrice = 999 }), q = { quickTradeValue = "[COST:Value={999}]" } }) } }, "quicktrade")
+	check(runToEnd(60), "transient: finished")
+	s = lastState()
+	check(s.phase == "done" and s.results[1].status == "traded" and s.results[2].status == "traded", "ambiguous for 300 ms, then gone: counted gone, the run went on")
+	local tTr = find("quick_transient", "3201")
+	-- the first look waits out the rebuild (nQuickFirstLook): nothing transient read
+	check(tTr == nil, "the rebuild is not read (" .. tostring(tTr and tTr.state) .. ")")
+	check(countMarks("lister_quick_ambiguous") == 0, "not stopped as ambiguous")
+	-- the pattern seen in game on all 3 quick trades (Y: 2026-10-18, trace runs
+	-- 2, 4, 5): at the first look (250 ms) the old row is still in the list but
+	-- its key no longer gives the GUID (id type 0); about 1 s later the list is
+	-- rebuilt with one row fewer and the keys renumbered
+	tLog = {}
+	tMarks = {}
+	quickRun({ { 3221, quick() }, { 3222, quick({ limits = lim({ quickTradePrice = 1300 }), q = { quickTradeValue = "[COST:Value={1300}]" } }) },
+		{ 3223, quick({ limits = lim({ quickTradePrice = 1400 }), q = { quickTradeValue = "[COST:Value={1400}]" } }) } }, "quicktrade")
+	for _, g in ipairs({ 3221, 3222, 3223 }) do
+		tAnimals[g].quickOutcome = function(gg)
+			tAnimals[gg].aidFn = function() return 4711, 0 end
+			after(1.0, function()
+				local tNew = {}
+				for _, x in ipairs(tOrder) do if x ~= gg then tNew[#tNew + 1] = x end end
+				tOrder = tNew
+			end)
+		end
+	end
+	check(runToEnd(60), "game pattern: finished")
+	s = lastState()
+	check(s.phase == "done" and s.results[1].status == "traded" and s.results[2].status == "traded" and s.results[3].status == "traded", "the game's pattern: all three counted gone (" .. tostring(s.message) .. ")")
+	check(#calls("QuickTrade") == 3 and countMarks("lister_quick_ambiguous") == 0 and countMarks("lister_quick_unconfirmed") == 0, "the game's pattern: no stop")
+	-- reading the list during that rebuild crashed the game (Y: 2026-10-18 20:20,
+	-- dump 3f4d438e): no read in the first second after a send
+	local nEarly = 0
+	for _, c in ipairs(calls("QuickTrade")) do
+		for _, r in ipairs(tNative.tListReads or {}) do
+			if r > c.t and r < c.t + 1.0 then nEarly = nEarly + 1 end
+		end
+	end
+	check(nEarly == 0, "the game's pattern: the list is not read in the second after a send (" .. nEarly .. ")")
+	local tG3 = find("quick_gone", "3221")
+	check(tG3 and tG3.ms >= 1000 and tG3.ms <= 1600, "the game's pattern: gone once the list was rebuilt, read twice (" .. tostring(tG3 and tG3.ms) .. ")")
+	-- ... the same for Quick release
+	quickRun({ { 3231, quick() } }, "release")
+	tAnimals[3231].quickOutcome = function(gg)
+		tAnimals[gg].aidFn = function() return 4711, 0 end
+		after(1.0, function() tOrder = {} end)
+	end
+	check(runToEnd(30), "game pattern release: finished")
+	check(lastState().results[1].status == "released", "the game's pattern: a release counted gone too")
+	-- ... but a row that keeps showing with no id until the deadline: stopped, still in storage
+	quickRun({ { 3241, quick() } }, "quicktrade")
+	tAnimals[3241].quickOutcome = function(gg) tAnimals[gg].aidFn = function() return 4711, 0 end end
+	check(runToEnd(30), "leaving forever: finished")
+	s = lastState()
+	check(s.results[1].status == "unconfirmed" and string.find(s.message, "still in storage", 1, true), "leaving until the deadline: not confirmed, stopped")
+
+	-- a single "gone" reading is not enough: gone, then back (a rebuild), then still there -> not confirmed
+	quickRun({ { 3211, quick({ quickOutcome = function(g)
+		local tSaved = tOrder
+		after(0.3, function()
+			local tNew = {}
+			for _, x in ipairs(tOrder) do if x ~= g then tNew[#tNew + 1] = x end end
+			tOrder = tNew
+		end)
+		after(0.55, function() tOrder = tSaved end)
+	end }) } }, "quicktrade")
+	tickUntil(function() return Lister.tRun ~= nil and Lister.tRun.sStep == "gone" end, 30)
+	-- poll exactly once while it is out: the next look sees it back
+	check(runToEnd(30), "flicker: finished")
+	check(lastState().results[1].status == "unconfirmed", "gone once, then back: not confirmed (" .. tostring(lastState().results[1].status) .. ")")
+
+	-- K. review 2026-10-18
+	-- (1) the animal gone or ambiguous when its turn comes: the run stops, nothing sent
+	quickRun({ { 3141, quick() }, { 3142, quick() } }, "quicktrade")
+	reshuffle({ 3142 })
+	check(runToEnd(30), "gone at resolve: finished")
+	s = lastState()
+	check(#calls("QuickTrade") == 0 and s.phase == "stopped" and s.results[1].kind == "gone" and s.results[2].status == "pending", "a frozen animal gone from storage: the run stops (" .. tostring(s.results[1].kind) .. ")")
+	-- (2) a GUID animal whose look is unknown: an absent GUID alone is never "gone"
+	quickRun({ { 3151, quick() } }, "quicktrade")
+	tickUntil(function() return Lister.tRun ~= nil and Lister.tRun.sStep == "gone" end, 30)
+	Lister.tRun.tCur.sFp = nil
+	check(runToEnd(30), "no look: finished")
+	s = lastState()
+	check(s.results[1].status == "unconfirmed" and s.phase == "stopped", "no fingerprint: not confirmed by the id alone, the run stops")
+	-- (2) one row gone but another arrived at once (the count is not one fewer): not confirmed
+	quickRun({ { 3161, quick({ quickOutcome = function(g)
+		after(0.33, function()
+			local tNew = {}
+			for _, x in ipairs(tOrder) do if x ~= g then tNew[#tNew + 1] = x end end
+			tOrder = tNew
+			addAnimal(3169, { species = "Lion", name = "Newcomer" })
+		end)
+	end }) } }, "quicktrade")
+	check(runToEnd(30), "count: finished")
+	s = lastState()
+	check(s.results[1].status == "unconfirmed" and s.phase == "stopped", "gone needs exactly one row fewer: otherwise unconfirmed, stopped")
+	-- (3) the same data as before the select (a native that keeps it on Clear): never sent, the run stops
+	tLog = {}
+	quickRun({ { 3171, quick() }, { 3172, quick() } }, "quicktrade")
+	check(runToEnd(60), "same data: finished")
+	s = lastState()
+	check(#calls("QuickTrade") == 1 and s.results[1].status == "traded" and s.results[2].kind == "unselectable" and s.phase == "stopped", "data equal to the animal before: not sent, stopped (" .. tostring(s.results[2].detail) .. ")")
+	local tFl = find("quick_flags", "3171")
+	check(tFl and tFl.clearedEmpty == true and type(tFl.ms) == "number", "the time the flags took is logged")
+	-- ... a native that empties the data on Clear: equal values are fine
+	quickRun({ { 3181, quick() }, { 3182, quick() } }, "quicktrade", { native = { bClearResets = true } })
+	check(runToEnd(60), "reset on clear: finished")
+	check(#calls("QuickTrade") == 2 and lastState().results[2].status == "traded", "data emptied by the clear: the same values go")
+	-- (4) a quick job without a page id in its request is refused
+	reset()
+	oStorage:TransitionIn()
+	addAnimal(3191, quick({ species = "Lion", name = "Np" }))
+	fire("PZ2QoL_ListerStart", "req_nopage", "v1 1000 quicktrade\n3191 animal_1 - default")
+	check(Lister.tRun == nil and lastState().refused == true and string.find(lastState().message, "which page", 1, true), "no page id: refused")
+	fire("PZ2QoL_ListerStart", "plain", "v1 1000 release\n3191 animal_1 - default")
+	check(Lister.tRun == nil and lastState().refused == true, "no page id (release): refused")
+
+	-- J. refused: offline, no native
+	reset()
+	oStorage:TransitionIn()
+	tNative.nHubType = 1
+	addAnimal(3131, quick())
+	fire("PZ2QoL_ListerStart", "RPG1_off", "v1 1000 quicktrade\n3131 animal_1 - default")
+	check(Lister.tRun == nil and lastState().refused == true and string.find(lastState().message, "online Franchise", 1, true), "quick: offline refused")
+	tNative.nHubType = 2
+	local fnSaved = planetHub.StorageUIReleaseAnimalsToWild
+	planetHub.StorageUIReleaseAnimalsToWild = nil
+	fire("PZ2QoL_ListerStart", "RPG1_nonative", "v1 1000 release\n3131 animal_1 - default")
+	check(Lister.tRun == nil and string.find(lastState().message, "StorageUIReleaseAnimalsToWild", 1, true), "release: refused without the native")
+	planetHub.StorageUIReleaseAnimalsToWild = fnSaved
+	fnPageFrame = nil
+	Core.bTrace = nil
+	Core.Log = nil
+	oStorage:TransitionOut()
+end
+
+-----------------------------------------------------------------------
+-- 22. "When the server refuses a listing: Leave it / Quick trade it / Quick
+-- release it" (developer, 2026-10-18): a listing run's refused animals are
+-- quick-traded / released in the same run, with every quick guard; only a
+-- server refusal, never a timeout or a skip; CashSeeded is never released;
+-- refusedmax caps it (Quick release before its first confirmed run)
+-----------------------------------------------------------------------
+do
+	local function pct(s)
+		return (string.gsub(tostring(s or ""), "[^%w%-_%.!~%*'%(%)]", function(c) return string.format("%%%02X", string.byte(c)) end))
+	end
+	local function pageTextR()
+		local A, L = tNative.tActions, tNative.tLimits
+		local function f(v) return v == true and "1" or v == false and "0" or "-" end
+		local function n(v) return type(v) == "number" and tostring(v) or "-" end
+		local tN = {}
+		for _, sName in ipairs({ "tradePriceMin", "tradePriceMax", "tradePriceDefault", "tradeDurationMin", "tradeDurationMax", "tradeDurationDefault" }) do tN[#tN + 1] = n(L[sName]) end
+		return table.concat({ "v2", tPage.sKey, table.concat(tNative.tSelection, ","), f(A.tradeAllowed), table.concat(tN, ","), pct(A.tradeDisallowedReason),
+			f(A.quickTradeAllowed), pct(A.quickTradeDisallowedReason), pct(A.quickTradeValue), f(A.quickReleaseAllowed), pct(A.quickReleaseDisallowedReason),
+			pct(A.quickReleaseValue), f(A.rehomeAllowed), n(L.quickTradePrice) .. "," .. n(L.quickReleasePrice), f(tNative.bConnecting) .. "," .. f(tNative.bLoading),
+			"-", pct(""), "PG1" }, "|")
+	end
+	-- a tradeable animal with quick actions allowed (each its own values)
+	local function tiger(g, t)
+		local nP = 1000 + (g % 100) * 10
+		local l = defaultLimits()
+		l.quickTradePrice, l.quickReleasePrice = nP, 50 + g % 100
+		local o = { species = "Tiger", name = "T" .. g, limits = l,
+			quick = { quickTradeAllowed = true, quickTradeValue = "[COST:Value={" .. nP .. "}]", quickReleaseAllowed = true, quickReleaseValue = "[INT_VALUE:Value={" .. (50 + g % 100) .. "}]", rehomeAllowed = false } }
+		for k, v in pairs(t or {}) do
+			if k == "q" then for kk, vv in pairs(v) do o.quick[kk] = vv end else o[k] = v end
+		end
+		return o
+	end
+	local REFUSE = outcome({ { "err", 0.2, 255, 42 } }) -- Unknown on the listing request: refused after the grace
+	local nR = 0
+	local function refusedRun(tSpec, sOpts)
+		reset()
+		oStorage:TransitionIn()
+		fnPageFrame = fnPageFrameSaved
+		pageReset({ fnText = pageTextR })
+		for _, a in ipairs(tSpec) do addAnimal(a[1], a[2]) end
+		local tLines = {}
+		for _, a in ipairs(tSpec) do tLines[#tLines + 1] = line(a[1], "500", "max") end
+		nR = nR + 1
+		fire("PZ2QoL_ListerStart", "RPG1_" .. (900 + nR), "v1 1000 list " .. sOpts .. "\n" .. table.concat(tLines, "\n"))
+	end
+	local tLog = {}
+	Core.bTrace = true
+	Core.Log = function(_, sArea, sEvent, t) tLog[#tLog + 1] = { area = sArea, ev = sEvent, t = t or {} } end
+	local function find(sEv, sGuid)
+		for _, x in ipairs(tLog) do
+			if x.ev == sEv and (sGuid == nil or x.t.guid == sGuid) then return x.t end
+		end
+	end
+	local tJ, _, sM, tO = Lister.ParseJob("v1 1000 list onrefused=release refusedmax=1\n11 animal_1 500 max")
+	check(tJ and sM == "list" and tO.sOnRefused == "release" and tO.nRefusedMax == 1, "job: the refused options")
+	tJ, sM = Lister.ParseJob("v1 1000 list onrefused=sell\n11 animal_1 500 max")
+	check(tJ == nil and string.find(sM, "Unknown job option", 1, true), "job: an unknown option refused")
+	tJ, sM = Lister.ParseJob("v1 1000 check onrefused=quicktrade\n11 animal_1 - default")
+	check(tJ == nil, "job: onrefused only for a listing")
+
+	-- refused -> quick trade: right after the refusal, the same animal; the others list as usual
+	refusedRun({ { 4001, tiger(4001, { outcome = REFUSE }) }, { 4002, tiger(4002) } }, "onrefused=quicktrade")
+	check(runToEnd(90), "refused -> trade: finished")
+	local s = lastState()
+	local tQ = calls("QuickTrade")
+	check(#tAuctions == 2 and #tQ == 1 and tQ[1].tArgs[1][1] == "animal_1" and #calls("Release") == 0, "refused -> trade: one quick trade of the refused one (" .. #tQ .. ")")
+	check(s.results[1].status == "traded" and s.results[1].afterRefused == true and s.results[1].price == 1010 and s.results[2].status == "listed", "refused -> trade: traded after refusal, the other listed")
+	check(s.phase == "done" and s.message == "Listed 1 of 2 · Quick-traded 1 after refusal." and s.onRefused == "quicktrade", "refused -> trade: summary (" .. tostring(s.message) .. ")")
+	check(find("refused_then_quick", "4001") ~= nil and find("quick_gone", "4001") ~= nil and countMarks("lister_refused_then_quick") == 1, "refused -> trade: logged")
+	local tSent = calls("QuickTrade")[1].t
+	local tAuc1 = tAuctions[1].t
+	check(tSent - tAuc1 >= 1.0, "refused -> trade: the pace before the quick action")
+
+	-- refused -> release; one CashSeeded (never released, stays refused), the run goes on
+	refusedRun({ { 4011, tiger(4011, { outcome = REFUSE, q = { quickReleaseAllowed = false, quickReleaseDisallowedReason = "[AnimalList_Problem_CashSeeded]" } }) },
+		{ 4012, tiger(4012, { outcome = REFUSE }) } }, "onrefused=release")
+	check(runToEnd(90), "refused -> release: finished")
+	s = lastState()
+	local tRel = calls("Release")
+	check(#tRel == 1 and tRel[1].tArgs[1][1] == "animal_2" and #calls("QuickTrade") == 0, "refused -> release: only the one not bought for cash (" .. #tRel .. ")")
+	check(s.results[1].status == "refused" and string.find(s.results[1].detail, "CashSeeded", 1, true) and s.results[2].status == "released" and s.results[2].afterRefused == true, "refused -> release: CashSeeded stays refused, the other released")
+	check(s.phase == "done" and s.message == "Listed 0 of 2 · Released 1 after refusal.", "refused -> release: summary (" .. tostring(s.message) .. ")")
+
+	-- a release flagged allowed but with the CashSeeded reason: still never released
+	refusedRun({ { 4015, tiger(4015, { outcome = REFUSE, q = { quickReleaseDisallowedReason = "[AnimalList_Problem_CashSeeded]" } }) } }, "onrefused=release")
+	check(runToEnd(60), "cash seeded flag: finished")
+	check(#calls("Release") == 0 and lastState().results[1].status == "refused", "CashSeeded in the reason: never released")
+
+	-- refusedmax=1 (Quick release before its first confirmed run): one, the rest stay refused
+	refusedRun({ { 4021, tiger(4021, { outcome = REFUSE }) }, { 4022, tiger(4022, { outcome = REFUSE }) } }, "onrefused=release refusedmax=1")
+	check(runToEnd(90), "refusedmax: finished")
+	s = lastState()
+	check(#calls("Release") == 1 and s.results[1].status == "released" and s.results[2].status == "refused" and s.results[2].afterRefused == false, "refusedmax=1: one released, the next stays refused")
+
+	-- the game won't list it but allows the quick action (NoBirthZoo, Y: 2026-10-19):
+	-- the same fallback, nothing listed for it; the others list as usual
+	local NBZ = "[AnimalExchange_Conditions_Concatenate:first=[AnimalList_SelectionCannotTrade]:second=[AnimalList_Problem_NoBirthZoo]]"
+	refusedRun({ { 4081, tiger(4081, { tradeAllowed = false, reason = NBZ, q = { quickReleaseAllowed = false, quickReleaseDisallowedReason = "[AnimalList_Problem_CashSeeded]" } }) },
+		{ 4082, tiger(4082) } }, "onrefused=quicktrade")
+	check(runToEnd(90), "not listable -> trade: finished")
+	s = lastState()
+	tQ = calls("QuickTrade")
+	check(#tAuctions == 1 and #tQ == 1 and tQ[1].tArgs[1][1] == "animal_1", "not listable -> trade: quick-traded, not listed (" .. #tQ .. ")")
+	check(s.results[1].status == "traded" and s.results[1].afterRefused == true and s.results[2].status == "listed", "not listable -> trade: traded, the other listed")
+	check(find("refused_then_quick", "4081") ~= nil and string.find(find("refused_then_quick", "4081").detail, "NoBirthZoo", 1, true), "not listable -> trade: logged with the reason")
+	-- release chosen but not allowed (CashSeeded): skipped as before, no quick action
+	refusedRun({ { 4083, tiger(4083, { tradeAllowed = false, reason = NBZ, q = { quickReleaseAllowed = false, quickReleaseDisallowedReason = "[AnimalList_Problem_CashSeeded]" } }) } }, "onrefused=release")
+	check(runToEnd(60), "not listable, release not allowed: finished")
+	check(#calls("Release") == 0 and lastState().results[1].status == "skipped" and lastState().results[1].kind == "untradeable", "not listable, release not allowed: skipped")
+
+	-- not a refusal: an untradeable skip the game won't quick-trade either, a timeout (no answer), DidNotGetResponse -> no quick action
+	refusedRun({ { 4031, tiger(4031, { tradeAllowed = false, reason = "[AnimalList_Problem_Infected]", q = { quickTradeAllowed = false, quickTradeDisallowedReason = "[AnimalList_Problem_Infected]" } }) },
+		{ 4032, tiger(4032, { outcome = never() }) }, { 4033, tiger(4033, { outcome = outcome({ { "err", 0.5, 2, 42 } }) }) } }, "onrefused=quicktrade")
+	check(runToEnd(200), "not refused: finished")
+	s = lastState()
+	check(#calls("QuickTrade") == 0 and s.results[1].kind == "untradeable" and s.results[2].status == "timeout" and s.results[3].status == "timeout", "no quick action after any failure but a refusal")
+	check(countMarks("lister_refused_then_quick") == 0, "not refused: nothing marked")
+
+	-- Leave it (no option): a refusal stays a refusal
+	refusedRun({ { 4041, tiger(4041, { outcome = REFUSE }) } }, "")
+	check(runToEnd(60), "leave: finished")
+	check(#calls("QuickTrade") == 0 and #calls("Release") == 0 and lastState().results[1].status == "refused", "Leave it: no quick action")
+
+	-- the quick part stops the run on anything unexpected (still there after 10 s)
+	refusedRun({ { 4051, tiger(4051, { outcome = REFUSE, quickOutcome = "stay" }) }, { 4052, tiger(4052) } }, "onrefused=quicktrade")
+	check(runToEnd(90), "stay: finished")
+	s = lastState()
+	check(s.phase == "stopped" and s.results[1].status == "unconfirmed" and s.results[2].status == "pending" and #tAuctions == 1, "refused -> trade, still in storage: the run stops")
+	-- the game won't quick-trade it now: it stays refused, the run goes on
+	refusedRun({ { 4061, tiger(4061, { outcome = REFUSE, q = { quickTradeAllowed = false, quickTradeDisallowedReason = "[AnimalList_Problem_Infertile_Sell]" } }) }, { 4062, tiger(4062) } }, "onrefused=quicktrade")
+	check(runToEnd(90), "not allowed: finished")
+	s = lastState()
+	check(s.phase == "done" and s.results[1].status == "refused" and string.find(s.results[1].detail, "Not quick-traded", 1, true) and s.results[2].status == "listed" and #calls("QuickTrade") == 0, "refused, quick trade not allowed: stays refused, the run goes on")
+	-- refused without a page id in the request: not started
+	reset()
+	oStorage:TransitionIn()
+	addAnimal(4071, tiger(4071))
+	fire("PZ2QoL_ListerStart", "plainreq", "v1 1000 list onrefused=quicktrade\n4071 animal_1 500 max")
+	check(Lister.tRun == nil and lastState().refused == true, "onrefused without a page id: refused")
+	fnPageFrame = nil
+	Core.bTrace = nil
+	Core.Log = nil
+	oStorage:TransitionOut()
+end
 
 local tKnown = {}
 local f = io.open(sModDir .. "../../../tools/trace/checkpoints.txt", "r")

@@ -32,9 +32,22 @@
 // the trade centre and from other habitats' surplus.
 //
 // Habitat room (adults of this species) comes from the species' social
-// maximum and the habitat's space (estimated per adult from the game's own
-// requirement for the current population). Juveniles and non-breeding
-// adults stay where they are and count towards it.
+// maximum and the habitat's space (estimated per animal from the game's own
+// requirement for the current population, juveniles included). Juveniles
+// stay where they are and don't count against the adults' room (the
+// developer, 2026-10-19). Young waiting at the trade centre go back to a
+// habitat (option youngBack): their mother's, else their father's, else
+// the one with the most room. The programme never sends a juvenile to the
+// trade centre.
+//
+// Non-breeding adults (contraception, infertile, too old) don't breed, but
+// they fill the make-up's places (option spareOut, on by default; developer
+// 2026-10-19: a 1:1 Eurasian lynx habitat kept a contracepted second male
+// for ever). The search places the breeders as if those places were free;
+// then each habitat keeps only as many non-breeders of each sex as the
+// make-up still has room for (contraception first, then the best genes)
+// and sends the rest to the trade centre (keepSpares). A pregnant, pinned or
+// away animal, and any with a mixed make-up, stays and counts as before.
 //
 // Breeders waiting at the trade centre (bought, or sent there) count as
 // breeders with no group: the search may bring them into a habitat
@@ -99,6 +112,8 @@ export const PROGRAMME_DEFAULTS = Object.freeze({
     exactLimit: 20000,       // score every layout when there are no more than this many
     defaultCapacity: 8,
     useTradeCentre: true,    // breeders waiting at the trade centre may join a group
+    spareOut: true,          // non-breeding adults over the make-up go to the trade centre
+    youngBack: true,         // young waiting at the trade centre go back to a habitat
     ratio: 'auto',           // the player's group make-up (RATIO_CHOICES); 'auto': the game's
     seed: 0,                 // mixed into the zoo's own seed (tests)
     // the engine: 'classic' (one search, a few seconds) or 'deep' (many
@@ -500,13 +515,16 @@ export function habitatCapacity(info, habId, fallback) {
 
 // Space one adult needs, per area type: the game's requirement for the
 // current population divided by that population, averaged over habitats.
-export function estimateSpacePerAdult(info) {
+// young (habitat -> juveniles living there): the requirement covers them
+// too, so they share it; the adults' room then leaves them out.
+export function estimateSpacePerAdult(info, young = null) {
     const sums = {}, counts = {};
-    for (const h of Object.values(info.habitats || {})) {
+    for (const [hab, h] of Object.entries(info.habitats || {})) {
         if (!h.required || !(h.adults > 0)) continue;
+        const pop = h.adults + ((young && young.get(String(hab))) || 0);
         for (const [k, v] of Object.entries(h.required)) {
             if (!(v > 0)) continue;
-            sums[k] = (sums[k] || 0) + v / h.adults;
+            sums[k] = (sums[k] || 0) + v / pop;
             counts[k] = (counts[k] || 0) + 1;
         }
     }
@@ -567,7 +585,7 @@ function makeBudget(opts) {
 
 // The search's view of the species: breeders by index, places by index
 // (the habitats, the breeders' own habitats, the trade centre).
-function makeContext(model, info, opts, breeders, all, habitats, home) {
+function makeContext(model, info, opts, breeders, all, habitats, home, spares = []) {
     const n = breeders.length;
     const placeKeys = habitats.slice();
     for (const a of breeders) if (!placeKeys.includes(home.get(a.id))) placeKeys.push(home.get(a.id));
@@ -578,9 +596,16 @@ function makeContext(model, info, opts, breeders, all, habitats, home) {
     const groupPlace = placeKeys.map(k => k !== TRADE && k !== AWAY);
     const allowed = new Set(habitats);
     const fixedAdults = new Map();
+    // the staying adults' sexes per habitat (the make-up's places they take)
+    const fixedSex = new Map();
+    const spareSet = new Set(spares);
     for (const a of all) {
-        if (breeders.includes(a) || a.juv || !a.hab) continue;
+        if (breeders.includes(a) || spareSet.has(a) || a.juv || !a.hab) continue;
         fixedAdults.set(a.hab, (fixedAdults.get(a.hab) || 0) + 1);
+        const s = fixedSex.get(a.hab) || { m: 0, f: 0 };
+        if (a.sex === Sex.Male) s.m++;
+        else if (a.sex === Sex.Female) s.f++;
+        fixedSex.set(a.hab, s);
     }
     const capacity = new Map();
     for (const k of placeKeys) if (k !== TRADE && k !== AWAY) capacity.set(k, habitatCapacity(info, k, opts.defaultCapacity));
@@ -596,7 +621,7 @@ function makeContext(model, info, opts, breeders, all, habitats, home) {
         fixed: placeKeys.map(k => fixedAdults.get(k) || 0),
         cap: placeKeys.map(k => (capacity.has(k) ? capacity.get(k) : null)),
         estab: placeKeys.map(k => established.has(k)),
-        capacity, fixedAdults,
+        capacity, fixedAdults, fixedSex, spares,
         memo: new Map(),
         pvCache: new Float64Array(n * n).fill(NaN),
         // random words for the score cache's keys (32 + 21 bits)
@@ -1653,6 +1678,52 @@ function prune(ctx, place) {
     return st.place;
 }
 
+// Which non-breeding adults (ctx.spares) stay: per habitat and sex, the
+// make-up's places (groupTarget for the habitat's room) left after the
+// breeders the plan puts there and the adults that stay anyway, and never
+// over the room. Contracepted animals first (they can breed again), then the
+// best own genes. -> { kept, leave }
+function keepSpares(ctx, place) {
+    const kept = [], leave = [];
+    if (!ctx.spares || !ctx.spares.length) return { kept, leave };
+    const byHab = new Map();
+    for (const a of ctx.spares) {
+        if (!byHab.has(a.hab)) byHab.set(a.hab, []);
+        byHab.get(a.hab).push(a);
+    }
+    for (const [hab, list] of byHab) {
+        const cap = ctx.capacity.has(hab) ? ctx.capacity.get(hab) : null;
+        const target = cap == null ? null : groupTarget(ctx.rule, cap);
+        if (!target || !ctx.placeOf.has(hab)) {
+            kept.push(...list);
+            continue;
+        }
+        const p = ctx.placeOf.get(hab);
+        let nm = 0, nf = 0, n = 0;
+        for (let i = 0; i < ctx.n; i++) {
+            if (place[i] !== p) continue;
+            n++;
+            if (ctx.sex[i] === Sex.Male) nm++;
+            else if (ctx.sex[i] === Sex.Female) nf++;
+        }
+        const fs = ctx.fixedSex.get(hab) || { m: 0, f: 0 };
+        let room = cap - n - (ctx.fixedAdults.get(hab) || 0);
+        const order = (x, y) => (y.contra ? 1 : 0) - (x.contra ? 1 : 0) || ownGeneScore(y) - ownGeneScore(x) || (String(x.id) < String(y.id) ? -1 : 1);
+        for (const [sex, places] of [[Sex.Male, target.males - nm - fs.m], [Sex.Female, target.females - nf - fs.f]]) {
+            let slots = Math.max(0, places);
+            for (const a of list.filter(x => x.sex === sex).sort(order)) {
+                if (slots > 0 && room > 0) {
+                    kept.push(a);
+                    slots--;
+                    room--;
+                }
+                else leave.push(a);
+            }
+        }
+    }
+    return { kept, leave };
+}
+
 // ---------------------------------------------------------------- planner
 
 // The search's setup for one species (planProgramme, scoreLayout).
@@ -1671,6 +1742,12 @@ function prepare(model, species, info, destinations, assignments, options) {
     const breeders = all.filter(a => isBreeder(a, info) && (canMoveA(a) || (a.away && a.hab)) && (opts.useTradeCentre || !inTrade(a)));
     const tradeWaiting = all.filter(a => inTrade(a) && isBreeder(a, info) && canMoveA(a)).length;
     const home = new Map(all.map(a => [a.id, a.hab || (a.lt === 'trade' ? TRADE : AWAY)]));
+    // non-breeding adults that may leave if the make-up has no place for them
+    const pinSet = new Set(Array.isArray(opts.pinIds) ? opts.pinIds.map(String) : opts.pinIds instanceof Set ? Array.from(opts.pinIds, String) : []);
+    const ruleNow = groupRule(info, opts.ratio);
+    const spares = opts.spareOut === false || !ruleNow || ruleNow.m == null ? [] : all.filter(a => a.hab && !a.juv && !breeders.includes(a)
+        && canMoveA(a) && a.lt !== 'trade' && !a.preg && !a.away && !pinSet.has(String(a.id))
+        && (a.sex === Sex.Male || a.sex === Sex.Female));
     // where the species may live
     const assign = normalizeAssignments(assignments);
     const mine = assignedHabitatsOf(assign, species);
@@ -1687,13 +1764,61 @@ function prepare(model, species, info, destinations, assignments, options) {
     for (const a of breeders) if (a.hab && !allowed.has(a.hab) && !mine.length) allowed.add(a.hab);
     habitats = Array.from(allowed);
     const infoX = Object.assign({}, info);
-    if (!infoX.spacePerAdult) infoX.spacePerAdult = estimateSpacePerAdult(info);
-    const ctx = makeContext(model, infoX, opts, breeders, all, habitats, home);
+    if (!infoX.spacePerAdult) infoX.spacePerAdult = estimateSpacePerAdult(info, youngByHabitat(all));
+    const ctx = makeContext(model, infoX, opts, breeders, all, habitats, home, spares.filter(a => habitats.includes(a.hab)));
     // the deep engine has its own budgets (solveDeep)
     ctx.budget = makeBudget(opts);
     ctx.seedKey = `${species}|${breeders.map(a => a.id).join(',')}|${opts.seed}`;
     ctx.rnd = randomSource(hashSeed(ctx.seedKey));
-    return { ctx, opts, breeders, habitats, tradeWaiting };
+    return { ctx, opts, breeders, habitats, tradeWaiting, all };
+}
+
+// A kept plan (a deep search) with the young moves of the fresh plan:
+// young that arrived at the trade centre since are taken home too.
+export function withFreshYoung(r, fresh) {
+    if (!r || !fresh || r === fresh) return r;
+    const young = (fresh.moves || []).filter(m => m.young);
+    const ids = new Set(young.map(m => String(m.id)));
+    const keep = (r.moves || []).filter(m => !m.young && !ids.has(String(m.id)));
+    return Object.assign({}, r, { moves: keep.concat(young) });
+}
+
+// habitat -> juveniles of the species living there (not the ones waiting at the trade centre)
+export function youngByHabitat(all) {
+    const out = new Map();
+    for (const a of all || []) if (a && a.juv && a.hab && a.lt !== 'trade') out.set(String(a.hab), (out.get(String(a.hab)) || 0) + 1);
+    return out;
+}
+
+// Young waiting at the trade centre back to a habitat: the mother's (where
+// the plan puts her), else the father's, else the allowed habitat with the
+// most room for adults. endOf(animal) -> its habitat after the plan.
+export function youngBackMoves(model, all, habitats, endOf, roomOf = () => 0) {
+    const allowed = new Set((habitats || []).map(String));
+    if (!allowed.size) return [];
+    const byGuid = new Map();
+    for (const a of model && model.animals ? model.animals.values() : []) if (a.guid) byGuid.set(String(a.guid), a);
+    const parentHab = (a, sex) => {
+        for (const g of a.par || []) {
+            const p = byGuid.get(String(g));
+            if (!p || p.sex !== sex) continue;
+            const h = endOf(p);
+            if (h && allowed.has(String(h))) return String(h);
+        }
+        return null;
+    };
+    const roomiest = Array.from(allowed).sort((x, y) => roomOf(y) - roomOf(x) || (x < y ? -1 : 1))[0];
+    const out = [];
+    for (const a of all || []) {
+        if (!a || !a.juv || a.moving || a.lt !== 'trade') continue;
+        const mum = parentHab(a, Sex.Female);
+        const dad = mum ? null : parentHab(a, Sex.Male);
+        // its own habitat (it waits there with one assigned), else the roomiest
+        const own = a.hab && allowed.has(String(a.hab)) ? String(a.hab) : null;
+        const to = mum || dad || own || roomiest;
+        out.push({ id: a.id, to, fromTrade: true, young: true, reason: mum ? "young: back to its mother's habitat" : dad ? "young: back to its father's habitat" : own ? 'young: back to its habitat' : 'young: back to a habitat' });
+    }
+    return out;
 }
 
 // The objective of the current layout with `moves` ([{id, to}]) applied
@@ -1716,15 +1841,28 @@ export function scoreLayout(model, species, info = {}, destinations = null, { as
 function* programmeSteps(model, species, info, destinations, assignments, options) {
     const prep = prepare(model, species, info, destinations, assignments, options);
     if (!prep) return null;
-    const { ctx, opts, breeders, habitats, tradeWaiting } = prep;
+    const { ctx, opts, breeders, habitats, tradeWaiting, all } = prep;
     const start = Int32Array.from(ctx.home);
     const deep = opts.engine === 'deep';
     const solved = breeders.length ? yield* (deep ? solveDeep(ctx) : solveLayout(ctx)) : { place: start, exact: true };
     const place = prune(ctx, solved.place);
-    // the reported numbers scored afresh (the cache's keys are hashes)
+    // the non-breeders the make-up keeps; the rest leave
+    const { kept, leave } = keepSpares(ctx, place);
+    // the reported numbers scored afresh (the cache's keys are hashes):
+    // before, every non-breeder in its habitat; after, the ones kept
+    const baseFixed = ctx.fixed.slice();
+    const withSpares = list => {
+        const f = baseFixed.slice();
+        for (const a of list) if (ctx.placeOf.has(a.hab)) f[ctx.placeOf.get(a.hab)]++;
+        return f;
+    };
     ctx.memo.clear();
-    const finalState = makeState(ctx, Int32Array.from(place));
+    ctx.fixed = withSpares(ctx.spares);
     const startState = makeState(ctx, start);
+    ctx.memo.clear();
+    ctx.fixed = withSpares(kept);
+    for (const a of kept) ctx.fixedAdults.set(a.hab, (ctx.fixedAdults.get(a.hab) || 0) + 1);
+    const finalState = makeState(ctx, Int32Array.from(place));
     // the plan: every breeder that ends up somewhere else
     const moves = [];
     breeders.forEach((a, i) => {
@@ -1733,6 +1871,32 @@ function* programmeSteps(model, species, info, destinations, assignments, option
         const fromTrade = ctx.home[i] === ctx.trade;
         moves.push({ id: a.id, to, fromTrade, reason: to === TRADE ? 'no place in a breeding group' : fromTrade ? 'from the trade centre into a breeding group' : 'breeding programme' });
     });
+    for (const a of leave) {
+        moves.push({ id: a.id, to: TRADE, fromTrade: false, spare: true, reason: a.contra ? 'over the group make-up (on contraception)' : 'over the group make-up (not breeding)' });
+    }
+    // youth is left alone: never a juvenile to the trade centre (whatever the
+    // model passed in calls an adult), and the young waiting there go home
+    for (let k = moves.length - 1; k >= 0; k--) {
+        const a = model.animals.get(String(moves[k].id));
+        if (a && a.juv && moves[k].to === TRADE) moves.splice(k, 1);
+    }
+    if (opts.youngBack !== false) {
+        const index = new Map(breeders.map((a, i) => [a.id, i]));
+        const endOf = a => {
+            const i = index.get(a.id);
+            const k = i == null ? a.hab : ctx.placeKeys[place[i]];
+            return k === TRADE || k === AWAY ? null : k;
+        };
+        const roomOf = hab => {
+            const p = ctx.placeOf.get(hab);
+            const cap = ctx.capacity.get(hab);
+            if (p == null || cap == null) return 0;
+            let n = ctx.fixedAdults.get(hab) || 0;
+            for (let i = 0; i < ctx.n; i++) if (place[i] === p) n++;
+            return cap - n;
+        };
+        moves.push(...youngBackMoves(model, all, habitats, endOf, roomOf));
+    }
     return {
         system: ctx.rule.system,
         rule: ctx.rule,
@@ -1790,7 +1954,13 @@ export function planProgramme(model, species, info = {}, destinations = null, { 
 export function programmeProblemSig(model, species, info = {}, destinations = null, { assignments = null, options = {} } = {}) {
     const prep = prepare(model, species, info, destinations, assignments, options);
     if (!prep) return '';
-    return problemSig(prep.ctx);
+    // the young waiting at the trade centre: the plan's "young: back to a
+    // habitat" moves come from them, so a kept (deep) plan made before they
+    // arrived must not be reused (2026-10-19: young from Bring all stayed
+    // in the trade centre)
+    const opts = Object.assign({}, PROGRAMME_DEFAULTS, options);
+    const young = opts.youngBack === false ? [] : (prep.all || []).filter(a => a.juv && a.lt === 'trade' && !a.moving).map(a => a.id).sort();
+    return `${problemSig(prep.ctx)}#young:${young.join(',')}`;
 }
 
 // The breeders (where they are, pinned, mates), the adults that only count
@@ -1805,7 +1975,8 @@ function problemSig(ctx) {
     const places = ctx.placeKeys.map((k, p) => `${k}:${ctx.cap[p] == null ? '' : ctx.cap[p]}:${ctx.fixed[p]}:${ctx.allowedPlace[p] ? 1 : 0}`).sort();
     const r = ctx.rule;
     const facts = [ratioKey(r), r.maxMales, r.maxFemales, r.system, JSON.stringify(ctx.info.fertilityAges || null), JSON.stringify(ctx.info.conception || null)].join('|');
-    return `${rows.join(';')}#${places.join(';')}#${facts}`;
+    const spares = (ctx.spares || []).map(a => `${a.id}@${a.hab}:${a.sex}:${a.contra ? 1 : 0}`).sort();
+    return `${rows.join(';')}#${places.join(';')}#${facts}#${spares.join(';')}`;
 }
 
 // The same, in slices of about sliceMs with restMs between them (CPU use),

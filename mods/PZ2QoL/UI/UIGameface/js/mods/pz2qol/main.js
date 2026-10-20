@@ -24,7 +24,7 @@ import { installStorageSend } from '/js/mods/pz2qol/storagesend.js';
 import { installTradeJump } from '/js/mods/pz2qol/tradejump.js';
 import { installStorageFetch } from '/js/mods/pz2qol/storagefetch.js';
 
-export const VERSION = '3.1.0';
+export const VERSION = '3.2.0';
 
 // Debug builds: tell Lua how far the page got (written to dbg/trace.log).
 const trace = breadcrumb;
@@ -87,6 +87,17 @@ step('Species board', () => {
             if (m.installSpeciesBoard() === false) reportError('mod', 'Species board not installed', 'The game UI did not look as expected.', { silent: true });
         })
         .catch(e => reportError('mod', 'Species board failed to start', e));
+});
+// Breeding window (park HUD): the Breeding programme in a small window in
+// the info panel's place; its own module, loaded on its own
+step('Breeding window', () => {
+    import('/js/mods/pz2qol/breedwin.js')
+        .then(m => {
+            loadCSS('mods/pz2qol_kinboard');
+            loadCSS('mods/pz2qol_breedwin');
+            if (m.installBreedingWindow() === false) reportError('mod', 'Breeding window not installed', 'The game UI did not look as expected.', { silent: true });
+        })
+        .catch(e => reportError('mod', 'Breeding window failed to start', e, { silent: true }));
 });
 // Auto mode (per species, on the Species board): its own module, so a
 // broken Auto mode never stops the board or the rest of the mod

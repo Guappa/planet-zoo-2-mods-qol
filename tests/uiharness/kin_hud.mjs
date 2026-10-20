@@ -115,6 +115,31 @@ export async function hud(page, ctx) {
     facts.cardClosed = await page.evaluate(() => !document.querySelector('.PZ2QoL_kinCard.pinned:not(.hidden)'));
     if (!facts.cardClosed) problems.push('pinned card did not close on an outside click');
 
+    // ---- kin card beside a badge at the right edge (Social welfare tab): it must flip left
+    facts.cardEdge = await page.evaluate(async () => {
+        const ui = await import('/js/mods/pz2qol/kinui.js');
+        const a = document.createElement('div');
+        a.style.cssText = `position:fixed;left:${innerWidth - 30}px;top:500px;width:20px;height:20px;`;
+        document.body.appendChild(a);
+        ui.showKinCard(a, () => {
+            const d = document.createElement('div');
+            d.textContent = 'Edge test: a card beside a badge 10 px from the right edge of the screen.';
+            return d;
+        }, false);
+        await new Promise(r => setTimeout(r, 150));
+        const c = document.querySelector('.PZ2QoL_kinCard');
+        const r = c.getBoundingClientRect();
+        const ar = a.getBoundingClientRect();
+        ui.hideKinCard(a);
+        a.remove();
+        return { left: r.left, right: r.right, top: r.top, bottom: r.bottom, w: r.width, anchorLeft: ar.left, vw: innerWidth, vh: innerHeight };
+    });
+    {
+        const e = facts.cardEdge;
+        if (!(e.left >= 0 && e.top >= 0 && e.right <= e.vw && e.bottom <= e.vh)) problems.push('kin card at the right edge runs off screen: ' + JSON.stringify(e));
+        else if (!(e.right <= e.anchorLeft)) problems.push('kin card at the right edge covers its badge: ' + JSON.stringify(e));
+    }
+
     // ---- toolbar: Kin filter (risk, then all) and sort
     const kinChip = page.locator('.PZ2QoL_bar.zoo .PZ2QoL_chip.kin');
     facts.kinChipText = await kinChip.innerText();
@@ -317,8 +342,152 @@ export async function hud(page, ctx) {
     await applySnapshot(page, lifted);
     await wait(page, 600);
     facts.alerts = await page.evaluate(() => [...document.querySelectorAll('.PZ2QoL_kinToast')].map(t => t.innerText.replace(/\s+/g, ' ').slice(0, 160)));
-    if (!facts.alerts.some(t => /New inbreeding risk|new related pairs/i.test(t))) problems.push('no alert for the new risk: ' + JSON.stringify(facts.alerts));
+    if (!facts.alerts.some(t => /New inbreeding risk|inbreeding risks|related pairs/i.test(t))) problems.push('no alert for the new risk: ' + JSON.stringify(facts.alerts));
+    // one toast per habitat: new pairs of the same habitat are counted in it
+    facts.alertsPerHabitat = {};
+    for (const t of facts.alerts) {
+        const m = /(?:Heads-up|Needs you)?\s*(?:New [^:]*?|\d+ [^:]*?)\s*✕?\s*([A-Z][\w ]+?):/.exec(t);
+        if (m) facts.alertsPerHabitat[m[1]] = (facts.alertsPerHabitat[m[1]] || 0) + 1;
+    }
+    for (const [hab, n] of Object.entries(facts.alertsPerHabitat)) if (n > 1) problems.push(`${n} alert toasts for ${hab}: ${JSON.stringify(facts.alerts)}`);
     await ctx.shot(page, 'kh_8_alerts');
+    await applySnapshot(page, snapshot);
+
+    // ---- muted species: no toasts for them (per zoo, store key kinMute); Mute button; popover list
+    // (fresh pairs each step: the alerts remember pairs for 30 min)
+    const toasts = () => page.evaluate(() => [...document.querySelectorAll('.PZ2QoL_kinToast')].map(t => ({
+        text: t.innerText.replace(/\s+/g, ' ').slice(0, 200),
+        buttons: [...t.querySelectorAll('.PZ2QoL_kinAction')].map(b => b.innerText.trim()),
+    })));
+    const clearToasts = () => page.evaluate(() => document.querySelectorAll('.PZ2QoL_kinToast').forEach(n => n.remove()));
+    const byHab = (snap, hi) => snap.animals.filter(a => a.hab === String(9000 + hi));
+    facts.mute = {};
+    await clearToasts();
+    await page.evaluate(async () => {
+        const m = await import('/js/mods/pz2qol/kinmute.js');
+        m.setMuted('Lion', true);
+        m.setMuted('Tiger', true);
+    });
+    const grown = JSON.parse(JSON.stringify(snapshot));
+    for (const a of grown.animals) if (a.juv) { a.juv = false; a.infertile = false; }
+    grown.seq = 3;
+    await applySnapshot(page, grown);
+    await wait(page, 600);
+    facts.mute.whileMuted = await toasts();
+    if (!facts.mute.whileMuted.length) problems.push('mute: no toast for the unmuted species (Zebra)');
+    if (facts.mute.whileMuted.some(t => /Savannah|Jungle/.test(t.text))) problems.push('mute: a toast for a muted species: ' + JSON.stringify(facts.mute.whileMuted));
+    if (!facts.mute.whileMuted.some(t => t.buttons.includes('Mute Zebra'))) problems.push('mute: no "Mute Zebra" button: ' + JSON.stringify(facts.mute.whileMuted));
+    await ctx.shot(page, 'kh_9_mute_toast');
+    const muteBtn = page.locator('.PZ2QoL_kinToast .PZ2QoL_kinAction', { hasText: 'Mute Zebra' }).first();
+    if (await muteBtn.count()) await muteBtn.click();
+    await wait(page, 200);
+    facts.mute.store = await page.evaluate(async () => (await import('/js/mods/pz2qol/userstore.js')).getUserData('kinMute') || null);
+    if (!(facts.mute.store && facts.mute.store.Zebra && facts.mute.store.Lion && facts.mute.store.Tiger)) problems.push('mute: store after Mute Zebra: ' + JSON.stringify(facts.mute.store));
+    // unmute Lion: a new Lion risk alerts again, the still-muted Tiger does not
+    await applySnapshot(page, snapshot);
+    await clearToasts();
+    await page.evaluate(async () => (await import('/js/mods/pz2qol/kinmute.js')).setMuted('Lion', false));
+    const adopted = JSON.parse(JSON.stringify(snapshot));
+    for (const hi of [0, 1]) {
+        const list = byHab(adopted, hi);
+        if (list[7]) list[7].par = [list[0].guid, list[1].guid];
+    }
+    adopted.seq = 4;
+    await applySnapshot(page, adopted);
+    await wait(page, 600);
+    facts.mute.afterUnmute = await toasts();
+    if (!facts.mute.afterUnmute.some(t => /Savannah/.test(t.text))) problems.push('mute: no toast for Lion after unmuting: ' + JSON.stringify(facts.mute.afterUnmute));
+    if (facts.mute.afterUnmute.some(t => /Jungle|Arctic/.test(t.text))) problems.push('mute: a toast for a still-muted species: ' + JSON.stringify(facts.mute.afterUnmute));
+    // the planner's settings list the muted species; a click unmutes
+    await page.evaluate(async () => (await import('/js/mods/pz2qol/kinplanner.js')).openKinPlanner({}));
+    await wait(page, 400);
+    await page.locator('.PZ2QoL_kp .PZ2QoL_kpBtn', { hasText: 'Settings' }).first().click();
+    await wait(page, 300);
+    facts.mute.popover = await page.evaluate(() => {
+        const p = document.querySelector('.PZ2QoL_kpPopover.open');
+        return p ? { sub: [...p.querySelectorAll('.PZ2QoL_kpPopSub')].map(n => n.innerText), chips: [...p.querySelectorAll('.PZ2QoL_kpMutedChip')].map(n => n.innerText.replace(/\s+/g, ' ')) } : null;
+    });
+    if (!facts.mute.popover || !facts.mute.popover.sub.includes('Muted species (2)') || !facts.mute.popover.chips.some(c => /Zebra/.test(c))) problems.push('mute: popover list: ' + JSON.stringify(facts.mute.popover));
+    await ctx.shot(page, 'kh_10_mute_popover');
+    const chip = page.locator('.PZ2QoL_kpPopover.open .PZ2QoL_kpMutedChip', { hasText: 'Zebra' }).first();
+    if (await chip.count()) await chip.click();
+    await wait(page, 300);
+    facts.mute.afterChip = await page.evaluate(async () => {
+        const p = document.querySelector('.PZ2QoL_kpPopover.open');
+        const store = (await import('/js/mods/pz2qol/userstore.js')).getUserData('kinMute') || null;
+        return { sub: p ? [...p.querySelectorAll('.PZ2QoL_kpPopSub')].map(n => n.innerText) : null, store };
+    });
+    if (!(facts.mute.afterChip.sub && facts.mute.afterChip.sub.includes('Muted species (1)')) || (facts.mute.afterChip.store && facts.mute.afterChip.store.Zebra)) problems.push('mute: unmute from the popover: ' + JSON.stringify(facts.mute.afterChip));
+    await page.evaluate(async () => {
+        (await import('/js/mods/pz2qol/kinplanner.js')).closeKinPlanner();
+        const m = await import('/js/mods/pz2qol/kinmute.js');
+        for (const sp of m.mutedSpecies()) m.setMuted(sp, false);
+    });
+    await clearToasts();
+    await applySnapshot(page, snapshot);
+
+    // ---- boxed with no destination: a Needs-you toast after the delay; Find a habitat = ONE move
+    await page.evaluate(async () => {
+        window.__bxFake = { active: true, facts: 0, moves: [] };
+        if (!window.__bxHooked) {
+            window.__bxHooked = true;
+            engine.on('PZ2QoL_SendFacts', (req, id) => {
+                const f = window.__bxFake;
+                if (!f || !f.active) return;
+                f.facts++;
+                const facts = { id, species: 'Lion', lt: 'escaped', moving: false, assigned: '', alive: true, parentHabs: [],
+                    habitats: [{ id: '9000', name: 'Savannah Habitat', ok: true, reach: true, same: 5, total: 13 }, { id: '9001', name: 'Jungle Habitat', ok: false, reason: 'Too humid' }] };
+                setTimeout(() => engine.trigger('PZ2QoL_SendFactsResult', req, JSON.stringify(facts)), 30);
+            });
+            engine.on('PZ2QoL_SendMove', (req, id, hab) => {
+                const f = window.__bxFake;
+                if (!f || !f.active) return;
+                f.moves.push([String(id), String(hab)]);
+                setTimeout(() => engine.trigger('PZ2QoL_SendMoveResult', req, true, ''), 30);
+            });
+        }
+        (await import('/js/mods/pz2qol/kinboxed.js'))._resetBoxed();
+        (await import('/js/mods/pz2qol/kin.js')).setKinSettings({ boxedAlert: true, boxedAfterS: 5 });
+    });
+    await clearToasts();
+    const boxedSnap = JSON.parse(JSON.stringify(snapshot));
+    const boxedOne = byHab(boxedSnap, 0)[8] || byHab(boxedSnap, 0).slice(-1)[0];
+    Object.assign(boxedOne, { hab: '', loc: '', lt: 'escaped', boxed: true });
+    boxedSnap.seq = 5;
+    facts.boxed = { id: boxedOne.id };
+    await applySnapshot(page, boxedSnap);
+    await wait(page, 400);
+    facts.boxed.early = (await toasts()).filter(t => /Boxed with no destination/.test(t.text)).length;
+    await wait(page, 5000);
+    boxedSnap.seq = 6;
+    await applySnapshot(page, boxedSnap);   // the next scan, as the wake-up timer asks Lua for
+    await wait(page, 400);
+    facts.boxed.toasts = (await toasts()).filter(t => /Boxed with no destination/.test(t.text));
+    if (facts.boxed.early) problems.push('boxed: alert before the delay');
+    const bt = facts.boxed.toasts[0];
+    if (!bt) problems.push('boxed: no "Boxed with no destination" toast after the delay');
+    else {
+        for (const b of ['Locate', 'Find a habitat', 'Dismiss']) if (!bt.buttons.includes(b)) problems.push(`boxed: no "${b}" button: ${JSON.stringify(bt.buttons)}`);
+        if (!/Needs you/i.test(bt.text)) problems.push('boxed: not a Needs-you notice: ' + bt.text);
+        await ctx.shot(page, 'kh_11_boxed');
+        await page.locator('.PZ2QoL_kinToast .PZ2QoL_kinAction', { hasText: 'Find a habitat' }).first().click();
+        await wait(page, 500);
+        facts.boxed.fake = await page.evaluate(() => ({ facts: window.__bxFake.facts, moves: window.__bxFake.moves.slice() }));
+        facts.boxed.after = (await toasts()).map(t => t.text);
+        if (facts.boxed.fake.moves.length !== 1 || facts.boxed.fake.moves[0][0] !== boxedOne.id || facts.boxed.fake.moves[0][1] !== '9000') problems.push('boxed: Find a habitat sent ' + JSON.stringify(facts.boxed.fake));
+        if (!facts.boxed.after.some(t => /on its way/.test(t))) problems.push('boxed: no confirmation after the move: ' + JSON.stringify(facts.boxed.after));
+        boxedSnap.seq = 7;
+        await applySnapshot(page, boxedSnap);
+        await wait(page, 300);
+        facts.boxed.again = (await toasts()).filter(t => /Boxed with no destination/.test(t.text)).length;
+        if (facts.boxed.again) problems.push('boxed: alerted twice for the same wait');
+    }
+    await page.evaluate(async () => {
+        window.__bxFake.active = false;
+        (await import('/js/mods/pz2qol/kin.js')).setKinSettings({ boxedAfterS: 10 });
+        (await import('/js/mods/pz2qol/kinboxed.js'))._resetBoxed();
+    });
+    await clearToasts();
     await applySnapshot(page, snapshot);
 
     facts.problems = problems;

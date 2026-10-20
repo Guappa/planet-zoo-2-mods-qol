@@ -35,7 +35,8 @@ an afterthought:
    files are changed. The only thing written to the profile is the mod's own `PZ2QoL` entry in
    the player save's data store (`Saves\player`, MainPlayer `SetData`; developer-approved
    2026-10-16, for device-local data such as Franchise habitat assignments; see
-   `reference/lua-runtime.md`). It holds short ASCII strings only, with a size cap, `pcall` around
+   `reference/lua-runtime.md`). It holds two areas: `Assign` (per-zoo data, 64 KB cap) and `Prefs`
+   (player-wide settings across zoos, 4 000-character cap). Short ASCII strings only, `pcall` around
    every call, and never anything else in that save. Uninstalling means deleting the
    folder. Data a mod must keep (e.g. PZ2QoL's habitat assignments, per zoo, Franchise included)
    goes in that player-save entry (mod files can't be written in retail). No mod data goes into
@@ -45,9 +46,14 @@ an afterthought:
    that acts online:
    - only ever starts from the player's click (never a timer or the background). That click is
      the opt-in: there are no "allow in Franchise" switches (developer, 2026-10-16). Franchise is
-     the mod's main target, so every feature should work there;
+     the mod's main target, so every feature should work there. **Exception** (developer,
+     2026-10-19): the per-species Auto mode (Species board) runs on its schedule by itself, in
+     Franchise too; turning it on for a species is the opt-in. **Second exception** (developer,
+     2026-10-19): "Let out stuck aquarium animals" (`pz2qol.boxrelease.lua`) unboxes animals the
+     game boxed and left, hands-free, on by default (Kin setting `releaseBoxed` turns it off);
    - does one action at a time, each confirmed by the game (or timed out), with a pause after
-     each (player-adjustable, 1 s minimum). The market lister uses that same pause after a server
+     each (player-adjustable; moves 0.5 s default and minimum, developer 2026-10-18; listings 1 s
+     minimum). The market lister uses that same pause after a server
      error (developer, 2026-10-16: no longer back-off); "Find a habitat" still pauses 8 s;
    - **skips a step that fails and carries on; only the player's Stop ends a run.** The developer
      decided this on 2026-10-16 and accepts the risk: in-game crashes have followed server
@@ -56,7 +62,11 @@ an afterthought:
    view or behaviour. Hook by module or function name, not by offset.
 5. **Ship nothing of Frontier's** (no decompiled code, no assets) except unavoidable copies of the
    game's own UI entry pages that redirect to the mod (see `reference/ui-gameface.md`).
-6. **Packaging:** a plain zip only. No installers or executables.
+6. **Packaging:** a plain zip only. No installers, and nothing that runs outside the game. A DLL
+   *inside the mod folder* that the game's own Lua loads (`package.loadlib`, like the debug trace
+   DLLs) does not break this rule (developer, 2026-10-18). A native helper is still undecided
+   (`docs/RESEARCH-native-helper.md`): Nexus may quarantine a zip with DLLs, and crash dumps list
+   loaded modules.
 
 ## Core definitions
 
@@ -95,5 +105,6 @@ an afterthought:
 3. Run the tests (`reference/testing.md`). For UI changes, run the browser harness and **look at the
    screenshots**.
 4. Build fresh, then install only while the game is closed (`reference/archives-and-build.md`).
-5. In game: check `dbg/trace.log` (debug builds) and the crash dumps if anything goes wrong.
+5. In game: check `dbg/trace.log` (debug builds; its ` LOG ` lines are the detailed log with values,
+   `reference/debugging.md`) and the crash dumps if anything goes wrong.
 6. **Update this skill** with whatever you learned.

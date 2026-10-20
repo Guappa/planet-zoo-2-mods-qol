@@ -21,7 +21,8 @@ export function digestZoo(seed) {
         const d = {};
         d.suggest = ids(suggestPlan(model, sp, z.dest, { allowTrade: false, includeKin: true, assignments: z.assignments }));
         d.suggestTrade = ids(suggestPlan(model, sp, z.dest, { allowTrade: true, includeKin: false, assignments: null }));
-        for (const [k, options] of [['prog', { moveCost: 0.04 }], ['progFew', { moveCost: 0.15, useTradeCentre: false }]]) {
+        // spareOut off: the golden record predates non-breeders leaving over the make-up (2026-10-19)
+        for (const [k, options] of [['prog', { moveCost: 0.04, spareOut: false }], ['progFew', { moveCost: 0.15, useTradeCentre: false, spareOut: false }]]) {
             const p = planProgramme(model, sp, info(), z.dest, { assignments: z.assignments, options });
             d[k] = p && { system: p.system, moves: p.moves, score: p.score, startScore: p.startScore, before: p.before, after: p.after, evaluations: p.evaluations, fromTrade: p.fromTrade, tradeWaiting: p.tradeWaiting, habitats: p.habitats, capacity: p.capacity };
         }

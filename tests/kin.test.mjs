@@ -5,7 +5,10 @@ import {
     buildKinModel, normalizeSnapshot, Pedigree, predictOffspring, ownGrades, offspringScore, relationWord,
     animalSeverity, animalPairs, explainRelation, habitatSummary, habitatByName, habitatsAtRisk, mateCandidates,
     newRisks, relatedAmong, relativesOf, percent, Sex, pairSeverity, describeRelation, worstSeverity, kinClusters, canLocate,
+    normalizeStored, withStored,
 } from '../mods/PZ2QoL/UI/UIGameface/js/mods/pz2qol/kincore.js';
+import { countsExcluding, riskHabitatsExcluding } from '../mods/PZ2QoL/UI/UIGameface/js/mods/pz2qol/kincore.js';
+import { DEFAULT_CLOSE_KINSHIP } from '../mods/PZ2QoL/UI/UIGameface/js/mods/pz2qol/kincore.js';
 
 const M = Sex.Male, F = Sex.Female;
 const an = (id, sex, par, over = {}) => Object.assign({
@@ -198,6 +201,30 @@ test('new risks: only pairs that became risky', () => {
     assert.equal(newRisks(before, after, { includeKin: true }).length, 2);
 });
 
+test('muted species: no new-risk alerts and no alert counts, the model itself unchanged', () => {
+    const before = buildKinModel(zoo());
+    const snap = zoo();
+    snap.animals.find(a => a.id == 'h1').contra = false;
+    snap.animals.find(a => a.id == 'z').juv = false;          // the tiger half-sister grows up
+    snap.animals.find(a => a.id == 'z').infertile = false;
+    const after = buildKinModel(snap);
+    const all = newRisks(before, after);
+    assert.ok(all.some(p => p.species === 'Lion') && all.some(p => p.species === 'Tiger'));
+    const lionsMuted = newRisks(before, after, { muted: new Set(['Lion']) });
+    assert.ok(lionsMuted.length > 0 && lionsMuted.every(p => p.species === 'Tiger'));
+    assert.equal(newRisks(before, after, { muted: new Set() }).length, all.length);
+    // counts
+    assert.deepEqual(countsExcluding(after, null), after.counts);
+    assert.deepEqual(countsExcluding(after, new Set()), after.counts);
+    const c = countsExcluding(after, new Set(['Lion']));
+    const lionRisk = after.pairs.filter(p => p.species === 'Lion' && p.severity === 'risk').length;
+    assert.ok(lionRisk > 0);
+    assert.equal(c.risk, after.counts.risk - lionRisk);
+    assert.equal(countsExcluding(after, new Set(['Lion', 'Tiger'])).risk, 0);
+    assert.deepEqual(riskHabitatsExcluding(after, new Set(['Lion'])).map(h => h.name), ['Jungle Habitat']);
+    assert.deepEqual(riskHabitatsExcluding(after, new Set()).map(h => h.name).sort(), ['Jungle Habitat', 'Savannah Habitat']);
+});
+
 test('storage: related among a set, relatives of one', () => {
     const m = buildKinModel(zoo());
     const rel = relatedAmong(m, ['k1', 'k2', 'u', 'a']);
@@ -273,4 +300,234 @@ test('shoals and colonies are left out: no pairs, no habitat counts', () => {
     assert.equal(model.habitats.get('4').name, 'Reef');
     snap.speciesFacts = {};
     assert.ok(buildKinModel(snap).pairs.some(p => p.species === 'Clownfish'), 'counted when the species is not collective');
+});
+
+// ------------------------------------------- stored adults (Find a mate, Franchise)
+
+function storedLions() {
+    return normalizeStored({
+        species: 'Lion',
+        animals: [
+            // half-sister of k1 through their father a (mother ss, not in the zoo)
+            { id: 'sS1', guid: 'S1', name: 'Sasha', species: 'Lion', sex: F, maturity: 2, par: ['ga', 'gss'], genes: { F: 'EEEEEEFFFFFF', I: 'EEEEEEFFFFFF' } },
+            // unrelated, best genes
+            { id: 'sS2', guid: 'S2', name: 'Nala', species: 'Lion', sex: F, maturity: 1, par: [], forSale: true, genes: { F: 'EEEEEEFFFFFF', I: 'EEEEEEFFFFFF' } },
+            // unrelated, too old (6), and a not yet mature one (4), a sterile one (5)
+            { id: 'sS3', guid: 'S3', name: 'Old', species: 'Lion', sex: F, maturity: 6, par: [] },
+            { id: 'sS4', guid: 'S4', name: 'Teen', species: 'Lion', sex: F, maturity: 4, par: [] },
+            { id: 'sS5', guid: 'S5', name: 'Barren', species: 'Lion', sex: F, maturity: 5, par: [] },
+            // a male: not a candidate for k1
+            { id: 'sS6', guid: 'S6', name: 'Rafi', species: 'Lion', sex: M, maturity: 2, par: [] },
+        ],
+        anc: { gss: ['gs1', ''] },
+    });
+}
+
+test('stored adults: normalizeStored maps the game maturity', () => {
+    const s = storedLions();
+    const by = id => s.animals.find(a => a.id === id);
+    assert.equal(by('sS1').stored, true);
+    assert.equal(by('sS1').lt, 'storage');
+    assert.equal(by('sS1').hab, '');
+    assert.equal(by('sS1').contra, false);
+    assert.equal(by('sS1').juv, false);
+    assert.equal(by('sS1').fert.state, 'fertile');
+    assert.equal(by('sS3').infertile, true);
+    assert.equal(by('sS3').fert.state, 'old');
+    assert.equal(by('sS4').fert.state, 'young');
+    assert.equal(by('sS5').fert.state, 'sterile');
+    assert.equal(by('sS2').forSale, true);
+    assert.deepEqual(s.anc, { gss: ['gs1'] });
+    assert.equal(normalizeStored({ error: 'notfranchise' }).error, 'notfranchise');
+    assert.deepEqual(normalizeStored(null).animals, []);
+});
+
+test('stored adults: ranked with the zoo, half-sister via the pedigree lands in game', () => {
+    const snap = zoo();
+    for (const a of snap.animals) a.genes = { F: 'CCCCCCDDDDDD', I: 'CCCCCCDDDDDD' };
+    snap.animals.find(a => a.id == 'u').genes = { F: 'EEEEEEFFFFFF', I: 'EEEEEEFFFFFF' };
+    const m = buildKinModel(snap);
+    const list = mateCandidates(m, 'k1', { stored: storedLions() });
+    const ids = list.map(c => c.animal.id);
+    // unrelated first: u (zoo, score 100) and Nala (storage, score 100): zoo first on the tie
+    assert.deepEqual(ids.slice(0, 2), ['u', 'sS2']);
+    assert.equal(list[1].stored, true);
+    assert.equal(list[1].sameHabitat, false);
+    assert.equal(list[0].stored, undefined);
+    // then the unrelated stored ones that breed later / never
+    assert.equal(list.find(c => c.animal.id === 'sS4').breeds, 'later');
+    assert.equal(list.find(c => c.animal.id === 'sS3').breeds, 'never');
+    const sis = list.find(c => c.animal.id === 'sS1');
+    assert.equal(sis.tier, 'game');
+    assert.equal(relationWord(sis.rel, F), 'half-sister');
+    assert.ok(ids.indexOf('sS1') > ids.indexOf('sS5'), 'related after every unrelated one');
+    assert.ok(!ids.includes('sS6'), 'same sex left out');
+    // the model itself is untouched
+    assert.equal(m.animals.size, snap.animals.length);
+    assert.ok(!m.byGuid.has('S1'));
+    const view = withStored(m, storedLions());
+    assert.equal(view.animals, m.animals);
+    assert.ok(view.byGuid.has('S1') && view.stored.has('sS1'));
+    assert.match(explainRelation(view, m.animals.get('k1'), view.stored.get('sS1')), /half-siblings/);
+});
+
+test('stored adults: no stored list gives exactly today\'s candidates', () => {
+    const snap = zoo();
+    for (const a of snap.animals) a.genes = { F: 'CCCCCCDDDDDD', I: 'CCCCCCDDDDDD' };
+    const m = buildKinModel(snap);
+    const plain = mateCandidates(m, 'k1');
+    for (const stored of [undefined, null, normalizeStored({ error: 'failed' }), normalizeStored({ animals: [] })]) {
+        assert.deepEqual(mateCandidates(m, 'k1', { stored }), plain);
+    }
+    assert.ok(plain.every(c => !('stored' in c)));
+});
+
+// ------------------------------------------------ speed (Nexus: "UI lags")
+// A closed flock: 100 flamingos in one habitat, 6 generations bred among
+// themselves, ancestors partly gone (in anc only).
+function flock(seed = 7) {
+    let r = seed;
+    const rnd = n => { // mulberry32
+        r = (r + 0x6D2B79F5) | 0;
+        let t = Math.imul(r ^ (r >>> 15), 1 | r);
+        t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+        return (((t ^ (t >>> 14)) >>> 0) % n);
+    };
+    const all = [];
+    let gen = [];
+    for (let i = 0; i < 12; i++) gen.push({ id: 'f0_' + i, sex: i % 2 ? F : M, par: ['', ''] });
+    all.push(...gen);
+    for (let g = 1; g < 6; g++) {
+        const next = [];
+        const males = gen.filter(a => a.sex === M), females = gen.filter(a => a.sex === F);
+        const n = g === 5 ? 60 : 18;
+        for (let i = 0; i < n; i++) {
+            const dad = males[rnd(males.length)], mum = females[rnd(females.length)];
+            next.push({ id: `f${g}_${i}`, sex: rnd(2) ? F : M, par: [dad.id, mum.id] });
+        }
+        all.push(...next);
+        gen = next.concat(gen.slice(0, 6));
+    }
+    const alive = all.slice(-100);
+    const gone = all.slice(0, -100);
+    const anc = {};
+    for (const a of gone) anc['g' + a.id] = a.par.map(p => p ? 'g' + p : '');
+    return {
+        v: 1, seq: 1, scope: 'park', habitats: [{ id: '1', name: 'Flamingo Lagoon' }],
+        animals: alive.map(a => an(a.id, a.sex, a.par, { species: 'Flamingo', loc: 'Flamingo Lagoon', juv: false })),
+        anc,
+    };
+}
+
+// What a model says about its pairs, for exact comparisons.
+const pairFacts = m => m.pairs.map(p => ({ key: p.key, a: p.a.id, b: p.b.id, hab: p.hab, species: p.species, rel: p.rel, tier: p.tier,
+    severity: p.severity, cover: p.cover, kinship: p.kinship, mated: p.mated, unheld: p.unheld }));
+
+test('speed: a reused pedigree gives exactly the same model', () => {
+    for (const snap of [zoo(), flock(3), flock(11)]) {
+        const first = buildKinModel(snap);
+        // the next scan: new objects, same parentage
+        const again = buildKinModel(JSON.parse(JSON.stringify(snap)), { ped: first.ped });
+        assert.equal(again.ped.reused, true, 'caches taken over');
+        assert.deepEqual(pairFacts(again), pairFacts(first));
+        assert.deepEqual(again.counts, first.counts);
+        // parentage changed (a birth): fresh caches, still right
+        const born = JSON.parse(JSON.stringify(snap));
+        born.animals.push(an('newborn', F, [born.animals[0].id, born.animals[1].id], { species: born.animals[0].species, loc: born.animals[0].loc, juv: true }));
+        const after = buildKinModel(born, { ped: first.ped });
+        assert.equal(after.ped.reused, false);
+        assert.deepEqual(pairFacts(after), pairFacts(buildKinModel(born)));
+    }
+});
+
+test('speed: one relation per pair gives the same pairs as before (both directions)', () => {
+    for (const snap of [zoo(), flock(5)]) {
+        const m = buildKinModel(snap);
+        const ped = new Pedigree(normalizeSnapshot(snap));
+        // the old loop: relation in list order decides the pair, relation male-first is stored
+        const want = new Map();
+        for (const [hab, bySpecies] of m.groups) {
+            for (const [, list] of bySpecies) {
+                for (let i = 0; i < list.length; i++) {
+                    for (let j = i + 1; j < list.length; j++) {
+                        const x = list[i], y = list[j];
+                        if (!(x.sex === Sex.Unisex || y.sex === Sex.Unisex || x.sex !== y.sex) || !x.guid || !y.guid) continue;
+                        const rel = ped.relation(x.guid, y.guid);
+                        if (!rel) continue;
+                        const [mm, ff] = x.sex === F && y.sex !== F ? [y, x] : [x, y];
+                        want.set(`${hab}|${mm.id}|${ff.id}`, { rel: mm === x ? rel : ped.relation(mm.guid, ff.guid), kinship: rel.kinship, game: rel.game });
+                    }
+                }
+            }
+        }
+        assert.equal(m.pairs.length, want.size);
+        for (const p of m.pairs) {
+            const w = want.get(`${p.hab}|${p.a.id}|${p.b.id}`);
+            assert.ok(w, 'pair ' + p.key);
+            assert.deepEqual(p.rel, w.rel);
+            assert.equal(p.kinship, w.kinship);
+            assert.equal(p.tier, w.game ? 'game' : w.kinship >= DEFAULT_CLOSE_KINSHIP - 1e-9 ? 'close' : 'distant');
+        }
+    }
+});
+
+test('speed: 100 flamingos in one habitat, 6 generations', () => {
+    const snap = flock();
+    let t = Date.now();
+    const m = buildKinModel(snap);
+    const cold = Date.now() - t;
+    t = Date.now();
+    const warm = buildKinModel(JSON.parse(JSON.stringify(snap)), { ped: m.ped });
+    const reused = Date.now() - t;
+    console.log(`100 flamingos: ${m.pairs.length} related pairs, cold build ${cold} ms, next scan ${reused} ms`);
+    assert.ok(m.pairs.length > 100, 'a closed flock is full of relatives');
+    assert.ok(cold < 1500, `cold build took ${cold} ms`);
+    assert.ok(reused < 300, `a scan with the same parentage took ${reused} ms`);
+    assert.equal(warm.pairs.length, m.pairs.length);
+});
+
+// ------------------------------------------- boxed with no destination
+import { boxedStep, isBoxedWaiting, waitedText } from '../mods/PZ2QoL/UI/UIGameface/js/mods/pz2qol/kinboxedcore.js';
+
+test('boxed: who counts as waiting in a box with nowhere to go', () => {
+    const s = { boxedIncludeTrade: false };
+    assert.equal(isBoxedWaiting({ boxed: true, hab: '', lt: 'escaped' }, s), true);
+    assert.equal(isBoxedWaiting({ boxed: true, hab: '', lt: 'other' }, s), true);
+    assert.equal(isBoxedWaiting({ boxed: true, hab: '', lt: 'escaped', moving: true }, s), false, 'a transport job: on its way');
+    assert.equal(isBoxedWaiting({ boxed: false, hab: '', lt: 'escaped' }, s), false);
+    assert.equal(isBoxedWaiting({ boxed: true, hab: '9', lt: 'habitat' }, s), false);
+    for (const lt of ['vet', 'quarantine', 'transit']) assert.equal(isBoxedWaiting({ boxed: true, hab: '', lt }, s), false, lt);
+    assert.equal(isBoxedWaiting({ boxed: true, hab: '', lt: 'trade' }, s), false, 'trade centre: off by default');
+    assert.equal(isBoxedWaiting({ boxed: true, hab: '', lt: 'trade' }, { boxedIncludeTrade: true }), true);
+});
+
+test('boxed: an alert after the delay, once, again only after it stopped waiting', () => {
+    const snap = zoo([an('bx', F, ['', ''], { hab: '', loc: '', lt: 'escaped', boxed: true })]);
+    const m = buildKinModel(snap);
+    assert.equal(m.animals.get('bx').boxed, true, 'normalizeSnapshot keeps boxed');
+    const settings = { boxedAlert: true, boxedAfterS: 10 };
+    const state = new Map();
+    let r = boxedStep(m, settings, state, 1000);
+    assert.equal(r.due.length, 0);
+    assert.equal(r.wake, 10000);
+    r = boxedStep(m, settings, state, 6000);
+    assert.equal(r.due.length, 0);
+    assert.equal(r.wake, 5000);
+    r = boxedStep(m, settings, state, 11000);
+    assert.deepEqual(r.due.map(d => [d.animal.id, d.waitedMs]), [['bx', 10000]]);
+    assert.equal(r.wake, null);
+    assert.equal(boxedStep(m, settings, state, 60000).due.length, 0, 'only once');
+    // placed: forgotten; boxed again later: a new alert after the delay
+    const placed = buildKinModel(zoo([an('bx', F, ['', ''], { hab: '3', lt: 'habitat', boxed: false })]));
+    boxedStep(placed, settings, state, 61000);
+    assert.equal(state.size, 0);
+    boxedStep(m, settings, state, 70000);
+    assert.equal(boxedStep(m, settings, state, 80000).due.length, 1);
+    // switched off, or the storage scope: nothing (and nothing kept)
+    assert.equal(boxedStep(m, { boxedAlert: false }, new Map(), 0).due.length, 0);
+    const st2 = new Map();
+    boxedStep(m, { boxedAlert: true, boxedAfterS: 5 }, st2, 0);
+    assert.equal(boxedStep(m, { boxedAlert: true, boxedAfterS: 5 }, st2, 5000).due.length, 1, 'the player\'s delay');
+    assert.equal(waitedText(12400), '12 s');
+    assert.equal(waitedText(300000), '5 min');
 });

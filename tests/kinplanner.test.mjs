@@ -7,6 +7,7 @@ import {
     speciesTabs, stateFromOpen, tierNote, visibleCounts, worstOf, zooCounts,
 } from '../mods/PZ2QoL/UI/UIGameface/js/mods/pz2qol/kinplannercore.js';
 import { mateCandidates } from '../mods/PZ2QoL/UI/UIGameface/js/mods/pz2qol/kincore.js';
+import { matrixSig } from '../mods/PZ2QoL/UI/UIGameface/js/mods/pz2qol/kinplannercore.js';
 
 const M = Sex.Male, F = Sex.Female;
 const G = 'AABBCCDDEEFF';
@@ -187,4 +188,22 @@ test('resolveState drops what left the model and keeps the rest', () => {
     assert.equal(resolveState(model, Object.assign({}, base, { pair: { a: 'k1', b: 'p' } })).pair, null);
     // waiting for data: nothing changes
     assert.deepEqual(resolveState(null, base), base);
+});
+
+test('matrix signature: the same squares give the same signature, any shown change a new one', () => {
+    const sig = snap => matrixSig(buildMatrix(buildKinModel(snap), '1', 'Lion'), { showCovered: true });
+    const base = sig(zoo());
+    assert.ok(base.length > 0);
+    assert.equal(sig(zoo()), base, 'a new scan with nothing changed');
+    const contra = zoo();
+    contra.animals.find(a => a.id === 'h1').contra = false;
+    assert.notEqual(sig(contra), base, 'contraception lifted');
+    const renamed = zoo();
+    renamed.animals.find(a => a.id === 'k2').name = 'Queen';
+    assert.notEqual(sig(renamed), base, 'a rename');
+    const other = zoo();
+    other.animals.find(a => a.id === 'p').name = 'Elsewhere';
+    assert.equal(sig(other), base, 'a change in another habitat does not count');
+    assert.notEqual(matrixSig(buildMatrix(buildKinModel(zoo()), '1', 'Lion'), { showCovered: false }), base, 'a setting');
+    assert.equal(matrixSig(null), '');
 });

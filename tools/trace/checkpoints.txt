@@ -283,6 +283,13 @@ js_bw_unassign
 js_bw_programme_search
 js_bw_programme_ratio
 js_bw_programme_run
+js_bw_options_open
+js_bw_options_close
+js_bw_tune
+js_bw_tune_reset
+js_bw_optimiser
+js_bw_deep_run
+js_bw_deep_auto
 init_ok_pz2qol.storagesend
 init_fail_pz2qol.storagesend
 send_patched

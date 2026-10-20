@@ -117,7 +117,8 @@ test('a run is the Breeding programme\'s plan when nothing is held back', () => 
             const prog = planProgramme(seen, sp, z.info[sp], z.dest, { options: programmeOptionsFor(settings) });
             const r = planAutoRun({ model, species: sp, info: z.info[sp], destinations: z.dest, settings: Object.assign({}, settings, { thin: false }), view: {} });
             const kept = new Set(r.held.filter(x => x.why === 'the last breeder of its sex stays').map(x => x.id));
-            const want = prog.moves.filter(m => !model.animals.get(m.id).preg && !kept.has(m.id)).map(m => `${m.id}>${m.to}`).sort();
+            // (a juvenile never goes to the trade centre: youth is left alone)
+            const want = prog.moves.filter(m => !model.animals.get(m.id).preg && !kept.has(m.id) && !(model.animals.get(m.id).juv && m.to === TRADE)).map(m => `${m.id}>${m.to}`).sort();
             assert.deepEqual(r.moves.map(m => `${m.id}>${m.to}`).sort(), want, `seed ${seed} ${sp}`);
             assert.ok(r.moves.every(m => m.stage === 'programme'));
         }

@@ -30,7 +30,7 @@ import {
     cachedDestinations, getPlanRun, isAskingStored, moveAnimal, onPlanRun, planBlockedReason, requestDestinations, requestSpeciesInfo, requestStoredAdults, runPlan, stopPlan,
 } from '/js/mods/pz2qol/kinmoves.js';
 import {
-    PROGRAMME_DEFAULTS, PROGRAMME_DEFAULT_STEP, PROGRAMME_STEPS, RATIO_CHOICES, conceptionChance, groupRule, planProgrammeAsync, programmeLogData, programmeProblemSig, ratioKey, unknownMakeupText, youngQuality,
+    PROGRAMME_DEFAULTS, PROGRAMME_DEFAULT_STEP, PROGRAMME_STEPS, RATIO_CHOICES, conceptionChance, groupRule, planProgrammeAsync, programmeLogData, programmeProblemSig, ratioKey, unknownMakeupText, withFreshYoung, youngQuality,
 } from '/js/mods/pz2qol/kinprogramme.js';
 import {
     CPU_ORDER, CPU_STEPS, CUSTOM_STEPS, DEEP_PRESETS, PRESET_ORDER, PRESET_WORDS, cpuOf, deepJob, deepKey, deepResult, deepSettings,
@@ -38,6 +38,7 @@ import {
     setOptimiser, startDeep, stopDeep,
 } from '/js/mods/pz2qol/kinprogdeep.js';
 import { getPref, setPref } from '/js/mods/pz2qol/prefs.js';
+import { TUNE_PREF, applyTuning, tuningKey } from '/js/mods/pz2qol/kinprogtune.js';
 import { dlog } from '/js/mods/pz2qol/debuglog.js';
 import { FILL_STEPS, GENE_STEPS, cullPlan, geneScore } from '/js/mods/pz2qol/kincull.js';
 import { hideKinCard, kinBadge, sexClass, sexSymbol } from '/js/mods/pz2qol/kinui.js';
@@ -48,7 +49,7 @@ import { paceSlider } from '/js/mods/pz2qol/pace.js';
 import { getAssignments, onAssignments, toggleAssignment, assignmentStorage, assignmentStorageReason } from '/js/mods/pz2qol/kinassign.js';
 import { isMuted, mutedSpecies, onMuted, setMuted } from '/js/mods/pz2qol/kinmute.js';
 import { canOpenTrade, onStorageCounts, openTrade, requestStorageCounts, tradeRow } from '/js/mods/pz2qol/tradejump.js';
-import { fetchRow } from '/js/mods/pz2qol/storagefetch.js';
+import { fetchAllRow, fetchRow } from '/js/mods/pz2qol/storagefetch.js';
 import {
     btn as kitBtn, closeButton, closeOtherPanels, countPills, makeGuard, makeScroll, panelApi, placePanel, refreshBars, registerPanel,
     remPx, restoreScroll, scrollBoxTo, speciesName, switchEl as kitSwitch, trunc, wheelScroll,
@@ -829,6 +830,9 @@ function storedGroup(model, c, content) {
     if (!model || !sp) return;
     const fetch = fetchRow(model, sp, { onOpened: () => closeSpeciesBoard(), onError: text => notice(text, 'warn') });
     if (fetch) content.appendChild(fetch);
+    // every species at once, right under it (the developer, 2026-10-19)
+    const fetchAll = fetchAllRow(model, { countsFor: sp, onOpened: () => closeSpeciesBoard(), onError: text => notice(text, 'warn') });
+    if (fetchAll) content.appendChild(fetchAll);
     if (model.mode !== 'franchise') {
         content.appendChild(h('div.PZ2QoL_kbStoredNote.faint', { text: 'Your Animal Storage adults show here in Franchise zoos.' }));
         return;
@@ -1861,8 +1865,10 @@ function makeupWords(rule) {
     return caps.length ? `${w}, at most ${caps.join(' and ')} per habitat` : w;
 }
 
+// (+ the fine tuning set in the Breeding window, kinprogtune.js; none: as before)
 function programmeKey(p) {
-    return `${p.step}|${p.useTrade !== false}|${ratioChoice(p.species)}`;
+    const tk = tuningKey(getPref(TUNE_PREF));
+    return `${p.step}|${p.useTrade !== false}|${ratioChoice(p.species)}${tk ? `|${tk}` : ''}`;
 }
 
 // What the programme depends on in the zoo: the species' animals (where they
@@ -1960,7 +1966,7 @@ function programmeOptions(p) {
     const st = PROG_STEPS[p.step];
     const o = { moveCost: st.cost, useTradeCentre: p.useTrade !== false, ratio: ratioChoice(p.species) };
     if (st.outsider != null) o.outsiderCost = st.outsider;
-    return Object.assign(o, PROG_SEARCH);
+    return applyTuning(Object.assign(o, PROG_SEARCH), getPref(TUNE_PREF));
 }
 
 // ----------------------------------------------------------- deep search
@@ -1997,7 +2003,7 @@ function programmeView(model) {
     const sig = problemSigFor(p, model);
     const exact = deepResult(p.species, key, dkey, sig);
     const entry = exact || latestDeepResult(p.species, key, dkey);
-    if (entry && entry.r) return { r: entry.r, kind: 'deep', entry, stale: !exact, classic };
+    if (entry && entry.r) return { r: withFreshYoung(entry.r, classic), kind: 'deep', entry, stale: !exact, classic };
     return { r: classic, kind: 'classic', entry: null, stale: false, classic };
 }
 
@@ -2267,7 +2273,8 @@ function useProgramme() {
         const a = model.animals.get(String(m.id));
         if (!a || !canMove(a) || isPinned(a)) continue;
         plan = setMove(model, plan, a.id, m.to);
-        S.reasons.set(a.id, programmeReason(model, a, m.to, r.groups, S.prog && S.prog.info));
+        // a non-breeder over the make-up says so (kinprogramme.js keepSpares)
+        S.reasons.set(a.id, m.spare ? `${m.reason} (to trade or release)` : programmeReason(model, a, m.to, r.groups, S.prog && S.prog.info));
     }
     S.plan = plan;
     S.prog = null;

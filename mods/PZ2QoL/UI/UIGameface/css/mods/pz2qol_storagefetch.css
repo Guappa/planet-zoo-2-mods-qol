@@ -44,6 +44,12 @@
   color: rgba(114, 91, 74, 0.72);
 }
 .PZ2QoL_kbFetchNote.warn { color: #BF5A50; }
+/* "Bring all" sits right under the species button: no second rule, and an
+   outlined button so the species one stays the main action */
+.PZ2QoL_kb .PZ2QoL_kbFetch.all { margin-top: 0.3rem; padding-top: 0; border-top-width: 0; }
+.PZ2QoL_kb .PZ2QoL_kbFetchBtn.all { background-color: rgba(89, 105, 67, 0.12); color: #596943; border: 0.08rem solid #596943; }
+.PZ2QoL_kbFetchBtn.all:hover { background-color: rgba(89, 105, 67, 0.22); }
+.PZ2QoL_kbFetchBtn.all.disabled:hover { background-color: rgba(89, 105, 67, 0.12); }
 
 /* the hub: a curtain over Animal Storage while the mod works there, the
    card in the middle (the Find-a-habitat card's look) */

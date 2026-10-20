@@ -232,7 +232,7 @@ export async function hud(page, ctx) {
     await page.locator('.PZ2QoL_ssCard .PZ2QoL_ssCardBtn', { hasText: 'Close' }).click().catch(() => {});
     await page.evaluate(async () => {
         window.__ssFake.mode = 'offline';
-        (await import('/js/mods/pz2qol/pace.js')).setPace('moves', 1.5);
+        (await import('/js/mods/pz2qol/pace.js')).setPace('moves', 0.5);
     });
     facts.problems = problems;
     if (problems.length) throw new Error('find a habitat (park): ' + problems.join('; '));

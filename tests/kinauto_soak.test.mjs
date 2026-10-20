@@ -195,7 +195,10 @@ for (const c of CASES) {
         // trade centre or the last breeder of a sex can still leave
         // relatives together for a while), and inbreeding risks seldom last
         assert.ok(total.moves > 20, JSON.stringify(total));
-        assert.ok(total.inbredBirths <= total.births * 0.02, JSON.stringify(total));
+        // (6 %, was 2 %: since 2026-10-19 a juvenile is never sent to the
+        // trade centre, the developer's choice, so a young one with no place
+        // in another group grows up next to its parents; 2.4-4.8 % measured)
+        assert.ok(total.inbredBirths <= total.births * 0.06, JSON.stringify(total));
         assert.ok(total.riskSteps <= total.steps * 0.05, JSON.stringify(total));
     });
 }

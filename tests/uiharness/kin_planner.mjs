@@ -30,7 +30,7 @@ const text = (page, sel) => page.evaluate(s => {
 // Every element of the planner, clipped by its overflow:hidden ancestors,
 // must lie inside the viewport; header items and the three columns must
 // not overlap; matrix headers must line up with the squares.
-const layoutFacts = page => page.evaluate(() => {
+export const layoutFacts = page => page.evaluate(() => {
     const vw = innerWidth, vh = innerHeight;
     const out = { outside: [], overlaps: [], textOverflow: [], misaligned: [] };
     const roots = [...document.querySelectorAll('.PZ2QoL_kp, .PZ2QoL_kpMini')].filter(r => r.getBoundingClientRect().width > 0);
@@ -91,7 +91,7 @@ const layoutFacts = page => page.evaluate(() => {
     return out;
 });
 
-function layoutProblems(tag, l, problems) {
+export function layoutProblems(tag, l, problems) {
     if (l.outside.length) problems.push(`${tag}: ${l.outside.length} element(s) outside the view, e.g. ${l.outside.slice(0, 3).join('; ')}`);
     if (l.overlaps.length) problems.push(`${tag}: overlapping ${l.overlaps.slice(0, 3).join('; ')}`);
     if (l.textOverflow.length) problems.push(`${tag}: text overflows ${l.textOverflow.slice(0, 3).join('; ')}`);
@@ -119,7 +119,7 @@ export async function hud(page, ctx) {
     facts.fixtureAnimals = seeded.layout.length;
     await page.evaluate(() => {
         window.__kpEvents = [];
-        for (const n of ['PZ2QoL_KinContracept', 'PZ2QoL_KinLocate', 'PZ2QoL_KinHeatmap', 'ShowHeatmap', 'PZ2QoL_KinScan']) {
+        for (const n of ['PZ2QoL_KinContracept', 'PZ2QoL_KinLocate', 'PZ2QoL_KinLocatePlace', 'PZ2QoL_KinHeatmap', 'ShowHeatmap', 'PZ2QoL_KinScan']) {
             engine.on(n, (...a) => window.__kpEvents.push([n, ...a]));
         }
     });
@@ -190,6 +190,23 @@ export async function hud(page, ctx) {
     await click(page.locator('.PZ2QoL_kpMainTools .PZ2QoL_kpSwitch'));
     await page.waitForTimeout(250);
     if (!(facts.colsWithoutYoung < m.cols)) problems.push(`"Include young" off still shows ${facts.colsWithoutYoung} columns`);
+
+    // "Show in park": one camera event for the habitat (with a sample animal), the planner shrinks
+    await clearEvents();
+    await click(page.locator('.PZ2QoL_kp .PZ2QoL_kpMainHead .PZ2QoL_kpAct', { hasText: 'Show in park' }));
+    await page.waitForTimeout(300);
+    facts.showPlace = {
+        events: (await events()).filter(e => e[0] === 'PZ2QoL_KinLocatePlace'),
+        mini: await page.locator('.PZ2QoL_kpMini:not(.hidden)').count(),
+        miniText: await page.locator('.PZ2QoL_kpMini:not(.hidden)').count() ? await text(page, '.PZ2QoL_kpMini') : '',
+    };
+    if (facts.showPlace.events.length !== 1 || facts.showPlace.events[0][1] !== '9000' || !facts.showPlace.events[0][2]) problems.push(`Show in park sent ${JSON.stringify(facts.showPlace.events)} (expected one PZ2QoL_KinLocatePlace for 9000 with a sample animal)`);
+    if (facts.showPlace.mini !== 1 || !/Savannah/.test(facts.showPlace.miniText)) problems.push('planner did not shrink after Show in park: ' + JSON.stringify(facts.showPlace));
+    await ctx.shot(page, 'kp_2b_show_in_park');
+    if (facts.showPlace.mini) {
+        await click(page.locator('.PZ2QoL_kpMini .PZ2QoL_kpBtn', { hasText: 'Back' }));
+        await page.waitForTimeout(300);
+    }
 
     // 3. a risk square -> details and one-click actions
     await click(page.locator('.PZ2QoL_kpCell.sev_risk'));
@@ -281,12 +298,27 @@ export async function hud(page, ctx) {
     await ctx.shot(page, 'kp_5_settings');
     facts.settings = await page.evaluate(() => ({
         switches: [...document.querySelectorAll('.PZ2QoL_kpPopover.open .PZ2QoL_kpSwitchLabel')].map(n => n.innerText),
-        thresholds: [...document.querySelectorAll('.PZ2QoL_kpPopover.open .PZ2QoL_kpSegItem')].map(n => n.innerText + (n.classList.contains('on') ? '*' : '')),
+        thresholds: [...document.querySelectorAll('.PZ2QoL_kpPopover.open .PZ2QoL_kpSegItem:not([data-toast-level]):not([data-boxed-after])')].map(n => n.innerText + (n.classList.contains('on') ? '*' : '')),
     }));
     facts.layoutSettings = await layoutFacts(page);
     layoutProblems('settings', facts.layoutSettings, problems);
-    if (facts.settings.switches.length !== 4) problems.push(`settings switches: ${facts.settings.switches}`);
+    // other features may add switches: check the ones this scenario knows are there
+    for (const label of ['New inbreeding risks', 'Close kin too', 'Covered pairs', 'Pair bonds count as protection', "Species names in the game's language"]) {
+        if (!facts.settings.switches.includes(label)) problems.push(`settings switch "${label}" missing: ${facts.settings.switches}`);
+    }
     if (facts.settings.thresholds.join(' ') !== '1/8 1/16* 1/32') problems.push(`thresholds: ${facts.settings.thresholds}`);
+    // boxed with no destination (kinboxed.js): switch, delay (10 s default), trade centre
+    for (const label of ['Boxed with nowhere to go', 'Trade centre too']) {
+        if (!facts.settings.switches.includes(label)) problems.push(`settings switch "${label}" missing: ${facts.settings.switches}`);
+    }
+    facts.settings.boxedAfter = await page.evaluate(() => [...document.querySelectorAll('.PZ2QoL_kpPopover.open .PZ2QoL_kpSegItem[data-boxed-after]')].map(n => n.innerText + (n.classList.contains('on') ? '*' : '')));
+    if (!facts.settings.boxedAfter.includes('10 s*')) problems.push(`boxed delay: ${facts.settings.boxedAfter}`);
+    await click(page.locator('.PZ2QoL_kpPopover .PZ2QoL_kpSegItem[data-boxed-after="30"]'));
+    await page.waitForTimeout(200);
+    facts.settings.boxedAfterS = await page.evaluate(async () => (await import('/js/mods/pz2qol/kin.js')).getKinSettings().boxedAfterS);
+    if (facts.settings.boxedAfterS !== 30) problems.push(`boxed delay click: ${facts.settings.boxedAfterS}`);
+    await page.evaluate(async () => (await import('/js/mods/pz2qol/kin.js')).setKinSettings({ boxedAfterS: 10 }));
+    await page.waitForTimeout(200);
     // covered pairs can be hidden from the counts, then shown again
     await click(page.locator('.PZ2QoL_kpPopover .PZ2QoL_kpSwitch', { hasText: 'Covered pairs' }));
     await page.waitForTimeout(250);

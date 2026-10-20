@@ -90,16 +90,22 @@ async function installFakeEngine(page) {
         engine.on('PZ2QoL_ListerResolve', (req, csv) => {
             if (!f.active) return;
             f.resolves++;
-            const ids = {}, rows = {};
+            const ids = {}, rows = {}, failed = [];
+            f.asked = f.asked || {};
             for (const k of String(csv).split(',')) {
+                f.asked[k] = (f.asked[k] || 0) + 1;
                 const g = guidOf(k);
-                if (!g) continue;
+                // f.failKeys: keys the game gives no id for (as in game 2026-10-18)
+                if (!g || (f.failKeys && f.failKeys.has(k))) {
+                    failed.push(k);
+                    continue;
+                }
                 ids[k] = g;
                 // what the row holds, read with the GUID (as the engine does)
                 const at = p => DS.getValue(LIST.concat(k), p);
                 rows[k] = { name: at('name'), species: at('species'), gender: at('gender') };
             }
-            setTimeout(() => engine.trigger('PZ2QoL_ListerIds', req, JSON.stringify({ ids, rows, failed: [] })), 20);
+            setTimeout(() => engine.trigger('PZ2QoL_ListerIds', req, JSON.stringify({ ids, rows, failed })), 20);
         });
         // the market check (Lua's MarketPeek): every species answers at once,
         // one page, then 'done' on release; no cooldown between species here
@@ -222,19 +228,25 @@ export async function frontend(page, ctx) {
         keys.forEach((k, i) => {
             if (i > 0 && i < 6) DS.setValue(LIST.concat(k), 'species', first);
             DS.setValue(LIST.concat(k), 'isMoving', false);
-            DS.setValue(LIST.concat(k), 'isPregnant', false);
+            // one pregnant adult in the first species: never sellable, never ticked or listed
+            DS.setValue(LIST.concat(k), 'isPregnant', i === 3);
             DS.setValue(LIST.concat(k), 'isShoal', false);
             DS.setValue(LIST.concat(k), 'auctionTimerSeconds', i === 1 ? 5 * 3600 : -1);
             DS.setValue(LIST.concat(k), 'maturity', i === 2 ? 0 : 2);
         });
         DS.setValue(['hubAnimalsData', 'animalStorageData'], 'selectedAnimalIDs', []);
+        window.__mdPregKey = keys[3];
+        window.__mdPregSpecies = first;
+        // storage not filtered: the whole count is the list (the dummy count is random)
+        DS.setValue(['hubAnimalsData', 'animalStorageData'], 'animalsInStorage', keys.length);
     });
     await installFakeEngine(page);
     try {
-        // 1. open from the price panel's button (the panel registry when the lister is off)
-        await page.waitForSelector('.PZ2QoL_lister .PZ2QoL_deskBtn', { timeout: 6000 }).catch(() => {});
-        if (await page.locator('.PZ2QoL_lister .PZ2QoL_deskBtn').count()) await click(page.locator('.PZ2QoL_lister .PZ2QoL_deskBtn'));
-        else await page.evaluate(async () => (await import('/js/mods/pz2qol/kinpanel.js')).panelApi('desk').open());
+        // 1. open from the storage bar's button, next to the Market lister switch
+        await page.waitForSelector('.PZ2QoL_bar.storage .PZ2QoL_deskBtn', { timeout: 6000 }).catch(() => {});
+        if (await page.locator('.PZ2QoL_bar.storage .PZ2QoL_deskBtn').count()) await click(page.locator('.PZ2QoL_bar.storage .PZ2QoL_deskBtn'));
+        else throw new Error('no Market desk button on the storage bar');
+        if (await page.locator('.PZ2QoL_lister .PZ2QoL_deskBtn').count()) throw new Error('the Market desk button is still in the price panel');
         // the engine answers within a read or two; then every row has its GUID
         await page.waitForSelector('.PZ2QoL_md:not(.hidden) .PZ2QoL_mdRow[data-id^="g"]', { timeout: 8000 });
         await page.waitForTimeout(800);
@@ -248,12 +260,20 @@ export async function frontend(page, ctx) {
             listedState: [...document.querySelectorAll('.PZ2QoL_mdCell.state.listed')].map(n => n.innerText),
             blocked: document.querySelectorAll('.PZ2QoL_mdRow.blocked').length,
             hellos: window.__md.hellos,
+            scopeNote: [...document.querySelectorAll('.PZ2QoL_md .PZ2QoL_mdNotice.warn')].filter(n => !n.classList.contains('hidden')).map(n => n.innerText),
         }));
         if (!/Direct/.test(facts.open.pill)) problems.push(`engine pill: "${facts.open.pill}"`);
+        if (facts.open.scopeNote.length) problems.push(`a filter note on unfiltered storage: ${JSON.stringify(facts.open.scopeNote)}`);
         if (facts.open.species[0] !== '' || facts.open.species.length < 2) problems.push(`species rail: ${JSON.stringify(facts.open.species)}`);
         if (!facts.open.rows || facts.open.guidRows !== facts.open.rows) problems.push(`rows ${facts.open.rows}, with a GUID ${facts.open.guidRows}`);
         if (!facts.open.listedState.some(t => /On market.*left/.test(t))) problems.push(`no "On market … left" state: ${JSON.stringify(facts.open.listedState)}`);
-        if (facts.open.blocked < 2) problems.push(`blocked rows ${facts.open.blocked} (expected the listed one and the juvenile)`);
+        if (facts.open.blocked < 3) problems.push(`blocked rows ${facts.open.blocked} (expected the listed one, the juvenile and the pregnant one)`);
+        facts.pregnant = await page.evaluate(() => {
+            const row = document.querySelector(`.PZ2QoL_mdRow[data-key="${window.__mdPregKey}"]`);
+            const st = row && row.querySelector('.PZ2QoL_mdCell.state');
+            return { found: !!row, blocked: !!row && row.classList.contains('blocked'), state: st ? st.innerText : '', title: st ? st.title : '' };
+        });
+        if (!facts.pregnant.found || !facts.pregnant.blocked || !/^Pregnant/.test(facts.pregnant.state) || !/until she gives birth/.test(facts.pregnant.title)) problems.push(`pregnant row: ${JSON.stringify(facts.pregnant)}`);
         facts.layoutOpen = await layout(page);
         layoutProblems('open', facts.layoutOpen, problems);
 
@@ -314,6 +334,33 @@ export async function frontend(page, ctx) {
         facts.toolOrder = await page.evaluate(() => [...document.querySelectorAll('.PZ2QoL_mdTools.second > *')].map(n => n.innerText.trim().replace(/\s*\(\d+\)$/, '')));
         if (facts.toolOrder.slice(0, 4).join('|') !== 'Tick all shown|Untick shown|Reset|More filters') problems.push(`button order: ${JSON.stringify(facts.toolOrder)}`);
 
+        // 1d. the pregnant one: not ticked by Tick all, a click does not tick her, not under Show: Sellable
+        const pregRail = await page.evaluate(() => window.__mdPregSpecies);
+        if (pregRail) await click(page.locator(`.PZ2QoL_mdSpecies[data-species="${pregRail.replace(/"/g, '\\"')}"]`));
+        await page.waitForTimeout(300);
+        await click(page.locator('.PZ2QoL_mdTools .PZ2QoL_kpBtn', { hasText: 'Tick all shown' }));
+        await page.waitForTimeout(250);
+        const pregRow = () => page.locator(`.PZ2QoL_mdRow[data-key="${facts.pregKey}"]`);
+        facts.pregKey = await page.evaluate(() => window.__mdPregKey);
+        const pregOn = () => page.evaluate(() => { const r = document.querySelector(`.PZ2QoL_mdRow[data-key="${window.__mdPregKey}"]`); return r ? r.classList.contains('on') : null; });
+        facts.pregTick = { afterTickAll: await pregOn() };
+        if (await pregRow().count()) await click(pregRow());
+        await page.waitForTimeout(200);
+        facts.pregTick.afterClick = await pregOn();
+        const showSeg = v => page.locator('.PZ2QoL_mdSeg', { hasText: 'Show' }).locator(`.PZ2QoL_mdSegItem[data-value="${v}"]`);
+        await click(showSeg('sellable'));
+        await page.waitForTimeout(250);
+        facts.pregTick.underSellable = await pregRow().count();
+        facts.pregTick.sellableBlocked = await page.evaluate(() => document.querySelectorAll('.PZ2QoL_mdRow.blocked[data-id]').length);
+        await ctx.shot(page, 'md_2p_sellable_only');
+        await click(showSeg('blocked'));
+        await page.waitForTimeout(250);
+        facts.pregTick.underNotSellable = await pregRow().count();
+        await click(showSeg('any'));
+        await page.waitForTimeout(250);
+        if (facts.pregTick.afterTickAll !== false || facts.pregTick.afterClick !== false || facts.pregTick.underSellable !== 0 || facts.pregTick.sellableBlocked !== 0 || facts.pregTick.underNotSellable !== 1) problems.push(`pregnant ticks/filters: ${JSON.stringify(facts.pregTick)}`);
+        await click(page.locator('.PZ2QoL_mdTools .PZ2QoL_kpBtn', { hasText: 'Untick shown' }));
+        await page.waitForTimeout(200);
         // 2. a species, tick all sellable, list
         const sp = facts.open.species.find(s => s);
         await click(page.locator(`.PZ2QoL_mdSpecies[data-species="${sp}"]`));
@@ -367,7 +414,7 @@ export async function frontend(page, ctx) {
         facts.job = await page.evaluate(() => window.__md.jobs[0]);
         // the page answered the engine's watch with what it saw selected
         facts.seen = await page.evaluate(() => ({ key: window.__md.watchKey, n: window.__md.seen.length, first: (window.__md.seen[0] || [])[1] || '' }));
-        if (!facts.seen.n || !facts.seen.first.startsWith(`v1|${facts.seen.key}|${facts.seen.key}|`)) problems.push(`page did not report the selection: ${JSON.stringify(facts.seen)}`);
+        if (!facts.seen.n || !facts.seen.first.startsWith(`v2|${facts.seen.key}|${facts.seen.key}|`)) problems.push(`page did not report the selection: ${JSON.stringify(facts.seen)}`);
         facts.done = await page.evaluate(() => ({
             summary: (document.querySelector('.PZ2QoL_mdRunStep') || {}).innerText || '',
             listed: [...document.querySelectorAll('.PZ2QoL_mdCell.state.done')].map(n => n.innerText),
@@ -378,6 +425,7 @@ export async function frontend(page, ctx) {
         }));
         if (!facts.job || !/^v1 \d+$/.test(facts.job.header) || +facts.job.header.split(' ')[1] < 1000) problems.push(`job header: ${facts.job && facts.job.header}`);
         if (!facts.job || facts.job.items.length !== facts.ticked.on) problems.push(`job has ${facts.job && facts.job.items.length} animals, ticked ${facts.ticked.on}`);
+        if (facts.job && facts.job.items.some(it => it.key === facts.pregKey)) problems.push('the pregnant animal is in the job');
         if (facts.job && !facts.job.items.every(it => /^\d+$/.test(it.guid) && /^[A-Za-z0-9_]+$/.test(it.key) && (/^\d+$/.test(it.price) || it.price === '-') && it.hours === 'max')) problems.push(`job lines: ${JSON.stringify(facts.job.items.slice(0, 3))}`);
         if (!facts.done.guidOk) problems.push('job GUIDs are not exact 18-digit strings');
         if (facts.done.adds) problems.push(`the old click path fired AnimalStorage_AddToMarket ${facts.done.adds} times`);
@@ -413,6 +461,66 @@ export async function frontend(page, ctx) {
         if (facts.stop.stops < 1 || facts.stop.jobs !== 1) problems.push(`stop: ${JSON.stringify(facts.stop)}`);
         await ctx.shot(page, 'md_5_stopped');
 
+        // 4b. the game gives no id for some animals (in game 2026-10-18: 59 of 63):
+        // those rows are blocked with the reason, List N leaves them out, a
+        // failed key is not asked again every second, and a job smaller than
+        // the ticks says so ("Listing X of Y: Z couldn't be identified").
+        // All species: their prices were checked in step 4
+        await click(page.locator('.PZ2QoL_mdSpecies[data-species=""]'));
+        await page.waitForTimeout(300);
+        await click(page.locator('.PZ2QoL_mdTools .PZ2QoL_kpBtn', { hasText: 'Untick shown' }));
+        await page.waitForTimeout(200);
+        const sellKeys = await page.evaluate(() => [...document.querySelectorAll('.PZ2QoL_mdRow[data-id]')].filter(n => !n.classList.contains('blocked')).map(n => n.getAttribute('data-key')));
+        if (sellKeys.length < 3) problems.push(`noid: too few sellable rows to test (${sellKeys.length})`);
+        await page.evaluate(k => { window.__md.failKeys = new Set(k); window.__md.stepMs = 60; window.__md.refuseNth = 0; }, sellKeys.slice(0, 1));
+        await click(page.locator('.PZ2QoL_md .PZ2QoL_kpBtn', { hasText: 'Read storage again' }));
+        await page.waitForTimeout(1200);
+        const noidRow = () => page.evaluate(k => {
+            const row = document.querySelector(`.PZ2QoL_mdRow[data-key="${k}"]`);
+            const st = row && row.querySelector('.PZ2QoL_mdCell.state');
+            return { found: !!row, blocked: !!row && row.classList.contains('blocked'), on: !!row && row.classList.contains('on'), state: st ? st.innerText : '', title: st ? st.title : '' };
+        }, sellKeys[0]);
+        facts.noid = { row: await noidRow(), sellNow: await page.evaluate(() => [...document.querySelectorAll('.PZ2QoL_mdRow[data-id]')].filter(n => !n.classList.contains('blocked')).length) };
+        await click(page.locator('.PZ2QoL_mdTools .PZ2QoL_kpBtn', { hasText: 'Tick all shown' }));
+        await page.waitForTimeout(300);
+        facts.noid.afterTick = await noidRow();
+        facts.noid.ticked = await page.evaluate(() => ({
+            on: document.querySelectorAll('.PZ2QoL_mdRow.on').length,
+            big: +(document.querySelector('.PZ2QoL_mdBig .n') || {}).innerText,
+            list: ((document.querySelector('.PZ2QoL_mdSide .PZ2QoL_kpBtn.primary') || {}).innerText || '').trim(),
+        }));
+        await ctx.shot(page, 'md_4b_noid');
+        const r = facts.noid;
+        if (!r.row.found || !r.row.blocked || r.row.state !== 'No id from the game' || !/gave no id for this animal; it can't be listed from the desk/.test(r.row.title)) problems.push(`noid row: ${JSON.stringify(r.row)}`);
+        if (r.afterTick.on) problems.push('noid row ticked by Tick all');
+        // (Tick all leaves animals tagged Keep alone: the count is what got ticked)
+        if (r.sellNow !== sellKeys.length - 1 || r.ticked.on < 2 || r.ticked.on > r.sellNow || r.ticked.big !== r.ticked.on || r.ticked.list !== `List ${r.ticked.on} animals`) problems.push(`noid: List N counts it: ${JSON.stringify(r.ticked)}, sellable ${r.sellNow} of ${sellKeys.length}`);
+        // the next ticked one loses its id by the click
+        const second = await page.evaluate(() => (document.querySelector('.PZ2QoL_mdRow.on') || { getAttribute: () => null }).getAttribute('data-key'));
+        // backed off: the timer's reads do not ask about the failed key again for a while
+        const askedBefore = await page.evaluate(k => (window.__md.asked || {})[k] || 0, sellKeys[0]);
+        await page.waitForTimeout(3000);
+        facts.noid.reasked = await page.evaluate(k => (window.__md.asked || {})[k] || 0, sellKeys[0]) - askedBefore;
+        if (facts.noid.reasked) problems.push(`noid: the failed key was asked again ${facts.noid.reasked} times within 3 s`);
+        // one ticked animal loses its id by the List click: the job is smaller and the player is told
+        await page.evaluate(k => { window.__md.failKeys.add(k); }, second);
+        const jobsBefore = await page.evaluate(() => window.__md.jobs.length);
+        await click(page.locator('.PZ2QoL_mdSide .PZ2QoL_kpBtn', { hasText: /^List \d+/ }));
+        await page.waitForSelector('.PZ2QoL_mdRun.running, .PZ2QoL_mdRun.done', { timeout: 4000 }).catch(() => {});
+        facts.noid.notice = await page.evaluate(() => [...document.querySelectorAll('.PZ2QoL_md .PZ2QoL_mdNotice')].filter(n => !n.classList.contains('hidden')).map(n => n.innerText).join(' | '));
+        await page.waitForSelector('.PZ2QoL_mdRun.done', { timeout: 20000 }).catch(() => {});
+        await page.waitForTimeout(300);
+        facts.noid.job = await page.evaluate(b => { const j = window.__md.jobs[b]; return j ? j.items.map(it => it.key) : null; }, jobsBefore);
+        facts.noid.summary = await page.evaluate(() => (document.querySelector('.PZ2QoL_mdRunStep') || {}).innerText || '');
+        await ctx.shot(page, 'md_4c_partial');
+        const want = `Listing ${r.ticked.on - 1} of ${r.ticked.on}: 1 couldn't be identified by the game`;
+        if (!facts.noid.notice.includes(want)) problems.push(`noid notice: "${facts.noid.notice}" (want "${want}")`);
+        if (!facts.noid.job || facts.noid.job.length !== r.ticked.on - 1 || facts.noid.job.includes(sellKeys[0]) || facts.noid.job.includes(second)) problems.push(`noid job: ${JSON.stringify(facts.noid.job)}`);
+        if (!new RegExp(`1 of the ${r.ticked.on} ticked couldn't be identified by the game`).test(facts.noid.summary)) problems.push(`noid summary: "${facts.noid.summary}"`);
+        await page.evaluate(() => { window.__md.failKeys = null; });
+        await click(page.locator('.PZ2QoL_md .PZ2QoL_kpBtn', { hasText: 'Read storage again' }));
+        await page.waitForTimeout(800);
+
         // 5. no engine: the fallback pill (no listing here; the lister scenario covers the old path)
         await page.evaluate(() => { window.__md.active = false; });
         await click(page.locator('.PZ2QoL_md .PZ2QoL_kpBtn', { hasText: 'Read storage again' }));
@@ -427,8 +535,157 @@ export async function frontend(page, ctx) {
         facts.afterEsc = await page.locator('.PZ2QoL_md:not(.hidden)').count();
         if (facts.afterEsc) problems.push('Esc did not close the desk');
         if (await page.locator('.PZ2QoL_mdScrim:not(.hidden)').count()) problems.push('the dim layer stayed after closing');
+
+        // 7. Animal Storage scoped to one species by the game's own filter: the
+        // native fills the storage list with that species only (filteredSpecies
+        // set, animalsInStorage still the whole count). The desk must still list
+        // every species, start on the scoped one, and put the filter back on close.
+        facts.scope = await page.evaluate(async () => {
+            const DS = await import('/js/common/core/DataStore.js');
+            const { DataStoreCollection } = await import('/js/common/data/DataStoreCollection.js');
+            const LIST = ['hubAnimalsData', 'animalStorageData', 'list'];
+            const DATA = ['hubAnimalsData', 'animalStorageData'];
+            const col = new DataStoreCollection(LIST);
+            await new Promise(r => setTimeout(r, 100));
+            const keys = col._source.map(c => c[c.length - 1]);
+            col.dispose();
+            const sp = k => DS.getValue(LIST.concat(k), 'species');
+            const all = [...new Set(keys.map(sp))];
+            const scoped = all[all.length - 1];
+            const f = window.__mdf = { active: true, clears: 0, restores: 0, scoped, all, total: keys.length, hidden: [], answer: true };
+            // the game's filter: the other species' rows leave the list
+            f.narrow = () => {
+                for (const k of keys) {
+                    if (sp(k) === scoped || !DS.__doesContextExist(LIST.concat(k))) continue;
+                    DS.copyContext(LIST.concat(k), ['__mdHidden', k]);
+                    DS.deleteContext(LIST.concat(k));
+                    f.hidden.push(k);
+                }
+                DS.setValue(DATA.concat('filters'), 'filteredSpecies', [7]);
+            };
+            // Reset all filters: they come back
+            f.widen = () => {
+                for (const k of f.hidden.splice(0)) {
+                    DS.copyContext(['__mdHidden', k], LIST.concat(k));
+                    DS.deleteContext(['__mdHidden', k]);
+                }
+                DS.setValue(DATA.concat('filters'), 'filteredSpecies', []);
+            };
+            f.listCount = () => DS.__getChildrenOfContext(LIST).length;
+            DS.setValue(DATA, 'animalsInStorage', keys.length);
+            DS.setValue(DATA, 'selectedAnimalIDs', []);
+            if (!window.__mdfHook) {
+                window.__mdfHook = true;
+                // the engine's DeskFilters (pz2qol.lister.lua), as the native would answer
+                engine.on('PZ2QoL_DeskFilters', (req, action) => {
+                    const g = window.__mdf;
+                    if (!g || !g.active || !g.answer) return;
+                    if (action === 'clear') {
+                        g.clears++;
+                        setTimeout(() => g.widen(), 60);
+                    }
+                    else if (action === 'restore') {
+                        g.restores++;
+                        setTimeout(() => g.narrow(), 60);
+                    }
+                    setTimeout(() => engine.trigger('PZ2QoL_DeskFiltersState', req, JSON.stringify({ ok: true, cleared: action === 'clear', detail: '' })), 20);
+                });
+            }
+            f.narrow();
+            return { scoped, all, total: keys.length, scopedRows: f.listCount() };
+        });
+        if (!(facts.scope.all.length >= 2 && facts.scope.scopedRows < facts.scope.total)) problems.push(`scoped storage not set up: ${JSON.stringify(facts.scope)}`);
+        await page.evaluate(() => { window.__md.active = true; });
+        const railSpecies = () => page.evaluate(() => [...document.querySelectorAll('.PZ2QoL_md:not(.hidden) .PZ2QoL_mdSpecies')].map(n => n.getAttribute('data-species')).filter(Boolean).sort());
+        const openDesk = () => page.evaluate(async () => (await import('/js/mods/pz2qol/kinpanel.js')).panelApi('desk').open());
+        await openDesk();
+        await page.waitForFunction(n => document.querySelectorAll('.PZ2QoL_md:not(.hidden) .PZ2QoL_mdSpecies').length >= n, facts.scope.all.length + 1, { timeout: 8000 }).catch(() => {});
+        await page.waitForTimeout(1200);
+        await ctx.shot(page, 'md_7_scoped');
+        facts.scoped = await page.evaluate(() => ({
+            on: [...document.querySelectorAll('.PZ2QoL_mdSpecies.on')].map(n => n.getAttribute('data-species')),
+            onInView: (() => {
+                const n = document.querySelector('.PZ2QoL_mdSpecies.on');
+                const v = document.querySelector('.PZ2QoL_kpScroll.mdRail .PZ2QoL_kpViewport');
+                if (!n || !v) return false;
+                const a = n.getBoundingClientRect(), b = v.getBoundingClientRect();
+                return a.top >= b.top - 0.5 && a.bottom <= b.bottom + 0.5;
+            })(),
+            shown: (document.querySelector('.PZ2QoL_mdShown') || {}).innerText || '',
+            note: [...document.querySelectorAll('.PZ2QoL_md .PZ2QoL_mdNotice.warn')].filter(n => !n.classList.contains('hidden')).map(n => n.innerText),
+            clears: window.__mdf.clears,
+            listNow: window.__mdf.listCount(),
+            rowSpecies: [...new Set([...document.querySelectorAll('.PZ2QoL_mdRow[data-id] .PZ2QoL_mdCell.name')].map(n => n.title.split(' · ')[0]))],
+        }));
+        facts.scoped.rail = await railSpecies();
+        const allSorted = facts.scope.all.slice().sort();
+        if (JSON.stringify(facts.scoped.rail) !== JSON.stringify(allSorted)) problems.push(`scoped storage: the rail shows ${JSON.stringify(facts.scoped.rail)}, storage holds ${JSON.stringify(allSorted)}`);
+        if (facts.scoped.on.length !== 1 || facts.scoped.on[0] !== facts.scope.scoped) problems.push(`scoped storage: the desk starts on ${JSON.stringify(facts.scoped.on)}, not ${facts.scope.scoped}`);
+        if (!facts.scoped.onInView) problems.push('scoped storage: the species the desk starts on is scrolled out of the rail');
+        if (facts.scoped.clears !== 1) problems.push(`scoped storage: the game's filter cleared ${facts.scoped.clears} times`);
+        if (facts.scoped.listNow !== facts.scope.total) problems.push(`scoped storage: the list holds ${facts.scoped.listNow} of ${facts.scope.total} while the desk is open`);
+        if (facts.scoped.note.length) problems.push(`scoped storage: a filter note while all is shown: ${JSON.stringify(facts.scoped.note)}`);
+        if (facts.scoped.rowSpecies.length !== 1) problems.push(`scoped storage: rows of ${JSON.stringify(facts.scoped.rowSpecies)} while focused on one species`);
+        // All species: every animal in storage
+        await click(page.locator('.PZ2QoL_mdSpecies[data-species=""]'));
+        await page.waitForTimeout(400);
+        facts.scopedAll = await page.evaluate(() => (document.querySelector('.PZ2QoL_mdShown') || {}).innerText || '');
+        if (!new RegExp(`of ${facts.scope.total} shown$`).test(facts.scopedAll)) problems.push(`scoped storage, All species: "${facts.scopedAll}" (storage holds ${facts.scope.total})`);
+        await ctx.shot(page, 'md_7b_scoped_all');
+        facts.layoutScoped = await layout(page);
+        layoutProblems('scoped', facts.layoutScoped, problems);
+        // closing puts the game's filter back
+        await page.keyboard.press('Escape');
+        await page.waitForTimeout(500);
+        facts.scopedClose = await page.evaluate(() => ({ restores: window.__mdf.restores, listNow: window.__mdf.listCount() }));
+        if (facts.scopedClose.restores !== 1 || facts.scopedClose.listNow !== facts.scope.scopedRows) problems.push(`scoped storage, closed: ${JSON.stringify(facts.scopedClose)} (expected 1 restore, ${facts.scope.scopedRows} rows)`);
+
+        // 7c. the engine does not answer: the desk shows what the list holds and says why
+        await page.evaluate(() => { window.__mdf.answer = false; });
+        await openDesk();
+        await page.waitForTimeout(4000);
+        await ctx.shot(page, 'md_7c_scoped_note');
+        facts.scopedNote = await page.evaluate(() => ({
+            note: [...document.querySelectorAll('.PZ2QoL_md .PZ2QoL_mdNotice.warn')].filter(n => !n.classList.contains('hidden')).map(n => n.innerText),
+        }));
+        facts.scopedNote.rail = await railSpecies();
+        if (!facts.scopedNote.note.some(t => /filtered to .*Clear the filter/.test(t))) problems.push(`scoped storage, no engine: no filter note: ${JSON.stringify(facts.scopedNote.note)}`);
+        if (JSON.stringify(facts.scopedNote.rail) !== JSON.stringify([facts.scope.scoped])) problems.push(`scoped storage, no engine: rail ${JSON.stringify(facts.scopedNote.rail)}`);
+        facts.layoutNote = await layout(page);
+        layoutProblems('scoped note', facts.layoutNote, problems);
+        await page.keyboard.press('Escape');
+        await page.waitForTimeout(300);
+
+        // 7d. the mod's own species filter (the Species board's Storage button)
+        // never narrows what the desk reads; the desk starts on that species
+        await page.evaluate(async () => {
+            window.__mdf.widen();
+            window.__mdf.answer = true;
+            (await import('/js/mods/pz2qol/listfilter.js')).setStorageFilters({ species: window.__mdf.all[0] });
+        });
+        const clearsBefore = await page.evaluate(() => window.__mdf.clears);
+        await openDesk();
+        await page.waitForTimeout(1500);
+        facts.modScoped = await page.evaluate(() => ({
+            on: [...document.querySelectorAll('.PZ2QoL_mdSpecies.on')].map(n => n.getAttribute('data-species')),
+            clears: window.__mdf.clears,
+        }));
+        facts.modScoped.rail = await railSpecies();
+        await ctx.shot(page, 'md_7d_mod_species');
+        if (JSON.stringify(facts.modScoped.rail) !== JSON.stringify(allSorted)) problems.push(`mod species filter: rail ${JSON.stringify(facts.modScoped.rail)}`);
+        if (facts.modScoped.on[0] !== facts.scope.all[0]) problems.push(`mod species filter: starts on ${JSON.stringify(facts.modScoped.on)}, not ${facts.scope.all[0]}`);
+        if (facts.modScoped.clears !== clearsBefore) problems.push('mod species filter: the game\'s filters were cleared although the list was whole');
+        await page.keyboard.press('Escape');
+        await page.waitForTimeout(200);
     }
     finally {
+        await page.evaluate(async () => {
+            if (window.__mdf) {
+                window.__mdf.active = false;
+                window.__mdf.widen();
+                (await import('/js/mods/pz2qol/listfilter.js')).setStorageFilters({ species: '' });
+            }
+        }).catch(() => {});
         await page.evaluate(() => { delete window.__PZ2QOL_TEST_PEEK_GAP_MS; if (typeof engine !== 'undefined') delete engine.__harness; }).catch(() => {});
         await page.evaluate(async () => {
             if (window.__md) window.__md.active = false;

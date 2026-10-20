@@ -22,6 +22,8 @@ import { isCollective } from '/js/mods/pz2qol/kincore.js';
 import { TRADE } from '/js/mods/pz2qol/kinboardcore.js';
 import { RATIO_CHOICES, planProgrammeAsync } from '/js/mods/pz2qol/kinprogramme.js';
 import { cpuOf, deepJob } from '/js/mods/pz2qol/kinprogdeep.js';
+import { getPref } from '/js/mods/pz2qol/prefs.js';
+import { TUNE_PREF } from '/js/mods/pz2qol/kinprogtune.js';
 import {
     AUTO_LIMITS, calendarMonths, finishAutoRun, observeChanges, prepareAutoRun, programmeOptionsFor, speciesFingerprints,
 } from '/js/mods/pz2qol/kinautocore.js';
@@ -562,7 +564,7 @@ async function makePlan(species) {
     const fp = A.prints.get(species);
     const r = await planProgrammeAsync(prep.model, species, info || {}, dest, {
         assignments,
-        options: programmeOptionsFor(prep.settings, ratio, prep.pins),
+        options: programmeOptionsFor(prep.settings, ratio, prep.pins, getPref(TUNE_PREF)),
         sliceMs: cpu.sliceMs,
         restMs: cpu.restMs,
         isCancelled: () => !fresh() || !A.ledger.sp[species] || !A.ledger.sp[species].on,

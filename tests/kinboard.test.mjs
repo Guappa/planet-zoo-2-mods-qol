@@ -1,10 +1,11 @@
 // node --test tests/kinboard.test.mjs
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { buildKinModel, Sex } from '../mods/PZ2QoL/UI/UIGameface/js/mods/pz2qol/kincore.js';
+import { buildKinModel, normalizeStored, Sex } from '../mods/PZ2QoL/UI/UIGameface/js/mods/pz2qol/kincore.js';
 import {
-    TRADE, boardColumns, breedingPairs, canMove, normalizeAssignments, assignedHabitatsOf, habitatAllowedFor, moveText,
-    habitatPrints, resolveAssignments, rekeyAssignments, assignmentsFromSection, planImpact, planProblems, prunePlan, setMove, simulatePlan, speciesList, suggestPlan,
+    TRADE, boardColumns, storedCards, breedingPairs, canMove, normalizeAssignments, assignedHabitatsOf, habitatAllowedFor, moveText,
+    habitatPrints, resolveAssignments, rekeyAssignments, assignmentsFromSection, fullHabitatList, planImpact, planProblems, prunePlan, setMove, simulatePlan, speciesList, suggestPlan,
+    isPinned,
 } from '../mods/PZ2QoL/UI/UIGameface/js/mods/pz2qol/kinboardcore.js';
 
 const M = Sex.Male, F = Sex.Female;
@@ -48,6 +49,28 @@ test('species list: problems first, with counts', () => {
     assert.deepEqual(list[0].habitats.sort(), ['1', '3']);
     assert.equal(list[0].away, 2);
     assert.equal(list[1].species, 'Tiger');
+});
+
+test('species list: muted species are flagged and listed last', () => {
+    const list = speciesList(buildKinModel(zoo()), { muted: new Set(['Lion']) });
+    assert.deepEqual(list.map(s => [s.species, s.muted]), [['Tiger', false], ['Lion', true]]);
+    assert.equal(list[1].counts.risk, 2, 'counts stay (badges are not muted)');
+    assert.equal(speciesList(buildKinModel(zoo()))[0].muted, false);
+});
+
+test('speed: a simulated plan reuses the pedigree and gives the same model as a fresh build', () => {
+    const m = buildKinModel(zoo());
+    const plan = [{ id: 'k2', to: '3' }, { id: 'h1', to: TRADE }];
+    const after = simulatePlan(m, plan, null);
+    assert.equal(after.ped.reused, true, 'parentage unchanged: caches carried over');
+    const fresh = buildKinModel(Object.assign({}, after.snapshot), m.opts);
+    assert.equal(fresh.ped.reused, false);
+    const facts = x => x.pairs.map(p => [p.key, p.hab, p.severity, p.tier, p.kinship, JSON.stringify(p.rel), p.mated]);
+    assert.deepEqual(facts(after), facts(fresh));
+    assert.deepEqual(after.counts, fresh.counts);
+    // boardColumns with the simulation handed in = building it itself
+    const strip = cols => cols.map(c => [c.id, c.kind, c.animals.map(x => [x.a.id, x.severity, x.planned]), c.leaving.map(x => x.a.id), c.risk]);
+    assert.deepEqual(strip(boardColumns(m, 'Lion', plan, null, { after })), strip(boardColumns(m, 'Lion', plan, null)));
 });
 
 test('species list: no shoals or colonies', () => {
@@ -324,6 +347,25 @@ test("saved assignments: re-keyed to today's ids; a habitat not found is kept a 
     assert.deepEqual(rekeyAssignments(saved, [], 'L.4'), saved);
 });
 
+test('saved assignments: no miss is counted when the scan has no full habitat list', () => {
+    // an empty habitat is only in snapshot.habs; without that list it looks gone
+    const noHabs = buildKinModel({ habitats: [{ id: '1', name: 'Savannah' }], animals: [] });
+    const withHabs = buildKinModel({ habitats: [{ id: '1', name: 'Savannah' }], habs: [{ id: '1', name: 'Savannah' }, { id: '2', name: 'Empty Pen' }], animals: [] });
+    assert.equal(fullHabitatList(noHabs), false);
+    assert.equal(fullHabitatList(withHabs), true);
+    assert.equal(fullHabitatList(null), false);
+    const saved = { '9': { species: ['Lion'], name: 'Empty Pen' }, '8': { species: ['Lion'], name: 'Savannah' } };
+    let s = saved;
+    for (const t of ['L.1', 'L.2', 'L.3', 'L.4']) s = rekeyAssignments(s, habitatPrints(noHabs), t, { countMisses: fullHabitatList(noHabs) });
+    const empty = Object.values(s).find(e => e.name === 'Empty Pen');
+    assert.ok(empty, 'kept: four loads without a habitat list never drop it');
+    assert.equal(empty.miss, undefined);
+    assert.ok(s['1'] && s['1'].name === 'Savannah', 'the habitat it can see is still re-keyed');
+    // with the full list it is found again
+    const back = rekeyAssignments(s, habitatPrints(withHabs), 'L.5', { countMisses: true });
+    assert.deepEqual(Object.keys(back).sort(), ['1', '2']);
+});
+
 test('habitat prints: every habitat from the scan, empty ones too, with residents', () => {
     const m = buildKinModel({
         habitats: [{ id: '1', name: 'Savannah Habitat' }],
@@ -333,4 +375,104 @@ test('habitat prints: every habitat from the scan, empty ones too, with resident
     const prints = habitatPrints(m);
     assert.deepEqual(prints.map(p => [p.id, p.name, p.hid, p.guids]), [['1', 'Savannah', '70', ['ga', 'gb']], ['2', 'Empty Pen', '71', []]]);
     assert.ok(prints[0].names.has('savannah habitat'), "both of the game's names for it");
+});
+
+// Stored adults (Franchise) in the pinned trade column: s1 is the in-park
+// trade-centre lion 'tc' (same guid: the park scan already has it), s2 a full
+// sister of k1 (daughter of a), s3 a half-brother of k2 and h1, s4 unrelated,
+// s5 a too-old sister. Lion 'tc2' shares the id of nothing in the park.
+function storedLions() {
+    return normalizeStored({
+        species: 'Lion',
+        animals: [
+            { id: 'sgtc', guid: 'gtc', name: 'Tc again', species: 'Lion', sex: M, maturity: 2, par: [] },
+            { id: 'sgS2', guid: 'gS2', name: 'Sis', species: 'Lion', sex: F, maturity: 2, par: ['ga', 'gb'] },
+            { id: 'sgS3', guid: 'gS3', name: 'Half', species: 'Lion', sex: M, maturity: 1, par: ['ga', 'gx'] },
+            { id: 'sgS4', guid: 'gS4', name: 'Stranger', species: 'Lion', sex: F, maturity: 2, par: [] },
+            { id: 'sgS5', guid: 'gS5', name: 'Old sis', species: 'Lion', sex: F, maturity: 6, par: ['ga', 'gb'] },
+            { id: 'sgT1', guid: 'gT1', name: 'Tigress', species: 'Tiger', sex: F, maturity: 2, par: [] },
+        ],
+        anc: {},
+    });
+}
+
+test('board columns: stored adults in the trade column skip park animals, counts and risk unchanged', () => {
+    const m = buildKinModel(zoo());
+    const plan = [{ id: 'k2', to: '3' }];
+    const plain = boardColumns(m, 'Lion', plan, DEST);
+    const stored = storedLions();
+    const cols = boardColumns(m, 'Lion', plan, DEST, { stored });
+    assert.deepEqual(cols.map(c => c.id), plain.map(c => c.id), 'same columns, same order');
+    for (let i = 0; i < cols.length; i++) {
+        assert.deepEqual(cols[i].counts, plain[i].counts, `${cols[i].id} counts`);
+        assert.deepEqual(cols[i].risk, plain[i].risk, `${cols[i].id} risk`);
+        assert.deepEqual(cols[i].animals.map(x => x.a.id), plain[i].animals.map(x => x.a.id), `${cols[i].id} animals`);
+    }
+    const trade = cols.find(c => c.kind === 'trade');
+    assert.deepEqual(trade.animals.map(x => x.a.id), ['tc'], 'the in-park trade animal stays a normal card');
+    const ids = trade.stored.map(x => x.a.id);
+    assert.equal(ids.length, 4);
+    assert.ok(!ids.includes('sgtc'), 'the stored record of the in-park animal is skipped');
+    assert.ok(!ids.includes('sgT1'), 'other species are left out');
+    assert.equal(m.animals.size, zoo().animals.length, 'model.animals untouched');
+    for (const c of cols) if (c.kind !== 'trade') assert.equal(c.stored, undefined);
+    // kin badges from the merged pedigree
+    const by = new Map(trade.stored.map(x => [x.a.id, x]));
+    assert.equal(by.get('sgS2').severity, 'risk');
+    assert.deepEqual(by.get('sgS2').pairs.map(p => p.other.id).sort(), ['a', 'k1']);
+    assert.ok(by.get('sgS3').pairs.some(p => p.other.id === 'k2'));
+    assert.ok(by.get('sgS3').pairs.every(p => p.other.sex === F), 'only partners of a compatible sex');
+    assert.equal(by.get('sgS4').severity, null);
+    assert.equal(by.get('sgS5').severity, 'covered', 'too old: covered');
+    assert.equal(ids[ids.length - 1], 'sgS4', 'worst first, unrelated last');
+    assert.equal(storedCards(m, 'Lion', stored), storedCards(m, 'Lion', stored), 'cached per model and answer');
+    // no answer, an error, an empty list: an empty list, nothing else changes
+    for (const s of [null, normalizeStored({ species: 'Lion', error: 'notfranchise' }), normalizeStored({ species: 'Lion', animals: [] })]) {
+        const c2 = boardColumns(m, 'Lion', plan, DEST, { stored: s });
+        assert.deepEqual(c2.find(c => c.kind === 'trade').stored, []);
+    }
+    // an id the park already has is skipped too
+    const sameId = normalizeStored({ species: 'Lion', animals: [{ id: 'tc', guid: 'gNEW', name: 'Same id', species: 'Lion', sex: M, maturity: 2 }] });
+    assert.deepEqual(storedCards(m, 'Lion', sameId), []);
+});
+
+// ------------------------------------------------ pregnant animals stay
+
+test('suggest fixes never moves a pregnant animal', () => {
+    // the siblings again: f1 pregnant. Without her pregnancy a sister may move;
+    // with it the fixes move others, never her.
+    const snap = siblings();
+    snap.animals = snap.animals.map(a => (a.id === 'f1' ? Object.assign({}, a, { preg: true }) : a));
+    const m = buildKinModel(snap);
+    assert.equal(isPinned(m.animals.get('f1')), true);
+    assert.equal(isPinned(m.animals.get('f2')), false);
+    const plan = suggestPlan(m, 'Lion', DEST4);
+    assert.ok(plan.length > 0);
+    assert.ok(!plan.some(mv => mv.id === 'f1'), JSON.stringify(plan));
+    // both sisters pregnant: neither moves
+    snap.animals = snap.animals.map(a => (a.id === 'f2' ? Object.assign({}, a, { preg: true }) : a));
+    const m2 = buildKinModel(snap);
+    assert.ok(!suggestPlan(m2, 'Lion', DEST4).some(mv => mv.id === 'f1' || mv.id === 'f2'));
+});
+
+test('a pregnant animal in a plan: by hand a warning, from a plan a problem', () => {
+    const z = zoo();
+    z.animals = z.animals.map(a => (a.id === 'k2' ? Object.assign({}, a, { preg: true }) : a));
+    const m = buildKinModel(z);
+    // planned by hand (drag, Move N here): kept with byPlayer, a warning only
+    const hand = setMove(m, [], 'k2', '3', { byPlayer: true });
+    assert.deepEqual(hand, [{ id: 'k2', to: '3', byPlayer: true }]);
+    const pw = planProblems(m, hand, DEST).filter(p => p.id === 'k2');
+    assert.equal(pw.length, 1);
+    assert.equal(pw[0].warn, true);
+    assert.match(pw[0].text, /pregnant: the game lets you move her/);
+    // from a generated plan: a problem that says the run skips it
+    const gen = setMove(m, [], 'k2', '3');
+    assert.deepEqual(gen, [{ id: 'k2', to: '3' }]);
+    const pp = planProblems(m, gen, DEST).filter(p => p.id === 'k2');
+    assert.equal(pp.length, 1);
+    assert.ok(!pp[0].warn);
+    assert.match(pp[0].text, /Run skips this move/);
+    // prunePlan keeps it (the run says why it skips it)
+    assert.equal(prunePlan(m, gen).length, 1);
 });

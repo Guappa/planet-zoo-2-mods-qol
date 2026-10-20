@@ -87,14 +87,37 @@ python tools/build_pz2qol.py --cobra-tools <cobra-tools dir> --python <venv pyth
 
 - Builds `Main.ovl` and the UI overlay. **It extracts every OVL again and compares it with the
   sources**, so a mismatch aborts the build.
+  **Pitfall (2026-10-19):** Windows Python run with its working directory inside the repo can leave
+  an empty `%SystemDrive%\ProgramData\Microsoft\Windows\Caches` folder there (the variable is not
+  expanded). One under `mods/PZ2QoL/Main` fails the check with "Main.ovl round trip mismatch:
+  %SystemDrive%". Delete such empty folders under `mods/` before building, and run Python scripts
+  from the scratchpad.
 - `--debug-trace` compiles `tools/trace/pz2_trace.c` with MSVC (`vcvars64.bat`) and adds
   `dbg\cp_<name>.dll`, one per line of `tools/trace/checkpoints.txt`.
+  It also adds the 98 `dbg\lg_*.dll` copies of the detailed log (`lg_20`…`lg_7e`, `lg_clr`,
+  `lg_end`, `lg_core`; `debugging.md` "Detailed log"). Each copy is ~140 KB (`/MT`).
 - Release zip: `Win64/ovldata/PZ2QoL/...` with forward-slash paths, plus `README.txt`, in `dist/`
   (gitignored), named `PZ2QoL-<version>.zip`. The build script does **not** zip: build without
   `--debug-trace` (to `--out <dir>`), write a `README.txt` (staged in `dist/stage-<version>/`), and
   zip with Python's `zipfile` (arcnames `Win64/ovldata/PZ2QoL/<rel>`). Bump the version in
   `js/mods/pz2qol/main.js` (`VERSION`) and `pz2qol.core.lua` (`Core.sVersion`); the Manifest's
   `<Version>1</Version>` is the pack format, not the mod version. Nexus page text lives in `dist/`.
+- Release tags: every Nexus release gets an annotated `vX.Y.Z` tag on the commit whose
+  `mods/PZ2QoL` source is what the zip ships (rule in `CLAUDE.md`). Tagged so far: v3.0.0,
+  v3.0.1, v3.0.2. Releases 1.1.0–2.1.0 have no matching commit (their source was never committed
+  as shipped). To check a zip against a commit, extract `Main.ovl` (Lua) and the UI overlay
+  (`ppuipkg_unpack.py`) and compare file contents with CRLF folded to LF; release zips are not
+  byte-reproducible by rebuilding (OVL sizes differ between builds of the same source).
+- Nexus page images (audited 2026-10-19, `artifacts/nexus-imagery-20261019/before/FINDINGS.md`):
+  the **thumbnail is the first gallery image** (no separate slot; gallery recommends 1920×1080,
+  .jpg/.png/.gif, 8 MB). Browse/search/profile cards are ~280×158 **contain**, so a square
+  thumbnail wastes 44% of the card. The landing Trending tile is 16:9 **cover** with a caption
+  gradient over its bottom ~30%. The tracking centre stretches it to 100×60; phone search shows
+  56×56. The **header** is its own slot, recommended **1300×372**, `object-fit: cover`. Nexus
+  draws breadcrumbs, title and stats over its lower left and the action buttons along the bottom
+  right; phones keep only the centred ~646 px. So no lettering in the header and the emblem
+  upper right. `og:image` is a 385 px derivative of the thumbnail. Sources: `art/nexus/`
+  (`compose.py`, `preview/mock.html` placement mock).
 
 ## Pitfalls
 

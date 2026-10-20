@@ -339,8 +339,12 @@ export function quickEligible(r, mode) {
         return { ok: true, why: '', market: r.verdict.trade === true };
     }
     if (r.pre) return { ok: true, why: '', pre: true };
-    if (r.block && r.block !== 'quick') return { ok: false, why: `${BLOCK_WORDS[r.block] || 'Not available'}.` };
-    return { ok: false, why: `Not checked yet: Check storage (or a listing run) shows whether the game allows ${m.label} for it.` };
+    if (r.block === 'noid' || r.block === 'rehome') return { ok: false, why: `${BLOCK_WORDS[r.block]}.` };
+    // not checked yet, sellable or not (the developer, 2026-10-19: "sometimes
+    // you just want to get rid of animals quickly"): it can be ticked; the
+    // engine selects it and sends only if the game allows the action right
+    // then, else skips it (pz2qol.lister.lua, the quick job's flag check)
+    return { ok: true, why: '', unchecked: true, market: !r.block };
 }
 
 // The animals a finished listing run had refused by the server (kind

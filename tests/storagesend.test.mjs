@@ -58,6 +58,8 @@ test('fails open to any habitat the game allows; skip reasons otherwise', () => 
     assert.equal(skipReason(facts({ lt: 'habitat', assigned: '3', habitats: [hab(1)] })), 'already in a habitat');
     assert.equal(skipReason(facts({ habitats: [] })), 'this zoo has no finished habitat');
     assert.equal(skipReason(facts({ habitats: [hab(1, { ok: false })] })), 'no habitat accepts Lion');
+    // the game's name when the page added one (speciesnames.js)
+    assert.equal(skipReason(facts({ speciesName: 'Löwe', habitats: [hab(1, { ok: false })] })), 'no habitat accepts Löwe');
     assert.equal(skipReason(facts({ habitats: [hab(1, { reach: false })] })), 'no keeper can reach a suitable habitat');
 });
 
