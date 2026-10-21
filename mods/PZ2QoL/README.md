@@ -1,4 +1,4 @@
-# Mike's QoL Toolbox for Planet Zoo 2 (version 3.2.0)
+# Mike's QoL Toolbox for Planet Zoo 2 (version 3.2.1)
 
 *Breeding, market, storage and park quality-of-life tools for Planet Zoo 2, formerly Genes & Gold
 (and PZ2QoL before that). Installs as `Win64\ovldata\PZ2QoL`.*
@@ -30,6 +30,25 @@ click, except Auto mode (only for the species you turned it on for) and letting 
 animals (a setting, on by default).
 
 ## Changelog
+
+### 3.2.1
+
+- Fixed: a game crash in Animal Storage a moment after a Quick trade or Release to the wild. A
+  background check of the mod's read the storage list while the game was still rebuilding it.
+  It no longer runs in the released mod.
+- Fixed: switching contraception on or off for some aquarium animals failed with "bad animal id"
+  (the game gives some of them a long id the mod could not read back).
+- Fixed: stuck aquarium animals were no longer let out after loading a second park in the same
+  session. The wait now runs on game time: about 20 seconds of game time, faster at 5x, nothing
+  while paused.
+- Find a habitat and the Breeding programme no longer put aquarium animals in water of the wrong
+  salinity (e.g. sharks in a freshwater tank).
+- The mod's toolbars step aside when the game's search suggestions, popups, Zoopedia or other
+  menus are open, so they no longer cover them.
+- **Market desk: My listings.** A second view of the desk lists your live listings with how
+  stale each one is (its price against the market and its time left) and can take listings off
+  the market and list them again at a new price, or quick trade / quick release them, one at a
+  time.
 
 ### 3.2.0
 
@@ -697,10 +716,11 @@ which male and female in the same habitat are related and would inbreed. Collect
   animal per click, through the same calls the game's own buttons make (contraception, camera).
   Auto mode (below) is the one exception, and only for the species you turned it on for.
 - **Stuck aquarium animals** (on by default): the game sometimes boxes an aquarium animal while it
-  swims and never unboxes it. After 30 seconds the mod unboxes it, one animal at a time, with the
-  same calls as the game's Unbox button (only animals no keeper, move or game action is working
-  on). No notice for that; if the game boxes the same animal again three times right after, the
-  mod leaves it for 10 minutes and shows a **Needs you** note with **Locate**. Kin settings >
+  swims and never unboxes it. After 20 seconds of game time (4 real seconds at 5x; nothing while
+  paused) the mod unboxes it, one animal at a time, with the same calls as the game's Unbox button
+  (only animals no keeper, move or game action is working on). No notice for that; if the game
+  boxes the same animal again three times right after, the mod leaves it for 10 minutes of game
+  time and shows a **Needs you** note with **Locate**. Kin settings >
   **Let out stuck aquarium animals** turns it off.
 
 ### Auto mode (per species, off by default)

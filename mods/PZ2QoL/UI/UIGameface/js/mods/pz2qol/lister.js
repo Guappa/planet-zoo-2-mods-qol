@@ -26,6 +26,7 @@ import {
 } from '/js/mods/pz2qol/game.js';
 import { countForSpecies, getPriceBook, onPriceBookChanged, recordVisibleListings } from '/js/mods/pz2qol/pricebook.js';
 import { breadcrumb, onErrorReported, reportError } from '/js/mods/pz2qol/errors.js';
+import { gameOnTop } from '/js/mods/pz2qol/cover.js';
 import { dlog, logPriceDecision } from '/js/mods/pz2qol/debuglog.js';
 import { getPaceMs, onPace, paceSlider } from '/js/mods/pz2qol/pace.js';
 import { deskRows, encodeJob, partialJobText, PREGNANT_TEXT, RESULT_WORDS, rowFingerprint, STEP_WORDS, summaryText, tally } from '/js/mods/pz2qol/listercore.js';
@@ -1560,7 +1561,8 @@ function place() {
     const anchor = visibleElement('.AnimalMarketStorage_header');
     // what the game-side listing engine can do, kept fresh while storage is open
     if (anchor && isFranchise()) engineCaps({ maxAgeMs: 8000 }).catch(() => {});
-    if (!enabled || !anchor) {
+    // a game popup, modal or search suggestions on top: step aside (bars.js)
+    if (!enabled || !anchor || gameOnTop()) {
         if (panel) panel.style.display = 'none';
         return;
     }

@@ -15,7 +15,7 @@ local ipairs   = global.ipairs
 
 local Core = module(...)
 
-Core.sVersion = "3.2.0"
+Core.sVersion = "3.2.1"
 Core.bBooted = false
 
 -- lower-cased module name -> list of patch functions(tModule)
@@ -415,13 +415,16 @@ Core.Boot = function(self)
 	self:Checkpoint("require_hook")
 	self:AddModulePatch("Environment.Environment", function(t) self:_PatchEnvironment(t) end)
 	self:AddModulePatch("GameHelpers.ModeHelper", function(t) self:_PatchModeHelper(t) end)
-	for _, sFeature in ipairs({ "PZ2QoL.Errors", "PZ2QoL.Hub", "PZ2QoL.MarketPeek", "PZ2QoL.Lister", "PZ2QoL.PlayerStore", "PZ2QoL.Kin", "PZ2QoL.Guards", "PZ2QoL.SaveTrace", "PZ2QoL.BoxTrace", "PZ2QoL.BoxRelease", "PZ2QoL.Autosave", "PZ2QoL.StorageSend", "PZ2QoL.TradeJump", "PZ2QoL.StorageFetch" }) do
-		local bOk, sErr = pcall(function()
-			global.require(sFeature):Init(self)
-		end)
-		self:Checkpoint(bOk and ("init_ok_" .. string.lower(sFeature)) or ("init_fail_" .. string.lower(sFeature)))
-		if not bOk then
-			trace("feature " .. sFeature .. " failed to init: " .. tostring(sErr))
+	for _, sFeature in ipairs({ "PZ2QoL.Errors", "PZ2QoL.Hub", "PZ2QoL.MarketPeek", "PZ2QoL.Lister", "PZ2QoL.PlayerStore", "PZ2QoL.Kin", "PZ2QoL.Guards", "PZ2QoL.SaveTrace", "PZ2QoL.BoxTrace", "PZ2QoL.BoxRelease", "PZ2QoL.Autosave", "PZ2QoL.StorageSend", "PZ2QoL.TradeJump", "PZ2QoL.StorageFetch", "PZ2QoL.Profiler" }) do
+		-- the script profiler is a developer tool: debug builds only
+		if sFeature ~= "PZ2QoL.Profiler" or self.bTrace then
+			local bOk, sErr = pcall(function()
+				global.require(sFeature):Init(self)
+			end)
+			self:Checkpoint(bOk and ("init_ok_" .. string.lower(sFeature)) or ("init_fail_" .. string.lower(sFeature)))
+			if not bOk then
+				trace("feature " .. sFeature .. " failed to init: " .. tostring(sErr))
+			end
 		end
 	end
 	self:Checkpoint("booted")

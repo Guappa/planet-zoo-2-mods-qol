@@ -117,6 +117,7 @@ Used by the proposal `docs/PROPOSAL-inbreeding-qol.md`.
   `editors.park.animaldatabasetab.lua`).
 - Contraception: the Animals list and info panel both just call
   `animals:SetUsingContraceptive(entity, b)` (exhibits: `SetExhibitAnimalUsingContraceptiveUsingUID`).
+- **Exhibit animal UIDs can be GUIDs, not numbers** (a 3.2.0 player's Franchise log: `bad animal id x01a1583f-37da-76dd-b9aa-ea664ebd5888`). The Kin page id is `"x" .. idString(uid)`, so `tonumber` can't turn it back. `Kin.tExhibitUids` keeps each scanned UID exactly as `GetAllAnimalIDs` gave it, and `entityOf` passes that value back to the game (`pz2qol.kin.lua`). **proven** (that the GUID form exists); the round trip is **offline**.
 - Locate: `CameraModeManager:RequestMode("Orbit", {targetEntityID = nLocateEntity, bLocate = true})`
   then `InfoPopUpComponent:CreateAndOpenInfoPopUpForEntity` (the Animals list's own locate).
 - **Locating a habitat or an exhibit** (**offline**, 1.0.5): `GuestUIUtils.FocusCameraOnEntity(transform,
@@ -341,12 +342,31 @@ All **offline** (decompiled `editors.animal.animalmovementeditmode.lua`,
   Land and shore animals get `reqUnbox` and come out after 2-6 s. Park load unboxes saved-boxed
   aquarium animals. Details: `docs/RESEARCH-aquarium-boxing.md`.
   **The fix** (`pz2qol.boxrelease.lua`, `boxrelease.js`, Kin setting `releaseBoxed`, default on): from
-  `SelectMode.Advance` (main mode, not the worker-thread manager tick), every 3 s, aquarium animals
+  `SelectMode.Advance` (main mode, not the worker-thread manager tick), every 2 s, aquarium animals
   and deep swimmers that are boxed, unboxable, unclaimed, have no job, are not requested
-  boxed or unboxed, and are not waiting on the navmesh, for 30 s get `ClaimBoxing` + `UnboxAnimal`,
-  one at a time. After 3 quick re-boxings (within 120 s of a release) the mod rests for 10 min and
-  shows a Needs-you alert; a release itself shows nothing (developer 2026-10-19). Tests:
-  `tests/lua/test_boxrelease.lua`. **Proven** working in game on Y: (developer, 2026-10-19).
+  boxed or unboxed, and are not waiting on the navmesh, for 20 s get `ClaimBoxing` + `UnboxAnimal`,
+  one at a time, 2 s apart. After 3 quick re-boxings (within 120 s of a release) the mod rests for
+  600 s and shows a Needs-you alert; a release itself shows nothing (developer 2026-10-19). Tests:
+  `tests/lua/test_boxrelease.lua`. **Proven** working in game on Y: (developer, 2026-10-19; then
+  on real time: 30 s wait, 3 s scans).
+  **All those times are game time** since 2026-10-20 (developer: real time was far too slow at
+  5x): `PZ2QoL.GameClock` (`pz2qol.gameclock.lua`, see `game-data-and-events.md` "Park calendar
+  and game time"). At 5x a stuck animal is out ~4-5 real s after boxing; paused, nothing runs.
+  Real-time floors keep 0.5 s between scans and between releases. The trace's `release` `clock`
+  LOG line names the clock source (`calendar` expected; game-time version **offline** only).
+  **Stopped after a park reload** (**proven**, Y: 2026-10-20, 3.2.0 debug trace): in the first park
+  of a launch it released ~20 animals; after the player left the park and loaded one again
+  (`x_park_end` → `x_hud_init`) it released nothing for 40 min although turtles sat boxed,
+  unclaimed and unboxable for 50-104 s (BoxTrace saw them). No `release error`, no second
+  `release_patched`. Cause not pinned (no per-tick trace then): Select not the current mode, a
+  fresh world-API table per call (the old code reset its waits whenever `animals` was another
+  table), or a lost patch. Fix (offline, 2026-10-20): ticks from `Worlds.DarwinWorld.
+  OnAdvanceWhileRunning` too (park world, every frame, any mode); a new park is the HUD's
+  `PZ2QoL_ReleaseSet`, not a changed table; stands down while `Kin.bStartScreen` and, for the world
+  tick, between DarwinWorld `OnDeactivate` and the next `OnActivate` (the pause menu pauses the
+  world, `windows.mainhud.lua` `OnPauseMenu_Open`, so game time stops during the exit save). Trace: `release
+  tick src=world|select` (first tick after each Set) and `release scan habs aquariums animals stuck
+  due apiChanges clock` (after each Set, then every 30 s while any are stuck).
 - **Storage arrivals are already in the trade centre** (**proven** on D:, 2026-10-18, game 1.0.5,
   Franchise): after the hub's Send to Zoo, every arrival the mod took from the Move-screen request
   read `GetCurrentLocationType == CurrentLocationType_TradeCentre` at once (trace: 10 ×
@@ -535,7 +555,11 @@ All **offline** (decompiled `editors.animal.animalmovementeditmode.lua`,
 - **Hard filters:** `Requirements_ValidEnclosureTypes(Habitat, ClimbProof, Roofed, Aquarium)`
   (16 aquarium-only species, none allows both); `Requirements_Salinity` (check it separately: the
   overrides pair saltwater species with freshwater fish), game check `animals:IsSalinitySuitable(sp,
-  park:GetSalinity(h))`. Environment: `Requirements_Environment` (temperature, plant cover;
+  park:GetSalinity(h))` (`park.Salinity_Freshwater|Brackish|Saltwater`). **The Move screen does not
+  refuse wrong water**: `animalmovementeditmode` keeps the aquarium valid and only sets the warning
+  `[RelocatingToBadSalinity_Description]`, so `IsValidHabitatForAnimalsGUID` passes sharks into a
+  freshwater tank (Nexus report 2026-10-20, Find a habitat). PZ2QoL's `Kin._HabitatOk` checks
+  salinity itself (species via `animals:GetSpeciesFromGUID`) and refuses it. **offline**. Environment: `Requirements_Environment` (temperature, plant cover;
   `animals:GetTemperatureRequirements(sp)`, `habitat:GetTemperatureRange(h)`), `Requirements_Terrain`,
   `Requirements_Biomes`. Barriers: `c0zoopedia.fdb` `BarrierRequirements` (no Lua call).
 - **Unlocks:** `Requirements_Accreditation(CareerTier, OnlineFranchiseTier)`,

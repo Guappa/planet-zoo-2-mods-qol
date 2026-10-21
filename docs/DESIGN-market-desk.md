@@ -282,3 +282,10 @@ In game (Y:, Franchise) `StorageGetIDAndAIDType(key)` gave an accepted id for on
   failure shape (`ok`, `idType`, `numType`, `id` cut to 40, `nType`, `row`, `why`, `n`, a sample
   `key`); page `lister resolve` with `via`, `backedOff`, `retry`; `desk list_click` with `noId`,
   `noIdBlocked`, `noIdTotal`; `lister job_left_out why=noid`.
+
+## My listings (2026-10-19)
+
+The desk's second view (tabs under the title: Sell from storage | My listings): the player's own
+listings, how stale each is, and a reprice (take off, then list again at a new price). Job mode
+`unlist`, caps `unlist`, result status `unlisted`, step `unconfirm`, skip kind `notlisted`:
+`docs/DESIGN-reprice.md`.

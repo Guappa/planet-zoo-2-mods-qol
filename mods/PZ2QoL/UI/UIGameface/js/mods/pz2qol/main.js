@@ -23,8 +23,9 @@ import { installHudLauncher } from '/js/mods/pz2qol/hudlauncher.js';
 import { installStorageSend } from '/js/mods/pz2qol/storagesend.js';
 import { installTradeJump } from '/js/mods/pz2qol/tradejump.js';
 import { installStorageFetch } from '/js/mods/pz2qol/storagefetch.js';
+import { installProfiler } from '/js/mods/pz2qol/profiler.js';
 
-export const VERSION = '3.2.0';
+export const VERSION = '3.2.1';
 
 // Debug builds: tell Lua how far the page got (written to dbg/trace.log).
 const trace = breadcrumb;
@@ -46,6 +47,9 @@ function step(name, fn) {
 step('Error capture', installErrorCapture);
 // debug builds: the detailed log (dbg/trace.log); a no-op otherwise
 step('Debug log', installDebugLog);
+// script profiler: its JS hooks go in before the features register their
+// event handlers (they only time while the player has it running)
+step('Script profiler', installProfiler);
 step('Styles', () => {
     loadCSS('mods/pz2qol');
     loadCSS('mods/pz2qol_kin');
@@ -53,6 +57,7 @@ step('Styles', () => {
     loadCSS('mods/pz2qol_kinmates');
     loadCSS('mods/pz2qol_hud');
     loadCSS('mods/pz2qol_autopilot');
+    loadCSS('mods/pz2qol_profiler');
 });
 step('Storage filters', installListFilter);
 step('Select-all guard', installSelectAllGuard);

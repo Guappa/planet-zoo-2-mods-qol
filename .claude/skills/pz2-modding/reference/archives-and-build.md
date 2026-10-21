@@ -104,7 +104,7 @@ python tools/build_pz2qol.py --cobra-tools <cobra-tools dir> --python <venv pyth
   `<Version>1</Version>` is the pack format, not the mod version. Nexus page text lives in `dist/`.
 - Release tags: every Nexus release gets an annotated `vX.Y.Z` tag on the commit whose
   `mods/PZ2QoL` source is what the zip ships (rule in `CLAUDE.md`). Tagged so far: v3.0.0,
-  v3.0.1, v3.0.2. Releases 1.1.0–2.1.0 have no matching commit (their source was never committed
+  v3.0.1, v3.0.2, v3.1.0, v3.2.0, v3.2.1. Releases 1.1.0–2.1.0 have no matching commit (their source was never committed
   as shipped). To check a zip against a commit, extract `Main.ovl` (Lua) and the UI overlay
   (`ppuipkg_unpack.py`) and compare file contents with CRLF folded to LF; release zips are not
   byte-reproducible by rebuilding (OVL sizes differ between builds of the same source).

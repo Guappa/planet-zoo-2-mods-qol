@@ -32,6 +32,17 @@
 3. In `main.js`, install each feature with `step(name, fn)` so one failure doesn't stop the rest.
 - Wrapping `engine.trigger` lets the mod intercept UI→game events, e.g. to filter select-all.
   **proven**
+- **Game layers sit under fixed mod overlays.** The game renders modals, dropdowns and the hub's
+  Zoopedia through `Layer` (`js/common/components/Layer.js`) into one `.LayerCollection` div under
+  `<body>` (`position: absolute`, no z-index; `.hideAllLayers` hides it). A mod element with
+  `position: fixed` and a z-index paints over all of it. Seen by a player (Nexus, 2026-10-20): the
+  storage toolbar covered Animal Storage's species-search suggestions (`InputField` renders them as
+  `.InputField_resultsMenu` in a Layer, only while editing with matches) and stayed over the Zoopedia
+  opened from storage (a Layer with `.Layer_background.darken`). In the park HUD the Zoopedia is a
+  plain `.ZoopediaModule_root` (`.hidden` when closed). PZ2QoL's `cover.js` `gameOnTop()` checks all
+  of these plus `.PopupActionsModule_root.show`; the storage/market toolbars (`bars.js`), the lister
+  panel and the zoo toolbar hide while it is true. **offline** (UI source; harness `kin_storage.mjs`
+  section 5)
 
 ## CSS rules for Gameface
 
@@ -270,3 +281,28 @@
   and add a listener `e => ...`: every UI input (`e.inputName` `UI_Select` = A, `UI_Cancel` = B/back; `e.button.isPressed()` /
   `isReleased()`) passes it before the focus system and the game; returning `true` blocks it. The Market desk's quick sheet
   uses it for A = Confirm and to keep the game's own back-out from closing the screen (`marketdesk.js sheetInput`).
+
+## Timing JS on the page (script profiler, 2026-10-19, **offline**; harness proven)
+
+- **Native → JS events don't go through a JS dispatcher in game.** In attached mode `cohtml.js`'s
+  `engine.on` registers with the native side (`engine.AddOrRemoveOnHandler`) and the engine calls the
+  callback itself; `engine._trigger` only serves the detached player (the harness). So the only way to
+  time handlers is to wrap `engine.on` before they are registered, and then `engine.off(name, fn)`
+  must be mapped to the wrapper (`profhooks.js` keeps a `WeakMap` fn → name → wrappers), or
+  `DataStore.releaseListener` (→ `Engine.removeListener` → `engine.off`) would leave the wrapper behind.
+- **The game UI's data binding is DataStore listeners:** `getPropertyListener` /
+  `getContextChildrenListener` register `engine.on('DSCallID<n>', callback)` (`DataStore.js`), so
+  wrapping `engine.on` early also times the binding callbacks of every component mounted later (one
+  row: "DataStore change callbacks"). The C++ side (`GetDataStore` bound object) is invisible.
+- **Preact re-renders can't be hooked from outside:** the game's Preact 8 fork defers `rerender` with
+  `Promise.resolve().then` inside the module (`/js/common/lib/preact.js`), and ES module bindings are
+  read-only. Their cost only shows as the page frame interval.
+- `window.setTimeout` / `setInterval` / `requestAnimationFrame` can be replaced (callers look them up at
+  call time). PZ2QoL wraps intervals always and timeouts/animation frames only while profiling.
+- Callback labels come from `new Error().stack` at registration (V8 format in the harness: `at fn
+  (url:line:col)`); whether Gameface gives a stack there is a **guess** (falls back to the function's
+  name). Harness rAF ran at ~160 fps (headless Edge), so JS rows age out of a 120-frame window in under
+  a second there.
+- PZ2QoL's profiler panel (`profiler.js`, `pz2qol_profiler.css`, `.PZ2QoL_pf`): a fixed panel on the
+  right (54rem, top 5.5rem, bottom 8rem) so the park stays visible; opened from the park dock's fourth
+  button (`IconTime`, dropped first when the dock has no room) or Ctrl+Shift+P on any mod page.

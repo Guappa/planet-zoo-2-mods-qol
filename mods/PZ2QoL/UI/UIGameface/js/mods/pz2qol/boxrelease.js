@@ -3,7 +3,7 @@
 // itself (hands-free, on by default; Kin setting releaseBoxed). This page
 // sends the setting. A release shows nothing; only an animal that keeps
 // getting boxed again gets a Needs-you alert (the mod then leaves it alone
-// for 10 minutes). HUD page only.
+// for 10 minutes of game time). HUD page only.
 import { getKinSettings, locateAnimal, onKinSettings } from '/js/mods/pz2qol/kin.js';
 import { kinToast } from '/js/mods/pz2qol/kinalerts.js';
 import { isHudPage } from '/js/mods/pz2qol/kinhooks.js';
@@ -39,7 +39,7 @@ export function releaseToast(kind, id, species, count) {
         level: 'action',
         kind: 'boxed',
         title: `${name} keeps getting boxed`,
-        text: `The game boxed it again right after the mod let it out (${count} times). The mod leaves it for 10 minutes. Its spot in the aquarium may be too tight: check the scenery and the water depth around it.`,
+        text: `The game boxed it again right after the mod let it out (${count} times). The mod leaves it for 10 minutes of game time. Its spot in the aquarium may be too tight: check the scenery and the water depth around it.`,
         species,
         actions: [{ label: 'Locate', icon: 'IconLocation', primary: true, run: () => locateAnimal(id) }],
     };

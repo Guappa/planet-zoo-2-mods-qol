@@ -7,6 +7,7 @@ import { MARKET_PRESETS, storageFiltersActive, storageSummary, applyStorageFilte
 import { MARKET_EVENT, readAnimal, sendScreenEvent } from '/js/mods/pz2qol/game.js';
 import { getStorageFilters, getStoragePredicates, getStorageSource, onStorageFiltersChanged, resetStorageFilters, setStorageFilters } from '/js/mods/pz2qol/listfilter.js';
 import { getMarketDimBelow, setMarketDimBelow } from '/js/mods/pz2qol/badges.js';
+import { gameOnTop } from '/js/mods/pz2qol/cover.js';
 import { reportError } from '/js/mods/pz2qol/errors.js';
 import { isListerEnabled, onListerSettingChanged, setListerEnabled } from '/js/mods/pz2qol/lister.js';
 import { getPriceBook } from '/js/mods/pz2qol/pricebook.js';
@@ -320,9 +321,9 @@ function reserve(screen, px) {
 let tick = 0;
 function place() {
     tick++;
-    // a game popup (Compare Mates from storage...) covers the screen: our
-    // fixed bars would float on top of it
-    const popupOpen = !!document.querySelector('.PopupActionsModule_root.show');
+    // a game popup, modal (Zoopedia from storage...) or the search box's
+    // suggestions are open: our fixed bars would float on top of them
+    const popupOpen = gameOnTop();
     for (const s of screens) {
         try {
             const r = popupOpen ? null : visibleRect(document.querySelector(s.anchor));

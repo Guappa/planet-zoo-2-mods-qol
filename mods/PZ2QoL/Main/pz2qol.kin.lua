@@ -60,6 +60,7 @@ Kin.nTickFresh = 1.0        -- seconds: the frame hook counts as alive
 Kin.nJobTimeout = 20        -- seconds: an unfinished job is dropped
 
 Kin.tStatic = {}            -- entity key -> { sGuid, tPar, tGenes }
+Kin.tExhibitUids = {}       -- "x<uid>" -> the exhibit animal's UID exactly as the game gave it
 Kin.tAncestors = {}         -- guid -> { parent guids } or false
 Kin.tViews = global.setmetatable({}, { __mode = "k" })
 Kin.tLastSent = global.setmetatable({}, { __mode = "k" })
@@ -914,6 +915,7 @@ end
 
 Kin._AddExhibitAnimal = function(self, tJob, exhibits, uid, t)
 	local sKey = "x" .. idString(uid)
+	self.tExhibitUids[sKey] = uid
 	local tStatic = self.tStatic[sKey]
 	if tStatic == nil then
 		tStatic = { sGuid = sKey, tPar = array() }
@@ -1387,7 +1389,13 @@ end
 local function entityOf(sId)
 	sId = tostring(sId or "")
 	if string.sub(sId, 1, 1) == "x" then
-		return nil, tonumber(string.sub(sId, 2))
+		-- the UID the scan got: a number, or a GUID that tonumber can't read
+		-- (3.2.0 player log: "bad animal id x01a1583f-37da-...")
+		local uid = Kin.tExhibitUids[sId]
+		if uid == nil then
+			uid = tonumber(string.sub(sId, 2))
+		end
+		return nil, uid
 	end
 	return tonumber(sId), nil
 end
@@ -1616,10 +1624,34 @@ Kin._HabitatOk = function(self, tAPIs, h, tGuids)
 		end
 	end
 	local habitat = tAPIs.habitat
-	if call(habitat, "IsAquarium", h) == true and call(habitat, "IsAquariumGateBelowWaterLevel", h) == false then
-		return false, "The aquarium gate is above the water."
+	if call(habitat, "IsAquarium", h) == true then
+		if call(habitat, "IsAquariumGateBelowWaterLevel", h) == false then
+			return false, "The aquarium gate is above the water."
+		end
+		-- the Move screen only warns about the wrong water
+		-- (RelocatingToBadSalinity) and lets them go; the mod never does
+		local nSalinity = call(tAPIs.park, "GetSalinity", h)
+		if type(nSalinity) == "number" and type(animals.IsSalinitySuitable) == "function" then
+			for _, guid in pairs(tGuids or {}) do
+				local sSpecies = call(animals, "GetSpeciesFromGUID", guid)
+				if sSpecies ~= nil and call(animals, "IsSalinitySuitable", sSpecies, nSalinity) == false then
+					return false, "Wrong water for this species (" .. self:_SalinityName(tAPIs, nSalinity) .. ")."
+				end
+			end
+		end
 	end
 	return true, nil
+end
+
+Kin._SalinityName = function(self, tAPIs, nSalinity)
+	local park = tAPIs.park
+	for _, k in ipairs({ { "Salinity_Freshwater", "freshwater" }, { "Salinity_Brackish", "brackish" }, { "Salinity_Saltwater", "saltwater" } }) do
+		local bOk, v = pcall(function() return park[k[1]] end)
+		if bOk and v ~= nil and v == nSalinity then
+			return k[2]
+		end
+	end
+	return "salinity " .. tostring(nSalinity)
 end
 
 Kin.Destinations = function(self, oUI, sReq, sIds)
@@ -2734,6 +2766,7 @@ Kin._PatchHeatMapManager = function(self, HeatMapManager)
 				self.tJob = nil
 				-- entity ids are per park
 				self.tStatic = {}
+				self.tExhibitUids = {}
 				self.tAncestors = {}
 				self.tStored = {}
 				pcall(self._ParkStoreEnd, self)

@@ -194,6 +194,43 @@ export async function frontend(page, ctx) {
         for (const k of keys) DS.setValue(['hubAnimalsData', 'animalStorageData', 'list', k], 'multiSelected', false);
     }, keys);
 
+    // 5. the toolbar steps aside for the game's own layers (Nexus report
+    // 2026-10-20): the search box's suggestions and the Zoopedia modal
+    const barShown = () => page.evaluate(() => {
+        const b = document.querySelector('.PZ2QoL_bar.storage');
+        return !!b && b.style.display !== 'none';
+    });
+    const addLayer = html => page.evaluate(html => {
+        let lc = document.querySelector('.LayerCollection');
+        if (!lc) {
+            lc = document.createElement('div');
+            lc.className = 'LayerCollection';
+            lc.style.position = 'absolute';
+            document.body.appendChild(lc);
+        }
+        const l = document.createElement('div');
+        l.className = 'Layer_root PZ2QoL_testLayer';
+        l.innerHTML = html;
+        lc.appendChild(l);
+    }, html);
+    const dropLayers = () => page.evaluate(() => document.querySelectorAll('.PZ2QoL_testLayer').forEach(n => n.remove()));
+    facts.barBefore = await barShown();
+    if (!facts.barBefore) problems.push('storage toolbar not shown before the layer checks');
+    await addLayer('<div class="Layer_background"></div><div class="InputField_resultsMenu" style="width:300px;height:200px">Lion</div>');
+    await page.waitForTimeout(400);
+    facts.barUnderSuggestions = await barShown();
+    if (facts.barUnderSuggestions) problems.push('toolbar still over the search suggestions');
+    await dropLayers();
+    await page.waitForTimeout(400);
+    if (!(await barShown())) problems.push('toolbar not back after the suggestions closed');
+    await addLayer('<div class="Layer_background darken" style="width:100%;height:100%"></div><div class="ZoopediaModule_root" style="width:800px;height:600px"></div>');
+    await page.waitForTimeout(400);
+    facts.barUnderZoopedia = await barShown();
+    if (facts.barUnderZoopedia) problems.push('toolbar still over the Zoopedia');
+    await dropLayers();
+    await page.waitForTimeout(400);
+    if (!(await barShown())) problems.push('toolbar not back after the Zoopedia closed');
+
     facts.problems = problems;
     if (problems.length) throw new Error('kin storage: ' + problems.join('; '));
     return facts;

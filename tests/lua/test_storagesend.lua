@@ -400,5 +400,27 @@ check(tExp.tArgs[1] == "om2" and tExp.tArgs[2] == false and tExp.tArgs[3] == "ex
 fire("PZ2QoL_SendOpenMove", "om3", "999")
 check(lastSent("PZ2QoL_SendOpenMoveResult").tArgs[3] == "none", "open move: nothing of this run")
 
+-- salinity (Nexus report 2026-10-20: sharks placed in freshwater tanks).
+-- The game's Move screen only warns; the mod's habitat check refuses.
+do
+	local tSalinityOf = { [600] = 0, [601] = 2 }
+	local tWater = {
+		animals = {
+			IsValidHabitatForAnimalsGUID = function() return true end,
+			GetSpeciesFromGUID = function(_, g) return g == "gShark" and "BlacktipReefShark" or "Axolotl" end,
+			IsSalinitySuitable = function(_, sp, n) if sp == "BlacktipReefShark" then return n == 2 end return n == 0 end,
+		},
+		habitat = { IsAquarium = function(_, h) return h ~= 602 end, IsAquariumGateBelowWaterLevel = function() return true end },
+		park = { Salinity_Freshwater = 0, Salinity_Brackish = 1, Salinity_Saltwater = 2, GetSalinity = function(_, h) return tSalinityOf[h] end },
+	}
+	local bOk, sReason = Kin:_HabitatOk(tWater, 600, { "gShark" })
+	check(bOk == false and string.find(sReason or "", "freshwater") ~= nil, "salinity: shark refused in a freshwater tank")
+	check(Kin:_HabitatOk(tWater, 601, { "gShark" }) == true, "salinity: shark allowed in a saltwater tank")
+	check(Kin:_HabitatOk(tWater, 601, { "gAxo" }) == false, "salinity: freshwater species refused in saltwater")
+	check(Kin:_HabitatOk(tWater, 602, { "gShark" }) == true, "salinity: not checked for land habitats")
+	tWater.animals.IsSalinitySuitable = nil
+	check(Kin:_HabitatOk(tWater, 600, { "gShark" }) == true, "salinity: no game call, no refusal (fail soft)")
+end
+
 print(string.format("%d passed, %d failed", nPassed, nFailed))
 if nFailed > 0 then os.exit(1) end

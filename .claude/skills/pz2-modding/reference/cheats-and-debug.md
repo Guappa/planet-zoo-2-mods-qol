@@ -76,6 +76,19 @@ Franchise uses `parksettings.defaults.franchise_parksettings.lua`; no player rou
   these probably do nothing. Native (engine-parsed) options in exe strings include
   `-disableComplexityLimit` (ComplexityManager) and `-logavailableargs` ("Lists the available
   Casino commandline args"); one launch with the latter would show what retail accepts (untested).
+  Also in 1.0.5 exe strings (offline, 2026-10-19): `-maxworkers` (task worker count, next to the
+  worker setup) and `-fpeventprofilerenabled` (Frontier's event profiler; probably dev-only). The
+  exe has PIX markers (`PIXCustomCounter`). No FPS/stats overlay string was found.
+- **Performance diagnosis** (no injection, Denuvo-safe): Intel PresentMon (ETW) gives frame time,
+  CPU Busy and GPU Busy per frame, so CPU- vs GPU-bound is read directly; Windows Performance
+  Recorder + WPA (CPU Usage Precise, ready-thread) shows which game thread is on the critical path
+  and what it waits on. Task Manager per-core graphs hide a single busy thread that migrates
+  between cores. The PZ2QoL debug-trace build costs a DLL load per breadcrumb (~3 lines/s in
+  park); the Kin park scan is budgeted over frames (~440 ms elapsed per scan on a large zoo,
+  every 2 s while a Kin surface is open, 2026-10-19 trace on Y:).
+  **In-game script profiler** (PZ2QoL, 2026-10-19, offline): times the game's Lua per frame
+  (managers, components, modes, world scripts) and the page's JS, and shows the rest of the frame as
+  native time; see `debugging.md` "Script profiler".
 - **Console commands** (`api.debug.RegisterShellCommand`, 73 uses: `CompleteObjective`,
   `CompleteAllChallengeObjectives`, `ToggleLockedScenarios`, `ResetScenario`, ...). No retail UI to
   type them into.

@@ -4,6 +4,8 @@
 //  - Breeding programme (under it): the small Breeding window, where the
 //    game opens its info panels (breedwin.js).
 //  - Autosave: shows the mod's autosave state; click for its settings.
+//  - Script profiler (bottom): which scripts take time each frame
+//    (profiler.js); the first button given up when room is short.
 //
 // Our own element under <body>, placed every tick from the tools column's
 // box (.ToolsBar_root), never inside the game's preact tree (the game
@@ -12,6 +14,7 @@
 // autosave button, then the Breeding button, then itself, when the alert
 // buttons above leave no room.
 import { autosaveCard, getAutosaveSummary, installAutosave, onAutosave } from '/js/mods/pz2qol/autosave.js';
+import { isLogEnabled } from '/js/mods/pz2qol/debuglog.js';
 import { breadcrumb, reportError } from '/js/mods/pz2qol/errors.js';
 import { h, icon, setClass, setText } from '/js/mods/pz2qol/ui.js';
 
@@ -25,6 +28,8 @@ let saveBadge = null;
 let card = null;
 let boardModule = null;
 let breedModule = null;
+let profBtn = null;
+let profModule = null;
 
 function board() {
     if (boardModule) return Promise.resolve(boardModule);
@@ -53,6 +58,20 @@ function toggleBreeding() {
         m.toggleBreedingWindow({});
         setTimeout(sync, 50);
     }).catch(e => reportError('ui', 'Breeding window could not open', e));
+}
+
+function profiler() {
+    if (profModule) return Promise.resolve(profModule);
+    return import('/js/mods/pz2qol/profiler.js').then(m => (profModule = m));
+}
+
+function toggleProfilerPanel() {
+    breadcrumb('prof_launch');
+    closeCard();
+    profiler().then(m => {
+        m.toggleProfiler();
+        setTimeout(sync, 50);
+    }).catch(e => reportError('ui', 'Script profiler could not open', e));
 }
 
 // a round button with a hover label to its right, like the game's own
@@ -91,9 +110,10 @@ function build() {
     boardBtn = roundButton('IconAnimals', 'Species board', toggleBoard);
     saveBtn = roundButton('save', 'Autosave', toggleCard);
     breedBtn = roundButton('Icon_Heart', 'Breeding programme', toggleBreeding);
+    profBtn = roundButton('IconTime', 'Script profiler', toggleProfilerPanel);
     saveBadge = h('div.PZ2QoL_dockBadge');
     saveBtn.appendChild(saveBadge);
-    dock = h('div.PZ2QoL_dock', null, h('div.PZ2QoL_dockPanel'), saveBtn, boardBtn, breedBtn);
+    dock = h('div.PZ2QoL_dock', null, h('div.PZ2QoL_dockPanel'), saveBtn, boardBtn, breedBtn, profBtn);
     document.body.appendChild(dock);
     document.addEventListener('click', e => {
         if (card && !card.contains(e.target) && !saveBtn.contains(e.target)) closeCard();
@@ -139,6 +159,14 @@ function sync() {
         bw = false;
     }
     setClass(breedBtn, 'on', bw);
+    let pf = false;
+    try {
+        pf = !!(profModule && profModule.isProfilerOpen && profModule.isProfilerOpen());
+    }
+    catch (e) {
+        pf = false;
+    }
+    setClass(profBtn, 'on', pf);
     if (card && card.__sync) card.__sync();
 }
 
@@ -159,7 +187,10 @@ function place() {
     const room = alerts ? tools.top - alerts.bottom - 4 : Infinity;
     setClass(saveBtn, 'displayNone', false);
     setClass(breedBtn, 'displayNone', false);
+    // the script profiler is a developer tool: debug builds only
+    setClass(profBtn, 'displayNone', isLogEnabled() !== true);
     setClass(dock, 'displayNone', false);
+    if (dock.getBoundingClientRect().height > room) setClass(profBtn, 'displayNone', true);
     if (dock.getBoundingClientRect().height > room) {
         setClass(saveBtn, 'displayNone', true);
         if (dock.getBoundingClientRect().height > room) setClass(breedBtn, 'displayNone', true);

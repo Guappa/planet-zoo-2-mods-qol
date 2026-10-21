@@ -330,7 +330,7 @@ local function rowTable(sKey)
 		for _, k in ipairs(tNative.tSelection) do if k == sKey then bSelected = true end end
 		if tNative.bLuaFlagFalse then bSelected = false end
 	end
-	return { id = tNative.bIdOther and ("id_" .. gs(guidAt(sKey))) or sKey, auctionTimerSeconds = a.timer, isMoving = a.isMoving, isPregnant = a.isPregnant, maturity = a.maturity, name = a.name or "Animal", species = a.species, gender = a.gender, selected = bSelected, source = a.source }
+	return { id = tNative.bIdOther and ("id_" .. gs(guidAt(sKey))) or sKey, auctionTimerSeconds = a.timer, auctionPrice = a.auctionPrice, isMoving = a.isMoving, isPregnant = a.isPregnant, maturity = a.maturity, name = a.name or "Animal", species = a.species, gender = a.gender, selected = bSelected, source = a.source }
 end
 local ui2 = {
 	GetNoCreateDataStoreContext = function(a, ...)
@@ -1939,7 +1939,9 @@ do
 	addAnimal(2101, { species = "Lion", name = "Kito" })
 	addAnimal(2102, { species = "Lion", name = "Nala" })
 	tLog = {}
+	tNative.tListReads = {}
 	local tIDs = { "animal_1" }
+	local nProbeAt = nClock
 	local tR = table.pack(oStorage:OnQuickTradeAnimals(tIDs))
 	local cq = calls("GameQuickTrade")
 	check(#cq == 1 and cq[1].tArgs.n == 2 and cq[1].tArgs[1] == oStorage and rawequal(cq[1].tArgs[2], tIDs), "0b: the game's handler got exactly self and the same table")
@@ -1961,6 +1963,13 @@ do
 	local tg = find("probe_gone")
 	check(tg and tg.guid == "2101" and tg.ms >= 2000 and tg.ms <= 3500, "0b: when the row left the list (" .. tostring(tg and tg.ms) .. " ms)")
 	check(find("probe_end") and find("probe_end").gone == 1 and Lister.tProbe == nil, "0b: the watch ends when every row is gone")
+	-- reading the list while the game applies the quick trade crashed a 3.2.0
+	-- player's game (Nexus, 2026-10-20): no probe read in the second after it
+	local nEarlyProbe = 0
+	for _, r in ipairs(tNative.tListReads) do
+		if r > nProbeAt and r < nProbeAt + 1.0 then nEarlyProbe = nEarlyProbe + 1 end
+	end
+	check(nEarlyProbe == 0 and #tNative.tListReads >= 2, "0b: the list is not read in the second after the handler (" .. nEarlyProbe .. " of " .. #tNative.tListReads .. ")")
 	seconds(9)
 	local nErr = count("probe_server_error")
 	serverError(5, 31)
@@ -1992,6 +2001,13 @@ do
 	check(bOkBare and tBare.OnQuickTradeAnimals == nil, "0b: a hub mode without the handlers is left alone")
 	Core.bTrace = nil
 	Core.Log = nil
+	-- a release build has no log: no probe, the game's handler alone
+	tNative.tListReads = {}
+	local nGameQt = #calls("GameQuickTrade")
+	local nProbes = Lister.nProbes
+	oStorage:OnQuickTradeAnimals({ "animal_1" })
+	seconds(3)
+	check(#calls("GameQuickTrade") == nGameQt + 1 and Lister.nProbes == nProbes and Lister.tProbe == nil and #tNative.tListReads == 0, "0b: release build: no probe and no list read, the handler still runs (" .. (#calls("GameQuickTrade") - nGameQt) .. " " .. tostring(Lister.nProbes - nProbes) .. " " .. tostring(Lister.tProbe) .. " " .. #tNative.tListReads .. ")")
 	oStorage:TransitionOut()
 	check(#calls("QuickTrade") == 0 and #calls("Release") == 0, "the engine never called the quick natives")
 end
@@ -2546,6 +2562,197 @@ do
 	fnPageFrame = nil
 	Core.bTrace = nil
 	Core.Log = nil
+	oStorage:TransitionOut()
+end
+
+-----------------------------------------------------------------------
+-- 23. Taking listings off the market (mode "unlist", the desk's My
+-- listings, docs/DESIGN-reprice.md): the game's Cancel acts on the
+-- selection (StorageUICancelAnimalAuction(), no arguments); page reports
+-- only, the row's timer decides, skip-and-carry-on, Stop, the caps
+-----------------------------------------------------------------------
+do
+	local function pct(s)
+		return (string.gsub(tostring(s or ""), "[^%w%-_%.!~%*'%(%)]", function(c) return string.format("%%%02X", string.byte(c)) end))
+	end
+	local function pageTextU()
+		local A, L = tNative.tActions, tNative.tLimits
+		local function f(v) return v == true and "1" or v == false and "0" or "-" end
+		local function n(v) return type(v) == "number" and tostring(v) or "-" end
+		local tN = {}
+		for _, sName in ipairs({ "tradePriceMin", "tradePriceMax", "tradePriceDefault", "tradeDurationMin", "tradeDurationMax", "tradeDurationDefault" }) do tN[#tN + 1] = n(L[sName]) end
+		local tSel = tPage.fnSel and tPage.fnSel() or tNative.tSelection
+		return table.concat({ "v2", tPage.sKey, table.concat(tSel, ","), f(A.tradeAllowed), table.concat(tN, ","), pct(A.tradeDisallowedReason),
+			f(A.quickTradeAllowed), pct(A.quickTradeDisallowedReason), pct(A.quickTradeValue), f(A.quickReleaseAllowed), pct(A.quickReleaseDisallowedReason),
+			pct(A.quickReleaseValue), f(A.rehomeAllowed), n(L.quickTradePrice) .. "," .. n(L.quickReleasePrice), f(tNative.bConnecting) .. "," .. f(tNative.bLoading),
+			"-", pct(""), tPage.sPageId or "PG1" }, "|")
+	end
+	-- the native's Cancel: takes the selected animal off ~0.4 s later
+	local nCancelDelay = 0.4
+	planetHub.StorageUICancelAnimalAuction = function(...)
+		local sKey = tNative.tSelection[1]
+		local g = sKey and guidAt(sKey)
+		record("Cancel", select("#", ...), sKey, g)
+		local a = g and tAnimals[g]
+		if a == nil then return end
+		if a.cancelOutcome == "stay" then return end
+		if type(a.cancelOutcome) == "function" then return a.cancelOutcome(g) end
+		after(nCancelDelay, function() a.timer = -1 end)
+	end
+	local nU = 0
+	local function unlistRun(tSpec, tOpt)
+		tOpt = tOpt or {}
+		reset()
+		oStorage:TransitionIn()
+		for k, v in pairs(tOpt.native or {}) do tNative[k] = v end
+		fnPageFrame = fnPageFrameSaved
+		pageReset(tOpt.page or { fnText = pageTextU })
+		for _, a in ipairs(tSpec) do
+			local tA = a[2] or {}
+			tA.species = tA.species or "Lion"
+			tA.name = tA.name or ("U" .. tostring(a[1]))
+			tA.timer = tA.timer or 5 * 3600
+			-- a listed animal: the game won't trade it again (its data still comes)
+			tA.tradeAllowed = false
+			addAnimal(a[1], tA)
+			tAnimals[a[1]].auctionPrice = tA.auctionPrice or 900
+			tAnimals[a[1]].cancelOutcome = tA.cancelOutcome
+		end
+		local tLines = {}
+		for _, a in ipairs(tSpec) do tLines[#tLines + 1] = gs(a[1]) .. " " .. (keyOf(a[1]) or "-") .. " - max" end
+		nU = nU + 1
+		local sR = tOpt.req or ("RPG1_" .. (700 + nU))
+		local nF = #oView.tSent
+		fire("PZ2QoL_ListerStart", sR, "v1 " .. (tOpt.pace or 1000) .. " unlist\n" .. table.concat(tLines, "\n"))
+		return sR, nF
+	end
+
+	-- caps say whether it can
+	reset()
+	oStorage:TransitionIn()
+	addAnimal(4500)
+	fire("PZ2QoL_ListerHello", "hu1")
+	local tC = sent("PZ2QoL_ListerCaps")
+	check(tC[#tC] and decode(tC[#tC].tArgs[2]).unlist == true, "unlist: caps say so")
+	local fnCancel = planetHub.StorageUICancelAnimalAuction
+	planetHub.StorageUICancelAnimalAuction = nil
+	fire("PZ2QoL_ListerHello", "hu2")
+	tC = sent("PZ2QoL_ListerCaps")
+	check(decode(tC[#tC].tArgs[2]).unlist == false and decode(tC[#tC].tArgs[2]).ok == true, "unlist: no native, caps false (listing still ok)")
+	-- and a run is refused without it
+	fire("PZ2QoL_ListerStart", "RPG1_901", "v1 1000 unlist\n4500 animal_1 - max")
+	check(Lister.tRun == nil and lastState().refused == true and string.find(lastState().message, "StorageUICancelAnimalAuction", 1, true), "unlist: no native, refused")
+	planetHub.StorageUICancelAnimalAuction = fnCancel
+	-- refused without a page id, and offline
+	fire("PZ2QoL_ListerStart", "plain", "v1 1000 unlist\n4500 animal_1 - max")
+	check(Lister.tRun == nil and lastState().refused == true, "unlist: no page id, refused")
+	tNative.nHubType = 1
+	fire("PZ2QoL_ListerStart", "RPG1_902", "v1 1000 unlist\n4500 animal_1 - max")
+	check(Lister.tRun == nil and lastState().refused == true and string.find(lastState().message, "online Franchise", 1, true), "unlist: offline, refused")
+	tNative.nHubType = 2
+
+	-- A. three listed animals taken off, one Cancel each (no arguments), the
+	-- selection exactly that animal at the call, a pause between them
+	unlistRun({ { 4501, { auctionPrice = 1200 } }, { 4502 }, { 4503 } })
+	check(runToEnd(90), "unlist: finished")
+	local s = lastState()
+	local tCancel = calls("Cancel")
+	check(#tCancel == 3 and #tAuctions == 0 and #calls("QuickTrade") == 0, "unlist: three Cancels, nothing listed or traded (" .. #tCancel .. ")")
+	check(tCancel[1] and tCancel[1].tArgs[1] == 0 and tCancel[1].tArgs[3] == 4501 and tCancel[2].tArgs[3] == 4502 and tCancel[3].tArgs[3] == 4503, "unlist: no arguments, each with its own animal selected")
+	check(s.mode == "unlist" and s.phase == "done" and s.message == "Taken off the market 3 of 3." and s.results[1].status == "unlisted" and s.results[3].status == "unlisted", "unlist: done (" .. tostring(s.message) .. ")")
+	check(s.results[1].price == 1200, "unlist: the listed price with the result")
+	check(tAnimals[4501].timer <= 0 and tAnimals[4503].timer <= 0, "unlist: off the market")
+	check(tCancel[2].t - tCancel[1].t >= 1.0 + nCancelDelay, "unlist: the pace between two")
+	check(countMarks("lister_unlist_start") == 1 and countMarks("lister_unlist_send") == 3 and countMarks("lister_unlisted") == 3, "unlist: marked")
+
+	-- B. one already off (sold or expired): skipped, the next one goes
+	unlistRun({ { 4511, { timer = -1 } }, { 4512 } })
+	check(runToEnd(60), "unlist not listed: finished")
+	s = lastState()
+	check(s.results[1].status == "skipped" and s.results[1].kind == "notlisted" and s.results[2].status == "unlisted" and #calls("Cancel") == 1, "unlist: a not listed one skipped (" .. tostring(s.results[1].kind) .. ")")
+
+	-- C. no page report: never sent, skipped (Lua's own reads never count)
+	unlistRun({ { 4521 }, { 4522 } }, { page = { bOn = false } })
+	check(runToEnd(60), "unlist no page: finished")
+	s = lastState()
+	check(#calls("Cancel") == 0 and s.results[1].kind == "unselectable" and s.results[2].kind == "unselectable" and s.phase == "done", "unlist: no page, nothing sent, carries on")
+
+	-- D. another animal selected at the send: not sent
+	unlistRun({ { 4531, { onSelect = function()
+		after(0.4, function() tNative.bDbBusy = true end)
+		after(1.6, function() tPage.fnSel = function() return { "animal_2" } end end)
+		after(2.4, function() tNative.bDbBusy = false end)
+	end } }, { 4532 } })
+	check(runToEnd(60), "unlist other: finished")
+	s = lastState()
+	check(s.results[1].status == "skipped" and s.results[1].kind == "changed" and #calls("Cancel") == 1 and calls("Cancel")[1].tArgs[3] == 4532 and s.results[2].status == "unlisted", "unlist: another one selected, not sent, the next goes (" .. tostring(s.results[1].kind) .. ")")
+
+	-- E. the native does nothing: timeout after 30 s, the next one still goes
+	unlistRun({ { 4541, { cancelOutcome = "stay" } }, { 4542 } })
+	check(runToEnd(120), "unlist stays: finished")
+	s = lastState()
+	check(s.results[1].status == "timeout" and string.find(s.results[1].detail, "Still on the market", 1, true) and s.results[2].status == "unlisted", "unlist: timeout, the run goes on (" .. tostring(s.results[1].detail) .. ")")
+	check(countMarks("lister_unlist_timeout") == 1, "unlist: timeout marked")
+
+	-- F. a server error after the call: the wait is shortened, the row decides
+	unlistRun({ { 4551, { cancelOutcome = function() after(0.2, function() serverError(5, 31) end) end } } })
+	local nT0 = nClock
+	check(runToEnd(60), "unlist error: finished")
+	s = lastState()
+	check(s.results[1].status == "timeout" and string.find(s.results[1].detail, "NotAllowed", 1, true) and nClock - nT0 < 10, "unlist: an error shortens the wait (" .. tostring(s.results[1].detail) .. ", " .. tostring(nClock - nT0) .. " s)")
+	-- ... but an error with the row off the market is still unlisted
+	unlistRun({ { 4552, { cancelOutcome = function(g) after(0.2, function() serverError(255, 42) end) after(0.5, function() tAnimals[g].timer = -1 end) end } } })
+	check(runToEnd(60), "unlist error but off: finished")
+	check(lastState().results[1].status == "unlisted", "unlist: off despite an error: unlisted")
+
+	-- G. it sold just as it was taken off: left storage, skipped gone
+	unlistRun({ { 4561, { cancelOutcome = function(g)
+		after(0.3, function()
+			local tNew = {}
+			for _, x in ipairs(tOrder) do if x ~= g then tNew[#tNew + 1] = x end end
+			reshuffle(tNew)
+		end)
+	end } } })
+	check(runToEnd(60), "unlist sold: finished")
+	s = lastState()
+	check(s.results[1].status == "skipped" and s.results[1].kind == "gone", "unlist: sold meanwhile: gone (" .. tostring(s.results[1].status) .. ")")
+
+	-- H. Stop while waiting for it to come off: stopped, may still come off;
+	-- the rest stay to do
+	unlistRun({ { 4571, { cancelOutcome = "stay" } }, { 4572 } })
+	tickUntil(function() return #calls("Cancel") == 1 end, 30)
+	seconds(2)
+	fire("PZ2QoL_ListerStop")
+	s = lastState()
+	check(Lister.tRun == nil and s.phase == "stopped" and s.results[1].status == "stopped" and s.results[2].status == "pending" and #calls("Cancel") == 1, "unlist: Stop ends it, the rest stay")
+
+	-- I. the key moves to another listed animal after the select: never that one
+	unlistRun({ { 4581, { onSelect = function() after(0.35, function() reshuffle({ 4582, 4581 }) end) end } }, { 4582, { noSelect = true } } })
+	check(runToEnd(60), "unlist reshuffle: finished")
+	check(tAnimals[4582].timer > 0, "unlist + reshuffle: the other animal stays listed")
+
+	-- J. a listing job never cancels anything; an unlist job never lists
+	check(#tAuctions == 0, "unlist: never listed anything")
+
+	-- K. My listings' Quick trade: a quick job never acts on a listed animal (the
+	-- game's UI offers quick actions only off the market): it stops, nothing
+	-- sent; after the take-off the same animal goes through the quick job
+	unlistRun({ { 4591, { quick = { quickTradeAllowed = true, quickTradeValue = "[COST:Value={700}]", quickReleaseAllowed = true, rehomeAllowed = false } } } })
+	fire("PZ2QoL_ListerStop")
+	tickUntil(function() return Lister.tRun == nil end, 5)
+	tAnimals[4591].timer = 5 * 3600
+	local nQ0 = #calls("QuickTrade")
+	fire("PZ2QoL_ListerStart", "RPG1_951", "v1 1000 quicktrade\n4591 " .. keyOf(4591) .. " - default")
+	check(runToEnd(30), "quick on listed: finished")
+	local sQ = lastState()
+	check(#calls("QuickTrade") == nQ0 and sQ.phase == "stopped" and sQ.results[1].kind == "listed", "quick on a listed animal: stopped, nothing sent (" .. tostring(sQ.results[1].kind) .. ")")
+	fire("PZ2QoL_ListerStart", "RPG1_952", "v1 1000 unlist\n4591 " .. keyOf(4591) .. " - max")
+	check(runToEnd(30) and lastState().results[1].status == "unlisted", "take-off before the quick trade")
+	fire("PZ2QoL_ListerStart", "RPG1_953", "v1 1000 quicktrade\n4591 " .. keyOf(4591) .. " - default")
+	check(runToEnd(30), "quick after take-off: finished")
+	sQ = lastState()
+	check(#calls("QuickTrade") == nQ0 + 1 and sQ.results[1].status == "traded", "quick after the take-off: traded (" .. tostring(sQ.results[1].status) .. " " .. tostring(sQ.results[1].kind) .. " " .. tostring(sQ.results[1].detail) .. ")")
+	fnPageFrame = nil
 	oStorage:TransitionOut()
 end
 

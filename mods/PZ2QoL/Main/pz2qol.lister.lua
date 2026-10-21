@@ -30,6 +30,11 @@
 --  rehome) goes to the page with its result; a job in mode "check" (the
 --  desk's Check storage) stops there and never sends. The vanilla quick
 --  handlers are wrapped to log only (Phase 0b). docs/PLAN-desk-quick-release.md.
+--  A job in mode "unlist" (the desk's My listings, docs/DESIGN-reprice.md)
+--  takes listed animals off the market: select it, then the game's own
+--  Cancel (AnimalStorage_Cancel("Trade") -> StorageUICancelAnimalAuction(),
+--  no arguments, acts on the selection); its row's auctionTimerSeconds
+--  dropping to <= 0 confirms it.
 --  Protocol: docs/DESIGN-market-desk.md. Offline: the DataStore shapes read
 --  here come from the decompiled game and its UI code; the trace marks
 --  lister_* are there to prove them in game.
@@ -94,6 +99,20 @@ Lister.nQuickFirstLook = 1
 Lister.nQuickErrWait = 3     -- s: a database error during the wait shortens it to this
 Lister.nQuickMissStop = 2    -- animals in a row without a fresh page report that stop a quick run
 Lister.nMaxKeys = 5000       -- per Resolve
+-- Taking a listing off the market (mode "unlist", docs/DESIGN-reprice.md):
+-- the game's Cancel button sends AnimalStorage_Cancel("Trade"), whose
+-- handler calls StorageUICancelAnimalAuction() with no arguments: it acts
+-- on the selection (animalstoragehubmode.lua OnCancel, 1.0.5, offline).
+-- Its request type and answer are unknown: the row decides (its timer <= 0,
+-- read twice in a row), a server error only shortens the wait.
+Lister.sCancelNative = "StorageUICancelAnimalAuction"
+Lister.nUnlistTimeout = 30   -- s for the row to show it off the market
+Lister.nUnlistFirstLook = 1  -- s after the call before the list is read (as after a quick send)
+Lister.nUnlistErrWait = 5    -- s: a database error during the wait shortens it to this
+-- s: the engine's last selected animal still counts as "the data before the
+-- select" at the next run's first animal (a take-off, then a quick trade)
+Lister.nLastSelFresh = 60
+Lister.tLastSel = nil
 -- Phase 0b (docs/PLAN-desk-quick-release.md 2): the vanilla Quick trade /
 -- Quick release handlers are wrapped to log only, then call the game's own.
 Lister.nProbeErrWindow = 10  -- s after one whose server errors are logged
@@ -137,6 +156,12 @@ local function log(sEvent, tData)
 	if Core and Core.Log and Core.bTrace then
 		pcall(Core.Log, Core, "lister", sEvent, tData)
 	end
+end
+
+-- a debug build (the trace DLL loaded): only then is there a log to write
+local function tracing()
+	local Core = global.package.loaded["pz2qol.core"]
+	return Core ~= nil and Core.bTrace == true
 end
 
 -- seconds to two decimals (log values)
@@ -1123,7 +1148,7 @@ end
 -- quick trade, quick release, rehome); it never sends anything.
 -- "quicktrade" / "release" (Phase 2, docs/PLAN-desk-quick-release.md 4.3):
 -- the desk's Quick trade / Quick release, one animal at a time (_QuickSend).
-Lister.tJobModes = { list = true, check = true, quicktrade = true, release = true }
+Lister.tJobModes = { list = true, check = true, quicktrade = true, release = true, unlist = true }
 
 -- "v1 <paceMs>[ <mode>]\n<guid> <key> <price> <hours>\n..." -> tAnimals,
 -- nPaceMs, sMode (or nil, sError). A GUID listed twice is listed once.
@@ -1183,7 +1208,7 @@ local function parseJob(sJob)
 		return nil, "Unknown job format (expected v1)."
 	end
 	if #tAnimals == 0 then
-		return nil, sMode == "check" and "No animals to check." or "No animals to list."
+		return nil, sMode == "check" and "No animals to check." or sMode == "unlist" and "No listings to take off." or "No animals to list."
 	end
 	return tAnimals, nPace, sMode, tOpts
 end
@@ -1316,7 +1341,7 @@ end
 -- The run
 -----------------------------------------------------------------------
 local tResultMarks = { listed = "lister_listed", refused = "lister_refused", timeout = "lister_timeout", skipped = "lister_skip", checked = "lister_checked",
-	traded = "lister_quick_traded", released = "lister_quick_released", unconfirmed = "lister_quick_unconfirmed" }
+	traded = "lister_quick_traded", released = "lister_quick_released", unconfirmed = "lister_quick_unconfirmed", unlisted = "lister_unlisted" }
 
 local tSkipText = {
 	gone = "No longer in storage (sold, moved or filtered out).",
@@ -1334,6 +1359,7 @@ local tSkipText = {
 	notallowed = "The game does not allow it now.",
 	nopage = "No fresh report from the page for it; nothing was sent.",
 	rehome = "The game offers only Rehome for it.",
+	notlisted = "Not on the market (any more): sold, expired or already taken off.",
 }
 
 -- The steps the page watches the selection in.
@@ -1372,6 +1398,15 @@ Lister._Summary = function(self, tRun)
 			end
 		end
 		return tQ.sVerb .. " " .. nDone .. " of " .. #tRun.tResults .. "."
+	end
+	if tRun.sMode == "unlist" then
+		local nOff = 0
+		for _, r in ipairs(tRun.tResults) do
+			if r.status == "unlisted" then
+				nOff = nOff + 1
+			end
+		end
+		return "Taken off the market " .. nOff .. " of " .. #tRun.tResults .. "."
 	end
 	local bCheck = tRun.sMode == "check"
 	local nDone, nAfter = 0, 0
@@ -1431,7 +1466,7 @@ Lister._Result = function(self, tRun, sStatus, sKind, sDetail)
 		self.nLastServer = now()
 		if tRun.nIndex <= #tRun.tAnimals then
 			tRun.nPauseStart = self.nLastServer
-			return self:_SetStep(tRun, "pause", "Pausing between listings.")
+			return self:_SetStep(tRun, "pause", tRun.sMode == "unlist" and "Pausing before the next one." or "Pausing between listings.")
 		end
 	elseif tCur ~= nil and tRun.sMode == "check" and tCur.nSelectedAt ~= nil and tRun.nIndex <= #tRun.tAnimals then
 		-- a check sends nothing: its own short pause between two selects
@@ -1601,6 +1636,25 @@ Lister._End = function(self, tRun, sPhase, sMessage)
 		else
 			tRes.status, tRes.kind = "unconfirmed", "unconfirmed"
 			tRes.detail = (sPhase == "closed" and "Animal Storage was closed" or "Stopped") .. " before it was confirmed: check storage."
+		end
+		tRun.nIndex = tRun.nIndex + 1
+		self.nLastServer = now()
+		tRun.tCur = nil
+		tCur = nil
+	end
+	if tCur ~= nil and tCur.bSent and tRun.sMode == "unlist" then
+		-- taking it off was asked: one last look at its row
+		local tRes = tRun.tResults[tRun.nIndex]
+		local bOk, bListed = false, true
+		if now() - (tCur.nSentAt or 0) >= self.nUnlistFirstLook then
+			bOk, bListed = pcall(self._IsListed, self, tCur)
+		end
+		if bOk and bListed == false and self:_Find(tCur, self:_List()) ~= nil then
+			tRes.status, tRes.kind, tRes.detail = "unlisted", nil, ""
+			mark("lister_unlisted")
+		else
+			tRes.status, tRes.kind = "stopped", "stopped"
+			tRes.detail = (sPhase == "closed" and "Animal Storage was closed" or "Stopped") .. " while waiting; it may still come off the market."
 		end
 		tRun.nIndex = tRun.nIndex + 1
 		self.nLastServer = now()
@@ -1793,6 +1847,19 @@ local function limitsMissing(tLimits)
 end
 
 Lister._SelectionData = function(self, tCur, tRun)
+	if tRun ~= nil and tRun.sMode == "unlist" then
+		-- taking it off: only the selection counts (a fresh page report: Lua's
+		-- own reads never saw the selection in game); the trade data of a
+		-- listed animal is not needed
+		local r = self:_PageReport(tRun, tCur.sKey)
+		if r == nil then
+			return nil, "page"
+		end
+		if not onlySelected(r.tSel, tCur.sKey) then
+			return nil, "selection"
+		end
+		return { bAllowed = r.bAllowed, sReason = r.sReason, tLimits = r.tLimits or {}, sSrc = "page", nV = r.nV, tQuick = r.tQuick, tPage = r }
+	end
 	local tQ = self:_Q(tRun)
 	if tQ ~= nil then
 		-- a quick run: a fresh page report only (v2, with its own flag)
@@ -2110,7 +2177,13 @@ Lister._Step = function(self, tRun, t)
 			-- Phase 0a: does the row's source text tell the quick-only animals apart?
 			source = tRow and tRow.source }))
 		tCur.sSource = tRow and type(tRow.source) == "string" and tRow.source or nil
-		if tRow ~= nil then
+		if tRun.sMode == "unlist" then
+			-- only a listing still on the market is taken off
+			if tRow == nil or not isListed(tRow) then
+				return self:_Skip(tRun, "notlisted")
+			end
+			tCur.nListedPrice = toNumber(tRow.auctionPrice)
+		elseif tRow ~= nil then
 			if isListed(tRow) then
 				return self:_Skip(tRun, "listed")
 			end
@@ -2120,7 +2193,7 @@ Lister._Step = function(self, tRun, t)
 		end
 		-- the market's own rules (pregnant, elderly, juvenile) are for listing;
 		-- a quick action goes by the game's own flag for it
-		if tRow ~= nil and self:_Q(tRun) == nil then
+		if tRow ~= nil and self:_Q(tRun) == nil and tRun.sMode ~= "unlist" then
 			-- never listed: the game's own sell flow blocks pregnant animals
 			-- (RelocateAnimalsPopup g_tSellPreventers bPregnant); storage rows
 			-- carry isPregnant (AnimalMarketAndStorageSchema.js)
@@ -2175,6 +2248,12 @@ Lister._Step = function(self, tRun, t)
 		tCur.sClearedPrint, tCur.sClearedSrc, tCur.bClearedEmpty = self:_RawPrint(tRun, tCur.sKey)
 		-- whose data that is: the animal selected last
 		tCur.sPrevGuid = tRun.sLastSelGuid
+		-- or, at a run's first animal, the engine's last select of the run
+		-- just before (My listings: the take-off, then the quick trade of the
+		-- same animal, whose data then shows unchanged), if it was moments ago
+		if tCur.sPrevGuid == nil and self.tLastSel ~= nil and t - self.tLastSel.nAt <= self.nLastSelFresh then
+			tCur.sPrevGuid = self.tLastSel.sGuid
+		end
 		-- Phase 0a: the network signals just before and after the select (does a select send a request?)
 		tCur.sNetBefore = netText(self:_Net())
 		log("select", runFields(tRun, { key = tCur.sKey, id = nativeId(tCur.sKey), stillSelected = bStill == true,
@@ -2221,6 +2300,17 @@ Lister._Step = function(self, tRun, t)
 			end
 			return self:_SetStep(tRun, "select", "Selecting it.")
 		end
+		if tRun.sMode == "unlist" then
+			-- the selection is this animal (a fresh page report), settled: its
+			-- row must still be on the market
+			tRun.sLastSelGuid = tCur.sGuid
+			self.tLastSel = { sGuid = tCur.sGuid, nAt = t }
+			local tRow = rowOf(tCur.sKey, nil) or rowOf(tCur.sKey, self:_List())
+			if tRow == nil or not isListed(tRow) then
+				return self:_Skip(tRun, "notlisted")
+			end
+			return self:_SetStep(tRun, "send", "Taking it off the market.")
+		end
 		-- (read from another source than the note: can't tell, so as if unchanged)
 		local bCheck = tRun.sMode == "check"
 		local tQ = self:_Q(tRun)
@@ -2260,6 +2350,7 @@ Lister._Step = function(self, tRun, t)
 		-- rehome), for the desk's categories; logged for Phase 0a
 		tRun.tResults[tRun.nIndex].verdict = verdictOf(tData)
 		tRun.sLastSelGuid = tCur.sGuid
+		self.tLastSel = { sGuid = tCur.sGuid, nAt = t }
 		pcall(self._LogQuick, self, tRun, tData)
 		if bCheck then
 			-- a check run never sends: recorded, then the next one
@@ -2336,6 +2427,9 @@ Lister._Step = function(self, tRun, t)
 		if self:_Q(tRun) ~= nil then
 			return self:_QuickSend(tRun, tCur, t)
 		end
+		if tRun.sMode == "unlist" then
+			return self:_UnlistSend(tRun, tCur, t)
+		end
 		if tRun.sMode ~= "list" then
 			-- only a listing run sends (a check never gets here; belt and braces)
 			mark("lister_check_send_blocked")
@@ -2400,6 +2494,9 @@ Lister._Step = function(self, tRun, t)
 	end
 	if tRun.sStep == "gone" then
 		return self:_QuickGone(tRun, tCur, t)
+	end
+	if tRun.sStep == "unconfirm" then
+		return self:_UnlistConfirm(tRun, tCur, t)
 	end
 	if tRun.sStep == "confirm" then
 		if t - tCur.nLastPoll < self.nConfirmPoll then
@@ -2564,6 +2661,111 @@ Lister._QuickGone = function(self, tRun, tCur, t)
 	end
 end
 
+-- Taking a listing off the market, in one tick: idle, a page report fresher
+-- than this step showing exactly this animal selected, the key (_Holds), the
+-- row still listed; then the game's own Cancel (it acts on the selection).
+Lister._UnlistSend = function(self, tRun, tCur, t)
+	local bBusy, sWhy = self:_Busy()
+	if bBusy and sWhy == "requests" and (tRun.bRequestsIgnored or t - tRun.nStepStart > self.nRequestsGrace) then
+		if not tRun.bRequestsIgnored then
+			tRun.bRequestsIgnored = true
+			mark("lister_busy_requests_ignored")
+		end
+		bBusy = false
+	end
+	if bBusy then
+		self:_MarkBusy(tRun, sWhy)
+		if t - tRun.nStepStart > self.nServerTimeout then
+			return self:_Skip(tRun, "busy", "The game stayed busy with another server request; not taken off.")
+		end
+		tRun.sMessage = "Waiting for the game's other server requests."
+		return
+	end
+	local r = self:_PageReport(tRun, tCur.sKey)
+	if r == nil or not (r.nAt > tRun.nStepStart) then
+		if t - tRun.nStepStart > self.nSelectTimeout then
+			return self:_Skip(tRun, "nopage", "No fresh report from the page for it; it was not taken off.")
+		end
+		return
+	end
+	if not onlySelected(r.tSel, tCur.sKey) then
+		log("changed", runFields(tRun, { why = "selection", key = tCur.sKey, src = "page" }))
+		return self:_Skip(tRun, "changed", "The selection changed just before sending; not taken off.")
+	end
+	local tList = self:_List()
+	local bHolds, sNotWhy = self:_Holds(tCur.sGuid, tCur.sKey, tList)
+	if not bHolds then
+		log("changed", runFields(tRun, { why = "key", detail = sNotWhy, key = tCur.sKey }))
+		return self:_Skip(tRun, sNotWhy == "ambiguous" and "ambiguous" or "changed", "The storage list changed just before sending; not taken off.")
+	end
+	local tRow = tList and rowOf(tCur.sKey, tList) or rowOf(tCur.sKey, nil)
+	if tRow == nil or not isListed(tRow) then
+		return self:_Skip(tRun, "notlisted")
+	end
+	local fn = hubFn(self.sCancelNative)
+	if fn == nil then
+		return self:_Skip(tRun, "error", "This game version has no api.planetHub." .. self.sCancelNative .. ".")
+	end
+	local tRes = tRun.tResults[tRun.nIndex]
+	tRes.price = toNumber(tRow.auctionPrice) or tCur.nListedPrice
+	-- counts as sent even if the call raises (then the row still decides)
+	tCur.bSent = true
+	tCur.nSentAt = t
+	tCur.nLastPoll = t
+	tCur.nDeadline = t + self.nUnlistTimeout
+	mark("lister_unlist_send")
+	log("send_unlist", runFields(tRun, { key = tCur.sKey, price = tRes.price, timer = tRow.auctionTimerSeconds }))
+	fn()
+	return self:_SetStep(tRun, "unconfirm", "Waiting for it to come off the market.")
+end
+
+-- Off the market when its row (found again by its id) shows no timer, read
+-- twice in a row. Gone from storage: it sold meanwhile. Still listed at the
+-- deadline: timeout (it may still come off).
+Lister._UnlistConfirm = function(self, tRun, tCur, t)
+	if t - tCur.nSentAt < self.nUnlistFirstLook and t < tCur.nDeadline then
+		return
+	end
+	if t - tCur.nLastPoll < self.nConfirmPoll and t < tCur.nDeadline then
+		return
+	end
+	tCur.nLastPoll = t
+	local ctx = context("hubAnimalsData", "network")
+	local bLoading = ctx ~= nil and element(ctx, "loadingItems") == true
+	local tList = (not bLoading) and self:_List() or nil
+	if tList ~= nil then
+		local sKey, sWhy = self:_Find(tCur, tList)
+		if sKey ~= nil then
+			tCur.sKey = sKey
+			tCur.nGoneSeen = 0
+			if not isListed(rowOf(sKey, tList)) then
+				tCur.nOffSeen = (tCur.nOffSeen or 0) + 1
+				if tCur.nOffSeen >= 2 then
+					log("unlisted", runFields(tRun, { ms = toInteger((t - tCur.nSentAt) * 1000), key = sKey,
+						err = tCur.tError ~= nil and (tCur.tError.sName or tCur.tError.nError) or nil }))
+					return self:_Result(tRun, "unlisted", nil, "")
+				end
+				return
+			end
+		elseif sWhy ~= "ambiguous" then
+			tCur.nOffSeen = 0
+			tCur.nGoneSeen = (tCur.nGoneSeen or 0) + 1
+			if tCur.nGoneSeen >= 2 then
+				mark("lister_unlist_gone")
+				return self:_Result(tRun, "skipped", "gone", "It left storage just then (sold?); not on the market any more.")
+			end
+			return
+		end
+	end
+	tCur.nOffSeen = 0
+	if t >= tCur.nDeadline then
+		mark("lister_unlist_timeout")
+		local tE = tCur.tError
+		local sErr = tE ~= nil and (" The server answered " .. tostring(tE.sName or ("code " .. tostring(tE.nError))) .. ".") or ""
+		return self:_Result(tRun, "timeout", "timeout", "Still on the market " .. secs(t - tCur.nSentAt) .. " s after asking." .. sErr)
+	end
+end
+
 -- Every frame while Animal Storage is open (its Advance).
 Lister.Tick = function(self)
 	local tRun = self.tRun
@@ -2615,6 +2817,14 @@ Lister.OnServerError = function(self, nError, sName, nRequestType)
 	-- 10 s of a vanilla quick trade / release (log only)
 	-- a quick animal waiting to leave storage: an error only shortens the wait
 	-- (the storage list still decides; Phase 0b saw no request type to match)
+	if tRun ~= nil and tCur ~= nil and tCur.bSent and tRun.sStep == "unconfirm" then
+		-- taking a listing off: its request type is unknown; an error only
+		-- shortens the wait, the row decides
+		tCur.tError = tCur.tError or { nError = nError, sName = sName, nTime = now() }
+		tCur.nDeadline = math.min(tCur.nDeadline or now(), now() + self.nUnlistErrWait)
+		mark("lister_unlist_server_error")
+		log("unlist_server_error", runFields(tRun, { code = nError, name = sName or "?", req = nRequestType, afterSend = secs(now() - tCur.nSentAt) }))
+	end
 	if tRun ~= nil and tCur ~= nil and tCur.bSent and tRun.sStep == "gone" then
 		tCur.tError = tCur.tError or { nError = nError, sName = sName, nTime = now() }
 		tCur.nDeadline = math.min(tCur.nDeadline or now(), now() + self.nQuickErrWait)
@@ -2640,6 +2850,8 @@ Lister.OnServerError = function(self, nError, sName, nRequestType)
 		sIgnored = "between"
 	elseif not tCur.bSent then
 		sIgnored = "notsent"
+	elseif tRun.sMode == "unlist" then
+		sIgnored = "unlist"
 	elseif tCur.tError ~= nil then
 		sIgnored = "second"
 	elseif toNumber(nRequestType) ~= self.nListingRequest then
@@ -2693,6 +2905,8 @@ Lister.Hello = function(self, oUI, sReq)
 		running = self.tRun ~= nil, version = self.nVersion,
 		-- job modes this engine runs (an older one refuses "check" as an unknown format)
 		check = true,
+		-- taking listings off the market (the desk's My listings)
+		unlist = hubFn(self.sCancelNative) ~= nil,
 	}))
 	-- a page that (re)loads during a quick run stops it; it never restarts
 	local tRun = self.tRun
@@ -2837,10 +3051,20 @@ Lister.Start = function(self, oUI, sReq, sJob)
 	-- a check only selects (local calls): it sends nothing to the server
 	local tQ = self.tQuickModes[sMode]
 	if sMode ~= "check" and self:_Online() == false then
-		return self:_Refuse(oUI, sReq, tQ ~= nil and "Quick trade and release from the desk need an online Franchise." or "Listing on the market needs an online Franchise.")
+		return self:_Refuse(oUI, sReq, tQ ~= nil and "Quick trade and release from the desk need an online Franchise."
+			or sMode == "unlist" and "Taking listings off the market needs an online Franchise." or "Listing on the market needs an online Franchise.")
 	end
 	if tQ ~= nil and hubFn(tQ.sNative) == nil then
 		return self:_Refuse(oUI, sReq, "This game version has no api.planetHub." .. tQ.sNative .. ".")
+	end
+	if sMode == "unlist" then
+		if hubFn(self.sCancelNative) == nil then
+			return self:_Refuse(oUI, sReq, "This game version has no api.planetHub." .. self.sCancelNative .. ".")
+		end
+		-- tied to the page that sent it: only its reports of the selection count
+		if pageOf(sReq) == nil then
+			return self:_Refuse(oUI, sReq, "The request did not say which page sent it; nothing was started.")
+		end
 	end
 	-- a quick run is tied to the page that sent it (a reload stops it): no page id, no run
 	if tQ ~= nil and pageOf(sReq) == nil then
@@ -2860,7 +3084,7 @@ Lister.Start = function(self, oUI, sReq, sJob)
 	local nRunPace = nil
 	if sMode == "check" then
 		nRunPace = self:_ClampCheckPace(vPace)
-	elseif tQ ~= nil then
+	elseif tQ ~= nil or sMode == "unlist" then
 		-- the desk's pace, at least 1 s; the listing pace is left alone
 		nRunPace = self:_ClampPace(vPace)
 	else
@@ -2882,6 +3106,10 @@ Lister.Start = function(self, oUI, sReq, sJob)
 		-- the frozen job (the GUIDs the player confirmed) and the page that sent it
 		tRun.sPage = pageOf(sReq)
 		mark("lister_quick_start")
+	end
+	if sMode == "unlist" then
+		tRun.sPage = pageOf(sReq)
+		mark("lister_unlist_start")
 	end
 	if sOnRefused ~= nil then
 		tRun.sOnRefused = sOnRefused
@@ -3150,7 +3378,14 @@ Lister._ProbeQuick = function(self, sKind, tArgs)
 		tShape.vtype, tShape.v = valueText(tIDs)
 	end
 	log("probe_call", tShape)
-	local tList = self:_List()
+	-- the storage list is not read as a table while the game may still be
+	-- applying the last quick trade / release (a native crash, debugging.md)
+	local tLast = self.tProbeLast
+	local bRecent = tLast ~= nil and tProbe.nAt - tLast.nAt < self.nQuickFirstLook
+	local tList = nil
+	if not bRecent and self:_Net().loading ~= true then
+		tList = self:_List()
+	end
 	local n = 0
 	if type(tIDs) == "table" then
 		for k, v in pairs(tIDs) do
@@ -3194,6 +3429,11 @@ Lister._ProbeTick = function(self)
 	if p == nil then
 		return
 	end
+	if not tracing() then
+		-- no log to write: nothing to watch for
+		self.tProbe = nil
+		return
+	end
 	local t = now()
 	if t - (p.nLastPoll or 0) < self.nProbePoll then
 		return
@@ -3208,7 +3448,13 @@ Lister._ProbeTick = function(self)
 		p.nIdleMs = nMs
 		log("probe_idle", { probe = p.nId, kind = p.sKind, ms = nMs })
 	end
-	local tList = self:_List()
+	-- not in the first second after the game's handler, nor while the list
+	-- loads: the game rebuilds it then, and reading it as a table crashed
+	-- natively (3.2.0 player, 2026-10-20; the engine's nQuickFirstLook rule)
+	local tList = nil
+	if t - p.nAt >= self.nQuickFirstLook and tNet.loading ~= true then
+		tList = self:_List()
+	end
 	local nGone = 0
 	if tList ~= nil then
 		for i, r in ipairs(p.tRows) do
@@ -3240,11 +3486,15 @@ Lister._WrapQuick = function(self, StorageMode)
 		elseif not StorageMode["_PZ2QoL_probe_" .. sName] then
 			StorageMode["_PZ2QoL_probe_" .. sName] = true
 			StorageMode[sName] = function(...)
-				local tArgs = table.pack(...)
-				local bOk, sErr = pcall(self._ProbeQuick, self, sKind, tArgs)
-				if not bOk then
-					mark("lister_probe_fail")
-					trace("probe " .. sKind .. " failed: " .. tostring(sErr))
+				-- the probe only logs: a release build has no log, so no probe
+				-- (it read the storage list while the game rebuilt it)
+				if tracing() then
+					local tArgs = table.pack(...)
+					local bOk, sErr = pcall(self._ProbeQuick, self, sKind, tArgs)
+					if not bOk then
+						mark("lister_probe_fail")
+						trace("probe " .. sKind .. " failed: " .. tostring(sErr))
+					end
 				end
 				-- the game's own handler, unchanged, with exactly what it got
 				-- (Phase 0b proved the shape { [1] = "animal_<n>" }; _QuickSend sends it)

@@ -819,6 +819,16 @@ fireUI(oHUD, "PZ2QoL_KinContracept", "x78", false)
 check(#calls("Contracept") == 1 and calls("Contracept")[1].tArgs[1] == 3 and calls("Contracept")[1].tArgs[2] == true, "contraception through the game's own setter")
 check(#calls("ExhibitContracept") == 1 and calls("ExhibitContracept")[1].tArgs[1] == 78, "exhibit animals too")
 check(kinStates() == "contracept,contracept", "page told: " .. kinStates())
+-- an exhibit UID that is a GUID (Franchise, 3.2.0 player log): the game gets back the value it gave
+check(Kin.tExhibitUids["x78"] == 78, "the scan keeps each exhibit animal's UID")
+-- a table stands in for a native GUID value
+Kin.tExhibitUids["x01a1583f-37da-76dd-b9aa-ea664ebd5888"] = { guid = "01a1583f-37da-76dd-b9aa-ea664ebd5888" }
+tCalls = {}
+fireUI(oHUD, "PZ2QoL_KinContracept", "x01a1583f-37da-76dd-b9aa-ea664ebd5888", true)
+check(#calls("ExhibitContracept") == 1 and rawequal(calls("ExhibitContracept")[1].tArgs[1], Kin.tExhibitUids["x01a1583f-37da-76dd-b9aa-ea664ebd5888"]) and kinStates() == "contracept", "a GUID exhibit UID: contraception set, " .. kinStates())
+tCalls = {}
+fireUI(oHUD, "PZ2QoL_KinContracept", "x01a1583f-0000", true)
+check(#calls("ExhibitContracept") == 0 and kinStates() == "failed", "an exhibit id the scan never saw: refused, nothing sent")
 tCalls = {}
 fireUI(oHUD, "PZ2QoL_KinLocate", "3")
 check(#calls("Camera") == 1 and calls("Camera")[1].tArgs[2] == 333 and #calls("InfoPopup") == 1, "locate: camera to the animal's locate entity, info panel opened")

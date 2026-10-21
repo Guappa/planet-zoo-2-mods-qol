@@ -87,6 +87,8 @@ export const RESULT_WORDS = Object.freeze({
     nopage: 'no fresh report from the page (nothing sent)',
     rehome: 'the game offers only Rehome for it',
     unconfirmed: 'not confirmed: check storage',
+    // taking listings off the market (My listings, docs/DESIGN-reprice.md)
+    notlisted: 'not on the market any more',
 });
 
 export const STEP_WORDS = Object.freeze({
@@ -97,6 +99,7 @@ export const STEP_WORDS = Object.freeze({
     send: 'Sending the listing…',
     confirm: 'Waiting for the game to confirm…',
     gone: 'Waiting for it to leave storage…',
+    unconfirm: 'Waiting for it to come off the market…',
     pause: 'Pausing before the next one…',
 });
 
@@ -773,7 +776,7 @@ export function normalizeState(s) {
 
 // Counts of a run's results.
 export function tally(state) {
-    const t = { total: 0, pending: 0, working: 0, listed: 0, checked: 0, traded: 0, released: 0, unconfirmed: 0, skipped: 0, refused: 0, timeout: 0, stopped: 0, earned: 0, kinds: {} };
+    const t = { total: 0, pending: 0, working: 0, listed: 0, checked: 0, traded: 0, released: 0, unconfirmed: 0, unlisted: 0, skipped: 0, refused: 0, timeout: 0, stopped: 0, earned: 0, kinds: {} };
     if (!state) return t;
     for (const r of state.results) {
         t.total++;

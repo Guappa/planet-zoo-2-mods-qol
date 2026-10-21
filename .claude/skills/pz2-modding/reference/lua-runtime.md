@@ -247,3 +247,63 @@
 - A mod DLL loaded with `package.loadlib` can start its own thread from an exported function (never from `DllMain`). That thread can write a `.lua` file, and game Lua reads it back with `loadfile` or `dofile`, the read taking ~0 ms. This is the return channel the exe's missing Lua C API otherwise rules out. Data goes in through the spelling channel (`debugging.md`).
 - Probe: `pz2qol.probe.lua` and `tools/trace/pz2_probe.c`, in the native-helper worktree. Findings are in `docs/RESEARCH-native-helper.md`.
 - Shipping a DLL is the developer's decision (SKILL.md rules 1 and 6).
+
+## Per-frame entry points and timing them (script profiler, 2026-10-19)
+
+All **offline** (decompiled 1.0.5 GameMain/Content0, Lua tests), unless marked. Used by
+`pz2qol.profiler.lua` / `pz2qol.profcore.lua` (in-game check pending).
+
+- **The frame, from Lua:** `BaseGame.AdvancePreWorld(dt)` runs the game environment's
+  `OnPhase("Advance", true, dt)` once a frame (then `OnAdvancePreWorldScript`); `BaseGame.Advance(dt)`
+  runs `OnAdvance` (`Game.GameScript` subclasses BaseGame). Each world script: `World.AdvanceWhileRunning`
+  = `env:Update()` + `OnPhase("AdvanceWhileRunning")` + `OnAdvanceWhileRunning`; `World.Advance` =
+  `env:Update()` + `OnPhase("Advance")` + resume of the world's `Run` coroutine
+  (`world.world.lua`). DarwinWorld, MainHUD and StartScreenHUD define `OnAdvance*`.
+  `Worlds.DarwinWorld` is the only park world script (no subclass); its `OnAdvanceWhileRunning(dt)`
+  (→ `mainHUD:OnAdvanceWhileRunning()` → `saveAgent:Advance()`) is a park-only, mode-independent,
+  main-thread tick: BoxRelease uses it (2026-10-20, **offline**). A mode's `Advance` (e.g.
+  `SelectMode`) only runs while that mode is current (`ModeHelper:AdvanceCurrentMode`).
+- **Lua components** (`LuaComponentManagerBase` subclasses: cameras, `Components.UI.*InfoPopup`,
+  input, `ModeHelperComponent`, objectives, fanfare ...) get `Advance(dt, unscaledDt)` from native
+  code; `ModeHelperComponent.Advance` → `ModeHelper:Advance` → the current mode's `Advance` (park
+  modes such as `Editors.Select.SelectMode`). Hub screens (`StartScreen.Globe.*HubMode`) `Advance` too.
+  Whether native code looks `Advance` up on every call (so a class patch reaches it) is a **guess**;
+  the profiler shows it (a wrapped component with 0 calls = cached by native code).
+- **Managers' phase methods are cached:** `Environment._ConstructPhaseFunctionList(sPhase)` builds
+  closures over `fnPhase = tManager[sPhase]` and `OnPhase(..., bCache=true)` keeps them in
+  `env.tPhaseFunctionCache[sPhase]`. A method patched after that is never called. Fix: patch the
+  module, then `env.tPhaseFunctionCache = {}` (what `Environment.Update` itself does when phase
+  dependencies change); the next `OnPhase` rebuilds the list. Environments: `api.game.GetEnvironment()`
+  (the game's, `tParent == nil`), `api.world.GetWorldAPIs().environment` (the world's, `tParent` = the
+  game's), and every `self` seen in an `Environment.OnPhase` wrapper. Skip one with
+  `bShutdownStarted`. In debug builds (`IsDebugAllowed`, false in retail) each closure also calls
+  `api.debug.StartTimer/EndTimer(sManagerName .. " OnPhase " .. sPhase)`.
+- **Classes copy their base's functions** (`Common.Object.class`: `copy_table` of the super into
+  the new class at `module(..., Object.subclass(Base))`, then `class.__index = class`). An inherited
+  method is its own field in every subclass, so patching the base after the subclasses exist reaches
+  none of them; patch each loaded subclass (the profiler wraps fields with `rawget`, per module).
+  `SUPER.Advance(self)` calls go through the base's field.
+- **Timer:** `api.time.GetPerformanceTimer()`, `DiffPerformanceTimers(t1, t0)`,
+  `PerformanceTimeToMilliseconds(diff)` (the game's own timing uses Diff, `environment.lua`,
+  `database.main.lua`). The profiler tries Diff, then plain subtraction (integer timer), then ms
+  minus ms, and logs which (`prof caps` / `prof start`: `timer`, `timerType`).
+- **No `debug` library in retail (proven 2026-10-19, Y:, 1.0.5):** `prof caps debug=false
+  getinfo=false sethook=false`, so no sampling profiler; wrapping is the only way. `diff=true`,
+  `gc=true` (`collectgarbage("count")` works), timer is an integer (`timerType=integer`).
+- **Script profiler result (proven 2026-10-19, Y:, large Franchise zoo):** frame 23.4 ms avg
+  (43 fps, worst 48 ms); game Lua 2.4 ms (~10%), page JS 0.12 ms, **native rest 20.9 ms (~89%)**.
+  Top Lua rows are each < 0.3 ms/frame (main HUD UpdateDisplay, select mode raycasts, input,
+  day/night blend, notification manager); PZ2QoL's own Lua ~0.16 ms/frame plus the profiler's own
+  ~0.29 ms. Rare spikes: DarwinEnvironment phase 11 ms, `pz2qol.kin:Encode` 7.5 ms, kin JS chunk
+  6 ms. In-game wrapper cost 0.27–0.29 µs/call; Deep hooks ~33 200 functions, normal 878.
+  So low FPS is not script-bound: it is native sim/render/sync.
+- **Wrapping cost** (offline, cobra-tools' 32-bit Lua 5.3, this PC): ~0.6 µs per timed call
+  (two timer calls, the bookkeeping, a `pcall` around it); a stopped profiler leaves no wrapper.
+  The profiler calibrates it in game at Start and shows µs/call and ms/frame. Functions called more
+  than 3 000 times in one frame are unhooked again.
+- **Wrapper rules that keep the game's behaviour:** the original is called outside any `pcall` (its
+  errors and tracebacks reach the game unchanged; only the bookkeeping is in a `pcall`); results
+  pass through a vararg helper (`return finish(..., fn(...))`); nesting is a depth counter, and an
+  error or a yield leaves a level open, so the depth is put back at the frame mark (the anchor is
+  always called at the same depth). Samples of a call that spans more than one frame (a yield) are
+  dropped.

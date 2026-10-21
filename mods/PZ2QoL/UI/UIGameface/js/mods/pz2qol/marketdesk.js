@@ -47,11 +47,16 @@ import { breadcrumb, reportError } from '/js/mods/pz2qol/errors.js';
 import { dlog, logPriceDecision } from '/js/mods/pz2qol/debuglog.js';
 import { translate } from '/js/common/core/Localisation.js';
 import { getKinSettings } from '/js/mods/pz2qol/kin.js';
+import { listingsCounts, listingsHidden, listingsKey, listingsSig, renderListings } from '/js/mods/pz2qol/marketreprice.js';
+import { getLedger, getReprice, isRepriceReq, onRepriceChanged, repriceActive } from '/js/mods/pz2qol/repricerun.js';
+import { strandedItems } from '/js/mods/pz2qol/repricecore.js';
 import {
     btn as kitBtn, closeButton, closeOtherPanels, makeGuard, makeScroll, placePanel, refreshBars, registerPanel, restoreScroll, speciesName, trunc,
 } from '/js/mods/pz2qol/kinpanel.js';
 
 const READ_MS = 1000;
+const RULES_SELL = 'Nothing is listed until you press List · one animal at a time, each confirmed by the game · a pause between listings · Stop any time';
+const RULES_LISTINGS = 'Nothing changes until you confirm a reprice · each listing taken off, then listed again, one at a time, each confirmed by the game · Stop any time';
 const guard = makeGuard('Market desk');
 const btn = (...args) => kitBtn(guard, ...args);
 
@@ -125,6 +130,9 @@ const D = {
     mode: 'list',
     sheet: null,             // the confirmation sheet: { mode, info, rows, done, openedAt }
     labels: new Map(),       // guid -> label of the animals a quick run took (they leave storage)
+    // 'sell' (storage animals to list) | 'listings' (My listings: staleness
+    // and reprice, marketreprice.js); kept while the page lives
+    view: 'sell',
 };
 
 // The live acceptance: a mode is open for more than one animal at a time
@@ -401,8 +409,38 @@ function chosenRows() {
 function resultsByGuid() {
     const s = getEngineState();
     const m = new Map();
-    if (s) for (const r of s.results) m.set(r.guid, r);
+    // a reprice's runs are shown under My listings
+    if (s && !isRepriceReq(s.req) && s.mode !== 'unlist') for (const r of s.results) m.set(r.guid, r);
     return m;
+}
+
+function setView(view) {
+    const v = view === 'listings' ? 'listings' : 'sell';
+    if (v === D.view) return;
+    if (D.sheet) closeSheet('view');
+    if (v === 'sell') listingsHidden();
+    D.view = v;
+    dlog('desk', 'view', { view: v });
+    if (v === 'listings') breadcrumb('desk_listings');
+    queueRender();
+}
+
+// The two views, under the title: Sell from storage | My listings (n, stale)
+function viewTabs() {
+    let c = { n: 0, stale: 0, left: 0 };
+    try {
+        c = listingsCounts(D.rows);
+    }
+    catch (e) {
+        // counts only
+    }
+    const tab = (v, label, extra, title) => h(`div.PZ2QoL_mdTab${D.view === v ? '.on' : ''}`, { 'data-view': v, title, onClick: guard('View', () => setView(v)) },
+        h('span', { text: label }), extra);
+    return [
+        tab('sell', 'Sell from storage', null, 'List storage animals on the market'),
+        tab('listings', `My listings · ${c.n}`, c.left ? h('span.PZ2QoL_mdTabBadge.left', { text: `${c.left} off` }) : c.stale ? h('span.PZ2QoL_mdTabBadge', { text: `${c.stale} stale` }) : null,
+            'Your animals on the market now: which are stale, and repricing them (take off, list again at a new price)'),
+    ];
 }
 
 // --------------------------------------------------------------- actions
@@ -719,12 +757,14 @@ function ensureRoot() {
     el.scope = h('div.PZ2QoL_mdNotice.warn.hidden');
     el.status = h('div.PZ2QoL_kpStatus');
     el.check = h('div.PZ2QoL_mdCheck');
+    el.tabs = h('div.PZ2QoL_mdTabs');
     // the quick trade / release confirmation, over the desk
     el.sheet = h('div.PZ2QoL_mdSheet.hidden');
     for (const ev of ['mousedown', 'click', 'wheel']) el.sheet.addEventListener(ev, e => e.stopPropagation());
     const head = h('div.PZ2QoL_kpHead', null,
         h('div.PZ2QoL_kpLogo.desk'),
         h('div.PZ2QoL_kpTitles', null, h('div.PZ2QoL_kpTitle', { text: 'Market desk' }), el.sub),
+        el.tabs,
         h('div.PZ2QoL_kpFlex'),
         el.engine,
         el.check,
@@ -751,7 +791,7 @@ function ensureRoot() {
         el.notice,
         h('div.PZ2QoL_mdBody', null, el.rail, el.main, el.side),
         h('div.PZ2QoL_kpFoot', null,
-            h('div.PZ2QoL_mdRules', { text: "Nothing is listed until you press List · one animal at a time, each confirmed by the game · a pause between listings · Stop any time" }),
+            el.rules = h('div.PZ2QoL_mdRules', { text: RULES_SELL }),
             h('div.PZ2QoL_kpFlex'), el.status),
         el.sheet);
     root.addEventListener('mousedown', e => e.stopPropagation());
@@ -800,15 +840,26 @@ function renderAll(force = false) {
             getKinSettings().gameSpeciesNames !== false,
             D.unfilter, D.scope && D.scope.species,
             D.mode, isAccepted('quicktrade'), isAccepted('release'), refusedOption(),
+            D.view, D.view === 'listings' ? listingsSig() : '', (() => {
+                const rp = getReprice();
+                return rp ? `${rp.phase}|${strandedItems(rp).length}` : '';
+            })(),
         ]);
         if (!force && sig === D.renderSig) return;
         D.renderSig = sig;
         renderHead();
         renderScope();
         renderNotice();
-        renderRail();
-        renderMain();
-        renderSide();
+        if (D.view === 'listings') {
+            renderListings({ rail: D.el.rail, main: D.el.main, side: D.el.side }, {
+                guard, btn, rows: D.rows, notice, queueRender, pace: D.pace, root: D.root, boxes: D.boxes, segmented, paceMs: getPaceMs('lister'),
+            });
+        }
+        else {
+            renderRail();
+            renderMain();
+            renderSide();
+        }
         setTimeout(() => refreshBars(D.boxes), 0);
     }
     catch (e) {
@@ -824,11 +875,14 @@ function renderHead() {
     const sellable = counts.reduce((n, c) => n + c.sellable, 0);
     const quick = counts.reduce((n, c) => n + c.quick, 0);
     const listed = counts.reduce((n, c) => n + c.listed, 0);
+    clear(el.tabs);
+    for (const n of viewTabs()) el.tabs.appendChild(n);
     setText(el.sub, isFranchise()
         ? `${fmtInt(D.rows.length)} animals in storage · ${fmtInt(sellable)} sellable${quick ? ` · ${fmtInt(quick)} Quick trade only` : ''} · ${fmtInt(listed)} on the market`
         : 'Listing animals is only available in Franchise mode.');
     clear(el.check);
-    if (D.caps) el.check.appendChild(checkButton());
+    if (D.caps && D.view === 'sell') el.check.appendChild(checkButton());
+    if (el.rules) setText(el.rules, D.view === 'listings' ? RULES_LISTINGS : RULES_SELL);
     clear(el.engine);
     if (!D.caps) return;
     el.engine.appendChild(h(`div.PZ2QoL_mdEnginePill.${usable ? 'ok' : 'fallback'}`, {
@@ -1328,7 +1382,7 @@ function quickSide(el, s, running) {
             title: !isFranchise() ? 'Franchise only' : busy ? 'A run or market check is going' : 'Opens a confirmation; nothing is sent until you press Confirm there',
         }));
     }
-    if (s) el.appendChild(runCard(s));
+    if (s && !(isRepriceReq(s.req) || s.mode === 'unlist')) el.appendChild(runCard(s));
 }
 
 function renderSide() {
@@ -1388,7 +1442,17 @@ function renderSide() {
                 : stale.length ? 'Check market prices first (the button above)' : 'Lists the ticked animals at their recommended prices, one at a time',
         }));
     }
-    if (s) el.appendChild(runCard(s));
+    if (s && (isRepriceReq(s.req) || s.mode === 'unlist')) el.appendChild(repriceNote());
+    else if (s) el.appendChild(runCard(s));
+}
+
+// The engine is busy with a reprice (My listings): a pointer there.
+function repriceNote() {
+    const active = repriceActive();
+    return h(`div.PZ2QoL_mdRun.${active ? 'running' : 'done'}`, null,
+        h('div.PZ2QoL_mdRunHead', null, h('span', { text: active ? 'Repricing your listings…' : 'Reprice' })),
+        h('div.PZ2QoL_mdRunStep', { text: active ? 'Listing waits until it is done. See My listings.' : 'See My listings for how it went.' }),
+        btn('Open My listings', null, () => setView('listings'), { cls: 'small' }));
 }
 
 function runCard(s) {
@@ -1576,6 +1640,11 @@ export function openMarketDesk(opts = {}) {
         closeSheet('open');
         if (D.mode !== 'list') D.chosen.clear();
         D.mode = 'list';
+        // opts.view: 'listings' opens My listings; listings a reprice left
+        // off the market open it too (they need listing again)
+        const rp = getReprice();
+        if (opts.view === 'listings' || opts.view === 'sell') D.view = opts.view;
+        else if (rp && strandedItems(rp).length && !repriceActive()) D.view = 'listings';
         if (D.scope && D.scope.species) {
             // another species than last time: no ticks it does not show (setFilters' rule)
             if (D.filters.species !== D.scope.species) D.chosen.clear();
@@ -1614,6 +1683,7 @@ export function openMarketDesk(opts = {}) {
                 readRows(false);
             }));
             D.unsub.push(onMarketCheckChanged(() => queueRender()));
+            D.unsub.push(onRepriceChanged(() => queueRender()));
             D.unsub.push(onListerSettingChanged(() => {
                 D.readSig = '';
                 readRows(false);
@@ -1642,6 +1712,7 @@ export function closeMarketDesk() {
     try {
         dlog('desk', 'close', { cleared: D.cleared || undefined, running: engineRunning() || undefined, ticked: D.chosen.size });
         closeSheet('close');
+        listingsHidden();
         D.open = false;
         clearInterval(D.timer);
         D.timer = 0;
@@ -1672,6 +1743,13 @@ let installed = false;
 export function installMarketDesk() {
     if (installed) return true;
     installed = true;
+    // the listing ledger (when the desk listed each animal) from now on
+    try {
+        getLedger();
+    }
+    catch (e) {
+        // My listings assumes the listing length then
+    }
     document.addEventListener('keydown', e => {
         if (!D.open) return;
         // the sheet: Esc closes it only; Enter confirms
@@ -1686,6 +1764,12 @@ export function installMarketDesk() {
                 e.stopPropagation();
                 confirmSheet('key');
             }
+            return;
+        }
+        // My listings' confirmation sheet: its own Esc / Enter
+        if (D.view === 'listings' && listingsKey(e)) {
+            e.preventDefault();
+            e.stopPropagation();
             return;
         }
         if (e.key !== 'Escape' && e.keyCode !== 27) return;

@@ -11,6 +11,7 @@ import { chip, collapser, next, safe, segmented, setChip } from '/js/mods/pz2qol
 // (segmented is used for sex/age)
 import { clear, h, icon, setClass, setText, tierOf } from '/js/mods/pz2qol/ui.js';
 import { breadcrumb, reportError } from '/js/mods/pz2qol/errors.js';
+import { gameOnTop } from '/js/mods/pz2qol/cover.js';
 import { zooKinCounts, zooKinInfo } from '/js/mods/pz2qol/kinzoo.js';
 import { getKinModel, isBreedingHeatmapOn, onKin, setBreedingHeatmap } from '/js/mods/pz2qol/kin.js';
 import { habitatByName } from '/js/mods/pz2qol/kincore.js';
@@ -263,8 +264,9 @@ function reserve(px) {
 
 function place() {
     tick++;
-    // a game popup (Compare Mates, Genealogy) opens over the management screen
-    const popupOpen = !!document.querySelector('.PopupActionsModule_root.show');
+    // a game popup (Compare Mates, Genealogy), modal or the Zoopedia opens
+    // over the management screen
+    const popupOpen = gameOnTop();
     const r = popupOpen ? null : visible(document.querySelector('.ManagementAnimals_root'));
     if (!r) {
         if (bar) bar.style.display = 'none';

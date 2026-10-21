@@ -6,7 +6,8 @@ Run all of these before installing a build.
 |---|---|---|
 | Unit (JS logic) | `node --test tests/scores.test.mjs tests/pricing.test.mjs tests/zoo.test.mjs` | Gene and breeder scores, storage and zoo filters, pricing |
 | Unit (habitat planner) | `node --test tests/habplanner.test.mjs` | Mixed Habitat Planner rules (`apps/habitat-planner/public/core.js`), synthetic species |
-| Lua behaviour | `<cobra-tools>/modules/formats/utils/luadec/lua.exe tests/lua/test_pz2qol.lua mods/PZ2QoL/Main/` (and `tests/lua/test_storagesend.lua`, `tests/lua/test_lister.lua`, `tests/lua/test_boxtrace.lua`) | Require hook, view redirects (FrontEnd, HUD), error receiver, overlay unload order, ModeHelper sweep and the Move-screen guard (section 13), autosave breadcrumbs (section 14), the player store of habitat assignments (end of section 11: offline/Franchise zoo keys, wait/noplayer, chunks, 64 KB cap, debounced save, old park-save import; section 16: probe cleanup; mocks the game's MainPlayer GetData/SetData), Auto mode's gate `PZ2QoL_AutoGate` (section 17, in a function because the main chunk is at Lua's 200-local limit and a `do` block's locals still count), against a mock `api` |
+| Lua behaviour | `<cobra-tools>/modules/formats/utils/luadec/lua.exe tests/lua/test_pz2qol.lua mods/PZ2QoL/Main/` (and `tests/lua/test_storagesend.lua`, `tests/lua/test_lister.lua`, `tests/lua/test_boxtrace.lua`, `tests/lua/test_boxrelease.lua`: stuck-aquarium release and `GameClock` on a mock calendar at 1x/5x/paused) | Require hook, view redirects (FrontEnd, HUD), error receiver, overlay unload order, ModeHelper sweep and the Move-screen guard (section 13), autosave breadcrumbs (section 14), the player store of habitat assignments (end of section 11: offline/Franchise zoo keys, wait/noplayer, chunks, 64 KB cap, debounced save, old park-save import; section 16: probe cleanup; mocks the game's MainPlayer GetData/SetData), Auto mode's gate `PZ2QoL_AutoGate` (section 17, in a function because the main chunk is at Lua's 200-local limit and a `do` block's locals still count), against a mock `api` |
+| Script profiler | `node --test tests/profiler.test.mjs`; `lua.exe tests/lua/test_profiler.lua mods/PZ2QoL/Main/`; harness `kin_profiler.mjs` | JS: rolling-window maths, merge/sort/filter, format, frame summary, strip, stack labels, `engine.on/off` wrapping (`profhooks.js`, no game imports so node can load it). Lua: `ProfCore` per-frame maths and window roll, JSON; the profiler against a mock game (cached phase lists emptied and rebuilt, manager/component/PZ2QoL rows, self time, error pass-through and depth repair, hot unhook, late managers, snapshot log lines, reset, page-ping stop, restore on Stop, Deep, no-timer start refused, sampler via `debug.sethook`). Harness: panel opens from the dock, Start options, tiles/strip/table from a fake report, sort, group filter, sampler tab, snapshot, compact, close stops |
 | Lua syntax | `luac.exe -p <file>` (same folder) | Syntax only |
 | Module load | `cd tests/uiharness && node probe_imports.mjs` | Every UI module imports in a real browser (`node --check` misses errors in these ES modules) |
 | Browser harness | `node tests/uiharness/run.mjs [--no-vanilla] [--jobs N]` | See below |
@@ -265,6 +266,27 @@ Run all of these before installing a build.
   `listercore.test.mjs` (the job header, the note, the summary, `refusedGuids`, quick eligibility of market animals); harness
   `desk_refused.mjs` (the option and pref, the up-front note and List label, the job header, the run card, release's
   `refusedmax=1` and acceptance; it fakes the market check itself) and `desk_quicktrade.mjs` ("Quick trade the 2 refused").
+- My listings / reprice (2026-10-19, `docs/DESIGN-reprice.md`): `node --test tests/reprice.test.mjs`
+  (`repricecore.js`: the clock (ledger / inferred / assumed), own listings never compared, stale /
+  not yet stale (time weight) / healthy keep / underpriced / no data / expiring, the 85 % floor of
+  the suggestion, the strategies and floor, overrides and the preview, the job texts, the run's
+  counts / stranded / summary, the ledger, sort / filter / counts). Lua `test_lister.lua` section 23
+  (mode `unlist`: caps, refusals without the native / page id / online, three taken off with a
+  Cancel each and no arguments, not listed skipped, no page report never sent, another selection at
+  the send, the native doing nothing (timeout, the run goes on), a server error shortening the wait,
+  sold meanwhile (`gone`), Stop while waiting, a reshuffled key; the mock Cancel acts on
+  `tNative.tSelection[1]`). Harness `desk_reprice.mjs` (fake engine with `unlist` jobs; seeds 4
+  listings and 10 comparables; tab badge, verdicts, the working drawer, own price, Tick stale,
+  Undercut 5 %, preview totals, the sheet (Esc, Confirm), both jobs in order with the new prices,
+  the last-run line, a Stop after the first take-off, List the 1 again, layout). Pitfall: dummy
+  storage rows carry a random `colormorphLabel`, which prices them as colour morphs (×2): set it
+  to '' on seeded rows.
+  Quick trade / release of listings: `reprice.test.mjs` (`quickPreview` over `quickSheet`, the
+  first-run limit, a quick run's counts / stranded / summary); Lua section 23 K (a quick job stops
+  at a listed animal; after the take-off the same animal is traded); harness `desk_reprice.mjs`
+  step 7 (the action switch, the money, the New price column, the red sheet, take-off then quick
+  job, a stop leaving one with "Quick trade the 1 again"; the fake listing run sends verdicts with
+  quick prices). Screenshots `mrp_7_quick`, `mrp_8_quick_sheet`, `mrp_9_quick_left`.
 - "Find a habitat": `node --test tests/storagesend.test.mjs` (`storagesendcore.js`: ranking, skip
   reasons, the one-at-a-time run with fake game and clock: pauses, 8 s after a refusal online, busy
   wait, Stop); Lua `tests/lua/test_storagesend.lua` (same `lua.exe` command; arm/take/disarm/expiry/
@@ -441,3 +463,8 @@ Run all of these before installing a build.
 - Pitfall: a worktree-isolated Claude session refuses shell commands whose text contains "git"
   anywhere, including the scratchpad path (`C--Github-...`). Keep helper scripts under the
   worktree's ignored `build/` folder and run them by relative path.
+
+- **Git Bash pitfall (2026-10-19):** `node run.mjs --out /c/Users/...` resolves to `C:\c\Users\...`
+  (Node's `path.resolve` doesn't know MSYS paths). Pass `--out C:/Users/...`.
+- `kin_launcher.mjs` accepts 3 or 4 dock buttons since the profiler button (it is dropped first when
+  the alert column leaves no room).

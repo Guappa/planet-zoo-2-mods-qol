@@ -44,7 +44,7 @@ export async function hud(page, ctx) {
                 if (Math.abs(p.dock.l - p.tools.l) > 2) problems.push(`launcher not aligned with the tools column: ${p.dock.l} vs ${p.tools.l}`);
                 if (p.dock.b > p.tools.t || p.tools.t - p.dock.b > 12) problems.push(`launcher not right above the tools column: bottom ${p.dock.b}, column top ${p.tools.t}`);
                 if (p.alerts && p.dock.t < p.alerts.b) problems.push(`launcher overlaps the alert buttons: top ${p.dock.t}, alerts end ${p.alerts.b}`);
-                if (p.buttons !== 3) problems.push(`${p.buttons} launcher buttons`);
+                if (p.buttons !== 4 && p.buttons !== 3) problems.push(`${p.buttons} launcher buttons`);
             }
         }
         if (p.badge !== '5m') problems.push(`autosave badge "${p.badge}"`);

@@ -456,6 +456,11 @@ Hub._OnModFrontEndReady = function(self, oUI)
 	if StorageFetch then
 		pcall(StorageFetch.Attach, StorageFetch, oUI)
 	end
+	-- the script profiler (off until the player starts it)
+	local Profiler = (CoreT and CoreT.Profiler) or global.package.loaded["pz2qol.profiler"]
+	if Profiler then
+		pcall(Profiler.Attach, Profiler, oUI)
+	end
 	-- once per session: remove what the 2026-10-16 persistence probe left
 	-- in the player save (PZ2QoL.Probe and a 12 KB PZ2QoL.Big)
 	pcall(function()

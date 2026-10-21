@@ -20,10 +20,20 @@
 --  The release is the game's own Unbox button: ClaimBoxing, then
 --  UnboxAnimal (components.ui.animalinfopopup.lua, HabitatUtils.
 --  UnboxAllAnimalsInHabitat). One animal at a time, nGapSeconds apart,
---  from SelectMode.Advance (the park's main mode, where the game's own
---  buttons run; not the worker-thread manager tick).
+--  on the main thread (not the worker-thread manager tick), driven by
+--  two ticks: DarwinWorld.OnAdvanceWhileRunning (the park world, every
+--  frame whatever the mode) and SelectMode.Advance (the park's main
+--  mode; brings the scaled frame time). Until 2026-10-20 only
+--  SelectMode drove it, and in game (Y:, 3.2.0) it let nothing out after
+--  the player left a park and loaded one again in the same launch.
+--  A new park is the HUD's PZ2QoL_ReleaseSet (sent on every park's
+--  HUD), not a changed world-API table.
 --  An animal boxed again soon after each of nMaxQuick releases is left
 --  alone for nRestSeconds and the page shows a Needs-you alert.
+--  All its times are game time (PZ2QoL.GameClock: the park calendar),
+--  so a stuck animal waits as long in the park at 5x as at 1x and
+--  nothing happens while paused. Real-time floors (nMinScanReal,
+--  nMinGapReal) keep scans and releases spaced at top speed.
 --
 --  JS -> Lua  PZ2QoL_ReleaseSet(bOn)
 --  Lua -> JS  PZ2QoL_ReleaseEvent(sKind, nId, sSpecies, nCount)
@@ -41,22 +51,35 @@ local table    = global.table
 
 local BoxRelease = module(...)
 
+-- game seconds (seconds at 1x speed)
 BoxRelease.bOn = true
-BoxRelease.nScanSeconds = 3
-BoxRelease.nWaitSeconds = 30    -- stuck this long before the mod lets it out
+BoxRelease.nScanSeconds = 2
+BoxRelease.nWaitSeconds = 20    -- stuck this long before the mod lets it out
 BoxRelease.nGapSeconds = 2      -- between two releases
 BoxRelease.nQuickSeconds = 120  -- boxed again within this after a release: "quick"
 BoxRelease.nMaxQuick = 3        -- quick re-boxings before the mod gives up for a while
 BoxRelease.nRestSeconds = 600
+-- real seconds: the least time between two scans / two releases at any speed
+BoxRelease.nMinScanReal = 0.5
+BoxRelease.nMinGapReal = 0.5
 
-BoxRelease.tStuck = {}     -- e -> first time seen stuck (cleared when not)
-BoxRelease.tHistory = {}   -- e -> { at = last release, quick = n, restUntil = t }
+BoxRelease.tStuck = {}     -- e -> first game time seen stuck (cleared when not)
+BoxRelease.tHistory = {}   -- e -> { at = last release, quick = n, restUntil = t } (game time)
 BoxRelease.tViews = {}
-BoxRelease.nLastScan = 0
+BoxRelease.oClock = nil    -- PZ2QoL.GameClock (Init)
+BoxRelease.sClockSource = nil
+BoxRelease.nLastScan = -1e9
+BoxRelease.nLastScanReal = -1e9
 BoxRelease.nLastRelease = -1e9
-BoxRelease.oAnimals = nil  -- the park's animals API at the last scan (a new park clears the state)
+BoxRelease.nLastReleaseReal = -1e9
+BoxRelease.oAnimals = nil  -- the park's animals API at the last scan (diagnostics only)
+BoxRelease.nApiChanges = 0 -- times it was a different table since the last Set
+BoxRelease.tTicked = {}    -- tick source -> true once logged since the last Set
+BoxRelease.bWorldActive = nil  -- DarwinWorld OnActivate/OnDeactivate (nil: not seen since the last Set)
+BoxRelease.nSummaryReal = 30  -- real seconds between two scan summaries in the trace
+BoxRelease.nLastSummary = -1e9
 
-local function now()
+local function realNow()
 	local bOk, n = pcall(function()
 		return api.time.PerformanceTimeToMilliseconds(api.time.GetPerformanceTimer()) / 1000
 	end)
@@ -137,6 +160,7 @@ BoxRelease._Release = function(self, animals, e, sSpecies, nNow)
 	self.tHistory[e] = tHist
 	tHist.at = nNow
 	self.nLastRelease = nNow
+	self.nLastReleaseReal = realNow()
 	self:_Mark("release_unboxed")
 	-- no notice for a release (developer, 2026-10-19): only the trace logs it
 	self:_Log("unboxed", { e = e, species = sSpecies, quick = tHist.quick })
@@ -153,10 +177,11 @@ BoxRelease._Scan = function(self, nNow)
 		return
 	end
 	if animals ~= self.oAnimals then
-		-- a new park: entity ids mean other animals now
+		-- not a reset: the park's state is cleared by Set (every park's HUD)
+		if self.oAnimals ~= nil then
+			self.nApiChanges = self.nApiChanges + 1
+		end
 		self.oAnimals = animals
-		self.tStuck = {}
-		self.tHistory = {}
 	end
 	local tHabitats = call(habitat, "GetHabitats")
 	if type(tHabitats) ~= "table" then
@@ -164,13 +189,19 @@ BoxRelease._Scan = function(self, nNow)
 	end
 	local tSeen = {}
 	local tDue = nil
+	local nAquariums, nAnimals, nStuck = 0, 0, 0
 	for _, h in ipairs(tHabitats) do
 		local bAquarium = call(habitat, "IsAquarium", h) == true
+		if bAquarium then
+			nAquariums = nAquariums + 1
+		end
 		local tAnimals = call(habitat, "GetAnimalsInHabitat", h)
 		if type(tAnimals) == "table" then
+			nAnimals = nAnimals + #tAnimals
 			for _, e in ipairs(tAnimals) do
 				if not tSeen[e] and self:_IsStuck(animals, e, bAquarium) then
 					tSeen[e] = true
+					nStuck = nStuck + 1
 					local nFirst = self.tStuck[e]
 					if nFirst == nil then
 						nFirst = nNow
@@ -203,7 +234,15 @@ BoxRelease._Scan = function(self, nNow)
 			self.tStuck[e] = nil
 		end
 	end
-	if tDue ~= nil and nNow - self.nLastRelease >= self.nGapSeconds then
+	-- trace: what a scan sees, after each Set and then while animals are stuck
+	local nReal = realNow()
+	if self.nLastSummary == nil or (nStuck > 0 and nReal - self.nLastSummary >= self.nSummaryReal) then
+		self.nLastSummary = nReal
+		self:_Log("scan", { habs = #tHabitats, aquariums = nAquariums, animals = nAnimals, stuck = nStuck,
+			due = tDue ~= nil, apiChanges = self.nApiChanges, clock = self.oClock and self.oClock.sSource or "none" })
+	end
+	if tDue ~= nil and nNow - self.nLastRelease >= self.nGapSeconds
+		and realNow() - self.nLastReleaseReal >= self.nMinGapReal then
 		-- still listed and stuck this tick: release it now
 		local sSpecies = call(animals, "GetSpecies", tDue)
 		if self:_Release(animals, tDue, sSpecies, nNow) then
@@ -212,15 +251,43 @@ BoxRelease._Scan = function(self, nNow)
 	end
 end
 
-BoxRelease.Tick = function(self)
-	if not self.bOn then
+-- The hub's start screen is up (Kin.SetStartScreen, from pz2qol.hub.lua):
+-- the park may be unloading, and per-world calls on an unloaded park crash
+-- natively (debugging.md). Touch nothing then.
+BoxRelease._StartScreenUp = function(self)
+	local Kin = global.package and global.package.loaded and global.package.loaded["pz2qol.kin"]
+	return type(Kin) == "table" and Kin.bStartScreen == true
+end
+
+-- Every frame from each source: "world" (DarwinWorld) and "select"
+-- (SelectMode, with the frame's scaled delta for the clock). Both may run
+-- in one frame; the clock and the scan are gated by time, not calls.
+BoxRelease.Tick = function(self, nDelta, sSrc)
+	if not self.bOn or self.oClock == nil or self:_StartScreenUp() then
 		return
 	end
-	local nNow = now()
+	if sSrc == "world" and self.bWorldActive == false then
+		return  -- between the park's OnDeactivate and its unload
+	end
+	if sSrc ~= nil and not self.tTicked[sSrc] then
+		self.tTicked[sSrc] = true
+		self:_Log("tick", { src = sSrc })
+	end
+	local nNow = self.oClock:Advance(nDelta)
+	if self.oClock.sSource ~= self.sClockSource then
+		-- the trace shows which clock runs (calendar expected)
+		self.sClockSource = self.oClock.sSource
+		self:_Log("clock", { source = self.sClockSource })
+	end
 	if nNow - self.nLastScan < self.nScanSeconds then
 		return
 	end
+	local nReal = realNow()
+	if nReal - self.nLastScanReal < self.nMinScanReal then
+		return
+	end
 	self.nLastScan = nNow
+	self.nLastScanReal = nReal
 	self:_Scan(nNow)
 end
 
@@ -232,19 +299,62 @@ BoxRelease._PatchSelectMode = function(self, SelectMode)
 	end
 	SelectMode.Advance = function(oMode, ...)
 		local tRes = table.pack(fnAdvance(oMode, ...))
-		local bOk, sErr = pcall(self.Tick, self)
-		if not bOk and not self.bTickErrorLogged then
-			self.bTickErrorLogged = true
-			self:_Log("error", { err = tostring(sErr) })
-		end
+		self:_SafeTick((...), "select")
 		return table.unpack(tRes, 1, tRes.n)
 	end
 	self:_Mark("release_patched")
 end
 
+-- The park world's per-frame script call (World.AdvanceWhileRunning ->
+-- self:OnAdvanceWhileRunning), whatever mode the player is in.
+BoxRelease._PatchWorld = function(self, DarwinWorld)
+	local fnRun = DarwinWorld.OnAdvanceWhileRunning
+	if type(fnRun) ~= "function" then
+		self:_Mark("release_no_world_tick")
+		return
+	end
+	DarwinWorld.OnAdvanceWhileRunning = function(oWorld, ...)
+		local tRes = table.pack(fnRun(oWorld, ...))
+		-- its delta may be unscaled: the clock gets no frame time from here
+		self:_SafeTick(nil, "world")
+		return table.unpack(tRes, 1, tRes.n)
+	end
+	local fnActivate, fnDeactivate = DarwinWorld.OnActivate, DarwinWorld.OnDeactivate
+	if type(fnActivate) == "function" then
+		DarwinWorld.OnActivate = function(...)
+			local tRes = table.pack(fnActivate(...))
+			self.bWorldActive = true
+			return table.unpack(tRes, 1, tRes.n)
+		end
+	end
+	if type(fnDeactivate) == "function" then
+		DarwinWorld.OnDeactivate = function(...)
+			self.bWorldActive = false
+			return fnDeactivate(...)
+		end
+	end
+	self:_Mark("release_world_patched")
+end
+
+BoxRelease._SafeTick = function(self, nDelta, sSrc)
+	local bOk, sErr = pcall(self.Tick, self, nDelta, sSrc)
+	if not bOk and not self.bTickErrorLogged then
+		self.bTickErrorLogged = true
+		self:_Log("error", { err = tostring(sErr), src = sSrc })
+	end
+end
+
+-- From the HUD page: on every park's HUD and on a settings change. Each
+-- park starts over here (entity ids mean other animals in another park).
 BoxRelease.Set = function(self, bOn)
 	self.bOn = bOn ~= false
 	self.tStuck = {}
+	self.tHistory = {}
+	self.tTicked = {}
+	self.bWorldActive = nil
+	self.nApiChanges = 0
+	self.nLastSummary = nil
+	self.bTickErrorLogged = false
 	self:_Mark(self.bOn and "release_on" or "release_off")
 	self:_Log("set", { on = self.bOn })
 end
@@ -263,5 +373,12 @@ end
 
 BoxRelease.Init = function(self, Core)
 	self.Core = Core
+	local bOk, GameClock = pcall(global.require, "PZ2QoL.GameClock")
+	if bOk and type(GameClock) == "table" and type(GameClock.New) == "function" then
+		self.oClock = GameClock.New()
+	else
+		self:_Mark("release_no_clock")
+	end
 	Core:AddModulePatch("Editors.Select.SelectMode", function(t) self:_PatchSelectMode(t) end)
+	Core:AddModulePatch("Worlds.DarwinWorld", function(t) self:_PatchWorld(t) end)
 end

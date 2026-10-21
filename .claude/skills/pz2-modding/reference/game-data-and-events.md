@@ -210,7 +210,7 @@ the game's may print it exactly: deterministic either way, so only compare token
 | `AnimalStorage_SendToZoo` | array of selected row keys | `StorageUISetAnimalsToBeSentToZoo(ids, false)`, then `ShowWorldTransition(true)`: the zoo loads at once. **One event for the whole selection** (the info panel's Send to Zoo, enabled by `actions.sendToZooAllowed`). Whether it is a Franchise server request is **unknown** (native). **offline** |
 | `AnimalStorage_ReturnToZoo` | array of keys | same call with `true` (the round "return to habitat" button, `actions.returnToAllowed` / `returnToTooltip`): in the park each animal gets `RequestTransportToAssignedHabitat`. **offline** |
 | `AnimalStorage_QuickTrade_Cash` / `AnimalStorage_QuickTrade_Credits` / `AnimalStorage_Rehome` (not `_QuickTrade_Rehome`) | array of keys | `StorageUIQuickTradeAnimals` / `StorageUIReleaseAnimalsToWild` / `StorageUIRehomeAnimals`. Sent on the panel's Confirm; see "Quick trade, quick release, rehome" below. **offline** |
-| `AnimalStorage_Cancel` | `"Trade"` | `StorageUICancelAnimalAuction()`: **no arguments, acts on the selection**. `"Move"` does nothing in Lua. **offline** |
+| `AnimalStorage_Cancel` | `"Trade"` | `StorageUICancelAnimalAuction()`: **no arguments, acts on the selection**. `"Move"` does nothing in Lua. **offline**; PZ2QoL's engine calls it directly (mode `unlist`, below) |
 | `SetAnimalMarketScreen` | 0 market / 1 storage | switch hub tab. **Debug player only:** `AnimalMarketModule` registers it only when `isCoherentPlayer()`, so in game it does nothing. **proven** (it broke PZ2QoL's old "Check market prices"; the harness runs detached, where it works) |
 | `AnimalMarketAndStorage_Open_<gameEventID>` | – | what the tab bar sends to Lua to switch the hub mode (market ↔ storage). Sending it without changing the JS tab desyncs the screen. **offline** |
 | `Management_SetManagementIndex` | ManagementSectionID | open a management screen (Animals = 7) |
@@ -417,6 +417,37 @@ Storage-mode Lua handlers: `startscreen.globe.animalstoragehubmode.lua` (`OnItem
   `_source`, never sees them. Trace `lister_desk_*`, `js_desk_scope_cleared|kept`. In-game check
   pending. `Main/pz2qol.lister.lua` `DeskFilters`, `marketdesk.js` `seeAllStorage`,
   `listercore.js` `storageScope` / `nativeFiltersOn`.
+
+## Taking a listing off the market (1.0.5, **offline**, 2026-10-19)
+
+- No "change price" exists: a new price means cancel, then list again. The storage info panel shows
+  Cancel when the selected row is on the market (`auctionTimerSeconds > 0`); it sends
+  `AnimalStorage_Cancel("Trade")` and the hub mode's `OnCancel` calls
+  `api.planetHub.StorageUICancelAnimalAuction()` **with no arguments: it acts on the selection**
+  (`animalstoragehubmode.lua` OnCancel; `AnimalStorageInfoPanel.js` `onSelectCancelMoveOrTrade`,
+  whose debug-player path then sets the row's `auctionTimerSeconds` to −1). Unknown: its server
+  request type and answer, how long the row takes to show it, whether the animal can be listed
+  again at once, and whether it costs anything.
+- What a storage row says about a listing: `auctionTimerSeconds` (time **left**) and
+  `auctionPrice`. Nothing says when it was listed or for how long: PZ2QoL keeps a session ledger
+  of the listings its engine confirmed (`repricerun.js`, `PZ2QoL.listingLedger.v1`), else infers
+  12 h from more than 6 h left, else assumes 12 h.
+- The player's own listings also appear as market rows (price book); compare listings only after
+  removing them (`repricecore.js` `marketPools`, both CC forms of `listingKey`).
+- PZ2QoL: the desk's **My listings** view (`docs/DESIGN-reprice.md`). Engine job mode `unlist`
+  (`pz2qol.lister.lua`): resolve by GUID (must be listed, else skip `notlisted`), clear + select
+  natively, a **fresh page report** of exactly that selection (required: Lua's selection reads
+  never worked in game), in one tick busy / report / `_Holds` / still listed, then the call;
+  confirmed by the row reading not listed twice (first look after 1 s, 30 s timeout; a database
+  error only shortens the wait to 5 s); `gone` if it left storage (sold). Run tied to the page
+  (`R<page>_<n>`), refused offline. Hello caps `unlist`. Then the normal listing job at the new
+  prices. Trace `lister_unlist_*`, `lister_unlisted`. In-game check pending.
+- **No quick action on a listed animal** (1.0.5, **offline**): for a selected row on the market the
+  info panel shows only Cancel (`AnimalStorageInfoPanel.js` `onGetActionsContent`: the Quick trade /
+  Quick release buttons are in the other branch). PZ2QoL's quick job stops at a listed animal
+  (skip `listed`), so My listings takes listings off first, then runs the quick job
+  (`docs/DESIGN-reprice.md`). The engine keeps its last selected animal 60 s (`tLastSel`) so the
+  quick run's data check accepts the same animal's unchanged data right after its take-off.
 
 ## Market data (native `AnimalMarketUIDatastoreManager`)
 
@@ -724,6 +755,18 @@ Trade shortcuts events (`pz2qol.tradejump.lua`, `tradejump.js`):
 - **Speeds:** pause, 1x, 2x, 5x (`windows.mainhud.lua:48` `c_nTimeScales = {1, 2, 5}`,
   `api.time.SetTimeScaler`, `api.time.Pause("World")`). That the calendar stops while paused and
   scales with speed is a **guess** (engine side). `ScenarioManager:GetParkPlayedTime()` is real time.
+- **Frame deltas** (**offline**): `SelectMode.Advance(self, _nDeltaTime, _nUnscaledDeltaTime)`
+  (`editors.select.selectmode.lua`) gets the scaled and the unscaled frame time;
+  `api.time.GetDeltaTime()` / `GetDeltaTimeUnscaled()` read the same anywhere (MainHUD uses them).
+  That the scaled one is 0 while paused is a **guess**.
+- **`PZ2QoL.GameClock`** (`pz2qol.gameclock.lua`, 2026-10-20): the mod's Lua game clock, seconds
+  at 1x. Source: the calendar (`GetTimeOfMonth` months x `GetMonthDurationInSeconds`, as Auto
+  mode), else the scaled frame delta its owner passes in (also when the calendar stands still
+  for 60 s of frame time), else real time. Reads the calendar every 0.25 s real; steps back or
+  faster than 10x count as a jump (load, other park), not time. Lua numbers are 32-bit floats in
+  game, so months count from the first year read (`(Year-base)*12 + Month + Prop`; `Year()` may be
+  a calendar year like 2026, where `Year*12` alone would leave ~0.002-month steps). Used by
+  BoxRelease; `tests/lua/test_boxrelease.lua` section 0.
 - **Animal ages are not calendar time:** `animals:GetAge(e)` is in years, scaled by the per-park
   `park:GetInGameAnimalTimeModifier()` (an in-game option); 1 age year = 1 calendar year only at
   modifier 1. Due dates (`GetDueDate`) come back as `TimeOfMonth`.
