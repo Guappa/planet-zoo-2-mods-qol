@@ -357,7 +357,7 @@ function panelEl(model, species, H) {
         const refused = l ? refusedMoves(l, model, species) : [];
         const bits = [];
         bits.push(para(pinned.length ? `Hands off (${pinned.length}): ${pinned.slice(0, 8).map(a => `${a.name} ${sexMark(a)}`).join(', ')}${pinned.length > 8 ? '…' : ''}.` : 'No animal is marked "hands off". Use an animal card\'s menu on the board to mark one.'));
-        if (held.length) bits.push(para(`Moved by you lately, left where you put them for 2 game years: ${held.slice(0, 8).map(a => `${a.name} ${sexMark(a)}`).join(', ')}${held.length > 8 ? '…' : ''}.`, 'soft'));
+        if (held.length) bits.push(para(`Moved by you lately: ${held.slice(0, 8).map(a => `${a.name} ${sexMark(a)}`).join(', ')}${held.length > 8 ? '…' : ''}. One moved during a run stays put for the rest of it; the next run plans it like any other (hands off keeps one).`, 'soft'));
         if (refused.length) bits.push(para(`The game refused ${refused.length} move${refused.length === 1 ? '' : 's'} three times; Auto mode no longer tries ${refused.length === 1 ? 'it' : 'them'}: ${refused.slice(0, 5).map(r => { const a = model.animals.get(r.id); return `${a ? a.name : r.id} → ${r.to === TRADE ? 'trade centre' : H.placeName(model, r.to)}`; }).join(', ')}.`, 'warn'));
         c.appendChild(section('Left alone', ...bits));
     }
@@ -399,7 +399,7 @@ const boardExtension = {
         const on = getSpeciesAuto(a.species).settings.on;
         if (isAutoPinned(a.id)) return { text: 'hands off', title: 'Auto mode never moves this animal' };
         if (!on) return null;
-        if (isAutoHeld(a.id)) return { text: 'moved by you', title: 'You moved it: Auto mode leaves it here for 2 game years' };
+        if (isAutoHeld(a.id)) return { text: 'moved by you', title: 'You moved it: during a run Auto mode leaves it for the rest of that run; the next run plans it like any other (hands off keeps it)' };
         const e = lastEntry(a.guid);
         if (e && e.o === 'ok' && !e.u && Date.now() - (e.real || 0) < 2 * 3600 * 1000) return { text: 'auto', title: `Auto mode: ${e.r}` };
         return null;

@@ -630,7 +630,7 @@ function noteKinConflicts(model, l) {
 
 // A plan run from the breeding window or the Species board moves animals
 // the way the programme wants them: expected, so not taken for moves made
-// by hand (which lock an animal for AUTO_LIMITS.manualYears).
+// by hand (one moved during a run is left alone for the rest of it).
 function notePlayerRun(r) {
     if (!r || !r.running || r.owner === 'autopilot' || r.owner === 'undo' || !r.moves || r.moves === A.playerRunMoves) return;
     A.playerRunMoves = r.moves;

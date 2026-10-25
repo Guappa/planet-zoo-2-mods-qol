@@ -38,7 +38,7 @@ export const SPECIES_DEFAULTS = Object.freeze({
 });
 
 export const AUTO_LIMITS = Object.freeze({
-    manualYears: 2,             // an animal the player moved stays put this long (years of the park's calendar)
+    manualYears: 2,             // how long an animal the player moved is remembered as moved by hand (years of the park's calendar)
     cooldownYears: 1,           // an animal Auto mode moved stays put this long: as births and
                                 // ageing change the zoo, the programme's best layout shifts, and
                                 // without this it would move some animals back and forth
