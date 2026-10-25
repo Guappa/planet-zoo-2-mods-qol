@@ -62,6 +62,22 @@
   color: var(--kp-kin-ink);
 }
 
+/* Clean up's habitats to tick */
+.PZ2QoL_kb .PZ2QoL_apPick {
+  flex-shrink: 0;
+  flex-direction: column;
+  margin-bottom: 0.25rem;
+  padding: 0.4rem 0.6rem;
+  border-radius: 0.55rem;
+  background-color: var(--qol-card);
+  border-left: 0.22rem solid transparent;
+  cursor: pointer;
+}
+.PZ2QoL_kb .PZ2QoL_apPick:hover { background-color: #FFC5C5; }
+.PZ2QoL_kb .PZ2QoL_apPick.on { border-left-color: var(--qol-olive); background-color: var(--qol-card-2); }
+.PZ2QoL_kb .PZ2QoL_apPickName { font-size: 0.9rem; font-weight: bold; white-space: nowrap; overflow: hidden; }
+.PZ2QoL_kb .PZ2QoL_apPickMeta { margin-top: 0.05rem; font-size: 0.72rem; color: var(--qol-ink-soft); white-space: nowrap; overflow: hidden; }
+
 /* the last runs */
 .PZ2QoL_kb .PZ2QoL_apRuns { flex-shrink: 0; flex-direction: column; }
 .PZ2QoL_kb .PZ2QoL_apRunHead {

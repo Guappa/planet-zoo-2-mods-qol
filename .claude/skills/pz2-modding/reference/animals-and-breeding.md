@@ -946,6 +946,12 @@ What the programme, Auto mode and the Species board keep to; `tests/rules.test.j
   sell advice, in a species that turns elderly at 40 or later (`kinageing.js sellsBeforeElderly`).
   The player sells it; Auto mode never sells.
   Within the server's three years it is never sent at all (see "Trading near elderly").
+- **Clean up** (Auto mode panel) empties the habitats the player ticks, or the whole zoo
+  (`kinautocore.js cleanupRun`, the ledger's `clean`). The whole zoo turns Auto mode off for every
+  species. Habitats leave it on: its breeding plans see none of their animals and put none in
+  (`withoutHabitats`), and once they are empty they are set aside for no species, so Auto mode
+  leaves them empty. A Clean up started, stopped or changed cancels every plan made before it
+  (`kinauto.js planLive`).
 - **Animals rank by the young they give** (`youngQuality`); an animal with a 0 % fertility gene
   never breeds. A breeder whose young would score well below the best pair's waits at the trade
   centre, except as many of each sex as the species has habitats set aside.

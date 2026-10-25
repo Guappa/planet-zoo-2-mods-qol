@@ -21,7 +21,9 @@
 //     hist: { guid: [[name, hid, t], ...] }, habitats it left (newest last)
 //     fails: { 'guid>dest': [n, realMs, t] },   dest: failKey (habitat id, or n:name)
 //     rev: { species: [t, ...] }, stopped: { species: why },
-//     clean: true while the zoo is being cleaned up (cleanupRun instead of breeding),
+//     clean: false, or what Clean up empties (cleanupRun): { zoo: true } (no
+//            breeding anywhere), or { habs: [[name, hid], ...] } (Auto mode
+//            breeds on in the other habitats),
 //     log: [entry], run, clock, seq }
 // entry: { i, t, real, c (run), sp, g, n, sex, a ('move'|'trade'), f, fh,
 //          to, toh, r, st, o ('ok'|'skip'|'wait'), why, u (undone) }
@@ -57,12 +59,40 @@ export function normalizeLedger(raw) {
     for (const k of ['pins', 'manual', 'leave', 'hist', 'fails', 'rev', 'stopped', 'guard']) e[k] = Object.assign({}, obj(raw[k]));
     for (const [sp, v] of Object.entries(obj(raw.std))) if (Array.isArray(v) && v.length === 2 && v.every(Number.isFinite)) e.std[sp] = v.slice();
     for (const [k, v] of Object.entries(obj(raw.ages))) if (Array.isArray(v) && v.length === 2 && v.every(Number.isFinite)) e.ages[k] = v.slice();
-    e.clean = raw.clean === true;
+    e.clean = normalizeClean(raw.clean);
     e.log = Array.isArray(raw.log) ? raw.log.filter(x => x && typeof x === 'object').slice(-LOG_MAX) : [];
     e.run = Number(raw.run) || 0;
     e.clock = Number(raw.clock) || 0;
     e.seq = Number(raw.seq) || 0;
     return e;
+}
+
+function normalizeClean(c) {
+    if (c === true || (c && c.zoo === true)) return { zoo: true };
+    const habs = c && Array.isArray(c.habs)
+        ? c.habs.filter(x => Array.isArray(x) && x.length === 2 && (x[0] || x[1])).map(([n, h]) => [String(n || ''), String(h || '')]) : [];
+    return habs.length ? { habs } : false;
+}
+
+// ------------------------------------------------------------- Clean up
+
+// A Clean up as kept: the whole zoo, or the habitats (habIds: this load's ids).
+export function cleanFor(model, habIds) {
+    if (habIds === 'zoo') return { zoo: true };
+    const habs = (habIds || []).map(id => habRef(model, id)).filter(r => r.n || r.h).map(r => [r.n, r.h]);
+    return habs.length ? { habs } : false;
+}
+
+// The habitats a habitat Clean up empties, as this load's ids (a habitat
+// gone since is left out). -> Set(habitat id), empty for none or the whole zoo
+export function cleanHabitatIds(l, model) {
+    const out = new Set();
+    if (!l || !l.clean || !l.clean.habs) return out;
+    for (const [n, h] of l.clean.habs) {
+        const id = resolveHab(model, n, h);
+        if (id && id !== TRADE) out.add(id);
+    }
+    return out;
 }
 
 // ------------------------------------------------------------- settings

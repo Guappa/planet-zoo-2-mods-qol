@@ -56,9 +56,11 @@ you set a habitat aside for, newborn names and boxing an overdue mother.
 - **Sell advice** (Animal Storage). A chip for the animals the Breeding programme advises letting
   go, cycled by how each can leave: the market, release or Quick trade. **Sellable** cycles every
   stored animal the same three ways.
-- **Clean up zoo** (Auto mode panel). One switch to wind a zoo down for selling: breeding stops,
-  the adults go to the trade centre males first, a pregnant female after her birth and a young one
-  once grown. Elderly and hands-off animals stay and are named.
+- **Clean up** (Auto mode panel). Empties the habitats you tick for selling, or the whole zoo: the
+  adults go to the trade centre males first, a pregnant female after her birth and a young one once
+  grown. Elderly and hands-off animals stay and are named. Auto mode breeds on in the other habitats
+  and puts nothing into these, and once they are empty they are set aside for no species. The whole
+  zoo stops breeding everywhere.
 - **Breeding window: set up habitats.** It opens on the habitat on the game's info panel, or on a
   list of every habitat (empty ones too) to tick, then the species that go there, several at once.
   It searches every species the game knows.

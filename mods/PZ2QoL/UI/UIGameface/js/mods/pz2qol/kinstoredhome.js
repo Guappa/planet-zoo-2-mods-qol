@@ -2,7 +2,7 @@
 // ages in storage: a calf there (born to a mother sent away pregnant) never
 // grows up, and one too old to trade (the server refuses it within three
 // years of elderly) never leaves. For a species of this park the mod moves
-// (on Auto, or every one while Clean up runs), the ones the Storage window
+// (on Auto, or every one while Clean up empties the zoo), the ones the Storage window
 // lists (storedages.js) get one notice per species, kind and zoo load, with
 // one Bring from storage for all of them; at the trade centre Auto mode
 // houses them (youngBackMoves, adultBackMoves). Storage is shared by every

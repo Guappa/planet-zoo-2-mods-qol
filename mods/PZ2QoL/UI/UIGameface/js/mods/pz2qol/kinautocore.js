@@ -526,8 +526,10 @@ export function sireStandard(prev, sires, clock, { margin = YOUNG_MARGIN } = {})
 // A pregnant female waits in her habitat and goes once she has given birth,
 // a young one once it has grown up; one of them waiting at the trade centre
 // goes into a habitat first (the golden rule, mustHouse). Elderly animals
-// (the game won't take them) and hands-off ones stay, named.
-// input: as planAutoRun's. -> planAutoRun's run, with
+// (the game won't take them) and hands-off ones stay, named. With habs, only
+// the animals in those habitats: the rest of the species is Auto mode's.
+// input: as planAutoRun's, and habs (Set of habitat ids, none: the whole
+// zoo). -> planAutoRun's run, with
 // clean: { pregnant, young, elderly: [name], kept: [name], done }
 export function cleanupRun(input) {
     const { model, species } = input;
@@ -537,7 +539,8 @@ export function cleanupRun(input) {
     const clean = { pregnant: 0, young: 0, elderly: [], kept: [], done: false };
     out.clean = clean;
     if (!model || !species) return out;
-    const mine = Array.from(model.animals.values()).filter(a => a.species === species && !a.exhibit && a.alive !== false);
+    const habs = input.habs && input.habs.size ? input.habs : null;
+    const mine = Array.from(model.animals.values()).filter(a => a.species === species && !a.exhibit && a.alive !== false && (!habs || habs.has(String(a.hab))));
     const prep = { out, locked: new Set(Array.from(view.pinned).filter(id => !mustHouse(model.animals.get(id)))), taken: new Set(), view, tradeLeft: input.tradeFree == null ? Infinity : Math.max(0, input.tradeFree) };
     const habitats = Array.from(new Set(mine.map(a => a.hab).filter(Boolean)));
     const endOf = a => (homeOf(a) === TRADE ? null : a.hab || null);
@@ -556,6 +559,23 @@ export function cleanupRun(input) {
     clean.young = mine.filter(a => a.juv).length;
     clean.done = !out.moves.length && !clean.pregnant && !clean.young && !mine.some(mustHouse);
     return out;
+}
+
+// A breeding plan beside a habitat Clean up: the zoo without those habitats'
+// animals (Clean up's to move), the habitats closed to the species and not
+// set aside. -> { model, destinations, assignments }
+export function withoutHabitats(model, destinations, assignments, habs) {
+    if (!habs || !habs.size || !model || !model.snapshot) return { model, destinations, assignments };
+    const animals = model.snapshot.animals.filter(a => !habs.has(String(a.hab)));
+    const rebuilt = buildKinModel(Object.assign({}, model.snapshot, { animals }), Object.assign({}, model.opts || { closeKinship: model.closeKinship }, { ped: model.ped || null }));
+    const closed = { ok: false, reason: 'Clean up is emptying this habitat.' };
+    const bySpecies = {};
+    for (const [sp, d] of Object.entries((destinations && destinations.bySpecies) || {})) {
+        bySpecies[sp] = Object.assign({}, d);
+        for (const h of habs) bySpecies[sp][h] = closed;
+    }
+    const kept = new Map(Array.from(assignments || new Map()).filter(([h]) => !habs.has(String(h))));
+    return { model: rebuilt, destinations: Object.assign({}, destinations, { bySpecies }), assignments: kept };
 }
 
 // --------------------------------------------------------------- watching

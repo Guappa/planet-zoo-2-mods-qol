@@ -10,6 +10,7 @@ loadPages();
 after(stopPageTimers);
 
 const { auto, loadPark } = await autoPark();
+const { assignmentsOf, toggleAssignment } = await import('/js/mods/pz2qol/kinassign.js');
 const A = auto._autopilotInternals();
 
 let park = [
@@ -51,9 +52,9 @@ const sentIds = from => sentSince(from, 'PZ2QoL_KinMove').map(call => call[2]);
 test('one button stops breeding everywhere and empties the zoo, the young and pregnant as they can go', async () => {
     loadPark(park);
     auto.setSpeciesAuto(HIPPO, { on: true });
-    assert.equal(auto.setCleanUp(true), true);
+    assert.equal(auto.setCleanUp('zoo'), true);
     assert.equal(auto.getAutopilotLedger().sp[HIPPO].on, false, 'breeding is off');
-    assert.equal(auto.isCleaningUp(), true);
+    assert.deepEqual(auto.getCleanUp(), { zoo: true });
     const from = triggered.length;
     loadPark(park);
     await until(() => sentIds(from).length >= 2, 'the adults leaving');
@@ -69,6 +70,34 @@ test('one button stops breeding everywhere and empties the zoo, the young and pr
     change('Calf', { juv: false, age: 8 });
     loadPark(park);
     await until(() => sentIds(from).includes('Calf'), 'the grown calf leaving');
-    await until(() => !auto.isCleaningUp(), 'Clean up ending by itself');
+    await until(() => !auto.getCleanUp(), 'Clean up ending by itself');
     assert.equal(auto.getAutopilotLedger().clean, false);
+});
+
+test('a habitat Clean up empties that habitat and ends by itself; Auto mode stays on and nothing goes in', async () => {
+    park = [
+        animal('Cow', Sex.Female, 'H1'), animal('Bull', Sex.Male, 'H1'),
+        animal('Cow2', Sex.Female, 'H2', { par: ['X', 'Y'] }), animal('Bull2', Sex.Male, 'H2', { par: ['Z', 'W'] }),
+        animal('Cow3', Sex.Female, 'H2', { par: ['P', 'Q'] }), animal('Bull3', Sex.Male, 'H2', { par: ['R', 'S'] }),
+    ];
+    const model = loadPark(park);
+    toggleAssignment(model, 'H1', HIPPO, 'H1');
+    toggleAssignment(model, 'H2', HIPPO, 'H2');
+    auto.setSpeciesAuto(HIPPO, { on: true });
+    assert.equal(auto.setCleanUp(['H1']), true);
+    assert.equal(auto.getAutopilotLedger().sp[HIPPO].on, true, 'breeding stays on');
+    assert.deepEqual(auto.getCleanUp().habs, ['H1']);
+    const from = triggered.length;
+    loadPark(park);
+    await until(() => sentIds(from).length >= 2, 'the H1 adults leaving');
+    await until(() => !auto.getCleanUp(), 'Clean up ending by itself');
+    const sent = sentSince(from, 'PZ2QoL_KinMove').map(call => [call[2], call[3]]);
+    assert.deepEqual(sent.slice(0, 2).map(x => x[0]), ['Bull', 'Cow'], 'the male first');
+    assert.ok(!sent.some(([id]) => id.endsWith('2')), 'its own pair stays in H2');
+    assert.ok(!sent.some(([, to]) => to === 'H1'), 'nothing goes into H1');
+    assert.equal(auto.getAutopilotLedger().sp[HIPPO].on, true);
+    assert.deepEqual(assignmentsOf(loadPark(park), 'H1'), [], 'H1 is set aside for nothing now');
+    assert.deepEqual(assignmentsOf(loadPark(park), 'H2'), [HIPPO]);
+    await sleep(1500);
+    assert.ok(!sentSince(from, 'PZ2QoL_KinMove').some(call => call[3] === 'H1'), 'and Auto mode leaves it empty');
 });

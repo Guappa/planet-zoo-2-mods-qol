@@ -836,6 +836,9 @@ js_lister_skip_unnamed
 js_lister_engine_unusable
 js_sell_advice
 js_auto_clean_done
+js_auto_clean_habs
+js_auto_clean_off
+js_auto_clean_on
 js_auto_kin_conflict
 js_bw_programme_facts_again
 js_bw_setup_on

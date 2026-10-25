@@ -4,12 +4,14 @@
 // cards, and its notices (off unless the player turns them on). Design:
 // docs/DESIGN-autopilot.md section 16.
 import {
-    getAutopilotLedger, getAutopilotState, getSpeciesAuto, installAutopilot, isAutoHeld, isAutoPinned, isCleaningUp, onAutopilot,
+    getAutopilotLedger, getAutopilotState, getCleanUp, getSpeciesAuto, installAutopilot, isAutoHeld, isAutoPinned, onAutopilot,
     resumeSpeciesAuto, runSpeciesNow, setAutopilotToastHook, setCleanUp, setSpeciesAuto, speciesChoicesChanged,
     toggleAutoPin, undoEntries,
 } from '/js/mods/pz2qol/kinauto.js';
 import { EVERY_CHOICES, STANDARD_YEARS, dueText, everyText, everyWords, realTimeText, sexMark } from '/js/mods/pz2qol/kinautocore.js';
 import { refusedMoves } from '/js/mods/pz2qol/kinautoledger.js';
+import { getAssignments } from '/js/mods/pz2qol/kinassign.js';
+import { habitatChoices } from '/js/mods/pz2qol/breedwincore.js';
 import { PROGRAMME_STEPS, groupRule } from '/js/mods/pz2qol/kinprogramme.js';
 import { makeupShort, ratioChoice, savedProgStep, stepRatioChoice } from '/js/mods/pz2qol/progprefs.js';
 import { FILL_STEPS } from '/js/mods/pz2qol/kincull.js';
@@ -154,39 +156,92 @@ function doUndo(entries, H) {
     }, e => reportError('ui', 'Auto mode: Undo failed', e));
 }
 
-// Clean up empties the whole zoo: the first click turns the button into its
-// confirmation for CLEAN_ARM_MS, long enough to read what it does.
+// Clean up: the first click lists the zoo's habitats to tick (the species'
+// own ticked), or the whole zoo; a start asks once more for CLEAN_ARM_MS,
+// long enough to read what it does. pick: Set(habitat id) while choosing.
 const CLEAN_ARM_MS = 10000;
-let cleanArmedAt = 0;
+const CLEAN = { pick: null, armed: '', armedAt: 0 };
 
-function cleanUpButton(H) {
-    if (isCleaningUp()) {
+const namesText = names => (names.length > 1 ? `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}` : names[0] || 'the habitats');
+
+function ownHabitats(model, species) {
+    const out = new Set();
+    for (const a of model ? model.animals.values() : []) if (a.species === species && a.hab && !a.exhibit) out.add(String(a.hab));
+    for (const [hab, set] of model ? getAssignments(model) : []) if (set && set.has(species)) out.add(String(hab));
+    return out;
+}
+
+function cleanUpButton(H, model, species) {
+    const running = getCleanUp();
+    if (running) {
         return H.btn('Stop clean up', null, () => {
-            setCleanUp(false);
-            H.notice('Clean up stopped. Breeding stays off until you turn Auto mode on for a species.', 'ok');
+            setCleanUp(null);
+            H.notice(running.zoo ? 'Clean up stopped. Breeding stays off until you turn Auto mode on for a species.' : 'Clean up stopped: what is still in its habitats stays there.', 'ok');
             H.renderAll();
-        }, { title: 'Stop emptying the zoo. A move already sent finishes.' });
+        }, { title: `Stop emptying ${running.zoo ? 'the zoo' : namesText(running.names)}. A move already sent finishes.` });
     }
-    if (Date.now() - cleanArmedAt <= CLEAN_ARM_MS) {
-        return H.btn('Yes, empty the zoo', null, () => {
-            cleanArmedAt = 0;
-            if (!setCleanUp(true)) {
-                H.notice("Clean up can only start once the game's player profile can keep its settings for this zoo. Try again in a moment.", 'warn');
-                H.renderAll();
-                return;
-            }
-            H.notice(getAutopilotState().settling
-                ? 'Clean up is on: breeding is off everywhere. The zoo just loaded, so the first moves come within a minute.'
-                : 'Clean up started: breeding is off everywhere and the zoo empties, one move at a time.', 'ok');
-            H.renderAll();
-        }, { cls: 'danger', title: 'Start Clean up: Auto mode turns off for every species and every adult goes to the trade centre' });
+    if (CLEAN.pick) return H.btn('Cancel', null, () => closeCleanPick(H), { title: 'Back to Auto mode without cleaning up' });
+    return H.btn('Clean up…', null, () => {
+        CLEAN.pick = new Set(ownHabitats(model, species));
+        CLEAN.armed = '';
+        H.renderAll();
+    }, { title: 'Empty habitats for selling, or the whole zoo: the adults go to the trade centre, pregnant and young animals follow when they can' });
+}
+
+function closeCleanPick(H) {
+    CLEAN.pick = null;
+    CLEAN.armed = '';
+    H.renderAll();
+}
+
+function startCleanUp(H, target, names) {
+    const ok = setCleanUp(target);
+    CLEAN.pick = null;
+    CLEAN.armed = '';
+    if (!ok) H.notice("Clean up can only start once the game's player profile can keep its settings for this zoo. Try again in a moment.", 'warn');
+    else if (target === 'zoo') {
+        H.notice(getAutopilotState().settling
+            ? 'Clean up is on: breeding is off everywhere. The zoo just loaded, so the first moves come within a minute.'
+            : 'Clean up started: breeding is off everywhere and the zoo empties, one move at a time.', 'ok');
     }
-    return H.btn('Clean up zoo', null, () => {
-        cleanArmedAt = Date.now();
-        H.notice('Clean up stops breeding for every species and sends every adult to the trade centre, the males first; a pregnant one goes after giving birth, a young one once grown. Click "Yes, empty the zoo" to start.', 'warn');
+    else H.notice(`Clean up started: ${namesText(names)} empt${names.length === 1 ? 'ies' : 'y'}, one move at a time. Auto mode breeds on in the other habitats.`, 'ok');
+    H.renderAll();
+}
+
+// The habitats to tick, with the two starts.
+function cleanPickEl(H, model) {
+    const rows = habitatChoices(model, getAssignments(model)).filter(r => r.animals || CLEAN.pick.has(r.hab));
+    const ticked = rows.filter(r => CLEAN.pick.has(r.hab));
+    const n = ticked.length;
+    const armed = what => CLEAN.armed === what && Date.now() - CLEAN.armedAt <= CLEAN_ARM_MS;
+    const arm = what => {
+        CLEAN.armed = what;
+        CLEAN.armedAt = Date.now();
         H.renderAll();
         setTimeout(() => H.queueRender(), CLEAN_ARM_MS + 100);
-    }, { title: 'Empty the whole zoo for selling: breeding stops for every species, adults go to the trade centre, pregnant and young animals follow when they can' });
+    };
+    const habsTitle = 'Their adults go to the trade centre; Auto mode breeds on in the other habitats';
+    const habsBtn = !n ? H.btn('Tick one or more habitats', null, () => {}, { cls: 'disabled', title: habsTitle })
+        : armed('habs') ? H.btn(n === 1 ? `Yes, empty ${trunc(ticked[0].name, 24)}` : `Yes, empty these ${n}`, null, () => startCleanUp(H, ticked.map(r => r.hab), ticked.map(r => r.name)), { cls: 'danger', title: habsTitle })
+            : H.btn(`Clean up ${n} habitat${n === 1 ? '' : 's'}`, null, () => arm('habs'), { cls: 'primary', title: habsTitle });
+    const zooTitle = 'Auto mode turns off for every species and every adult in the zoo goes to the trade centre';
+    const zooBtn = armed('zoo') ? H.btn('Yes, empty the zoo', null, () => startCleanUp(H, 'zoo'), { cls: 'danger', title: zooTitle })
+        : H.btn('Whole zoo', null, () => arm('zoo'), { title: zooTitle });
+    const list = rows.map(r => h(`div.PZ2QoL_apPick${CLEAN.pick.has(r.hab) ? '.on' : ''}`, {
+        'data-hab': r.hab,
+        onClick: guarded('clean up habitat', () => {
+            if (CLEAN.pick.has(r.hab)) CLEAN.pick.delete(r.hab);
+            else CLEAN.pick.add(r.hab);
+            CLEAN.armed = '';
+            H.renderAll();
+        }),
+    },
+        h('div.PZ2QoL_apPickName', { text: trunc(r.name, 30) }),
+        h('div.PZ2QoL_apPickMeta', { text: `${r.animals} animal${r.animals === 1 ? '' : 's'}${r.species.length ? ` · ${r.species.slice(0, 2).map(sp => trunc(speciesName(sp), 18)).join(', ')}${r.species.length > 2 ? '…' : ''}` : ''}` })));
+    return section('Clean up',
+        para("Tick the habitats to empty for selling. Their adults go to the trade centre, the males first; a pregnant one goes after giving birth, a young one once grown. Elderly and hands-off animals stay. Auto mode breeds on in the other habitats; nothing goes into these while they empty. Whole zoo: breeding stops for every species and every habitat empties."),
+        h('div.PZ2QoL_apRow', null, habsBtn, zooBtn),
+        ...(list.length ? list : [para('No habitat has animals in it.', 'soft')]));
 }
 
 function panelEl(model, species, H) {
@@ -207,8 +262,9 @@ function panelEl(model, species, H) {
     };
     const wrap = h(`div.PZ2QoL_kbProg.PZ2QoL_kbAuto.state_${s.on ? 'on' : 'off'}`, { 'data-species': species, 'data-status': sa.status });
     const head = [];
-    // Clean up runs every species: no breeding controls meanwhile
-    const cleaning = isCleaningUp();
+    // a zoo-wide Clean up runs every species: no breeding controls meanwhile
+    const running = getCleanUp();
+    const cleaning = !!(running && running.zoo);
     if (!cleaning && s.on) {
         head.push(H.btn('Run now', null, () => {
             const r = runSpeciesNow(species);
@@ -226,7 +282,7 @@ function panelEl(model, species, H) {
             breadcrumb('kin_board_auto_on');
         }, { cls: kept ? 'primary' : 'primary.disabled', title: `Run ${name}'s Breeding programme ${everyText(s.every)} and move the animals to match` }));
     }
-    head.push(cleanUpButton(H));
+    head.push(cleanUpButton(H, model, species));
     // the Breeding window has its own tabs and close button
     if (!H.compact) head.push(H.btn('Close', null, H.close, { title: 'Back to the board (Esc)' }));
     wrap.appendChild(h('div.PZ2QoL_kbProgHead', null,
@@ -240,6 +296,15 @@ function panelEl(model, species, H) {
     const box = H.makeScroll('kbAutoBody', { onScroll: (x, y) => H.scroll(y) });
     H.box(box);
     const c = box.content;
+    if (CLEAN.pick && !running) {
+        c.appendChild(cleanPickEl(H, model));
+        wrap.appendChild(box.wrap);
+        H.restoreScroll(box, 0, H.scroll());
+        return wrap;
+    }
+    if (running && running.habs) {
+        c.appendChild(h('div.PZ2QoL_apBanner', null, h('span', { text: `Clean up is emptying ${namesText(running.names)}: the adults go to the trade centre as they can. Auto mode breeds on in the other habitats.` })));
+    }
     if (!kept) c.appendChild(h('div.PZ2QoL_kbProgWarn', { text: st.storage === 'loading' ? 'Reading this zoo\'s data…' : 'Auto mode keeps its settings with this zoo in the game\'s player profile, which can\'t be used right now. Try again in a moment, or after reloading the zoo.' }));
     if (sa.status === 'stopped') {
         c.appendChild(h('div.PZ2QoL_apBanner.warn', null,
@@ -602,7 +667,7 @@ function onToast(kind, d) {
         });
         return;
     }
-    // the end of the zoo-wide Clean up the player started: told even with notices off
+    // the end of the Clean up the player started: told even with notices off
     if (kind === 'cleaned') {
         const names = (x, key) => `${speciesName(x.species)}: ${x[key].join(', ')}`;
         const old = d.left.filter(x => x.elderly.length).map(x => names(x, 'elderly'));
@@ -610,7 +675,10 @@ function onToast(kind, d) {
         const parts = [];
         if (old.length) parts.push(`Elderly, which the trade centre won't take (release them if you want them gone): ${old.join('; ')}.`);
         if (kept.length) parts.push(`Hands off, so left where they are: ${kept.join('; ')}.`);
-        toastNow({ key: 'cleaned', tone: 'ok', title: 'Clean up done', text: parts.length ? `Every other animal is at the trade centre, ready to sell. ${parts.join(' ')}` : 'The zoo is empty: every animal is at the trade centre, ready to sell.' });
+        const where = d.habs && d.habs.length ? namesText(d.habs) : '';
+        if (where && d.unset) parts.push(`${d.habs.length === 1 ? 'It is' : 'They are'} set aside for no species now, so Auto mode leaves ${d.habs.length === 1 ? 'it' : 'them'} empty.`);
+        const empty = where ? `${where} ${d.habs.length === 1 ? 'is' : 'are'} empty` : 'The zoo is empty';
+        toastNow({ key: 'cleaned', tone: 'ok', title: 'Clean up done', text: parts.length ? `${where ? `${where}: every` : 'Every'} other animal is at the trade centre, ready to sell. ${parts.join(' ')}` : `${empty}: every animal is at the trade centre, ready to sell.` });
         return;
     }
     if (!noticesOn()) return;

@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
     calvesToWatch, cleanupRun, finishAutoRun, freshNotices, kinConflicts, locksOf, mergeSellAdvice, movesKeepingKinApart, observeChanges,
-    planAutoRun, prepareAutoRun, scheduledDue, speciesToSwitchOn, waitingAtTradeCentre,
+    planAutoRun, prepareAutoRun, scheduledDue, speciesToSwitchOn, waitingAtTradeCentre, withoutHabitats,
 } from '../../mods/PZ2QoL/UI/UIGameface/js/mods/pz2qol/kinautocore.js';
 import { planProgramme } from '../../mods/PZ2QoL/UI/UIGameface/js/mods/pz2qol/kinprogramme.js';
 import { normalizeStored } from '../../mods/PZ2QoL/UI/UIGameface/js/mods/pz2qol/kincore.js';
@@ -389,6 +389,34 @@ test('clean up takes a pregnant or young animal waiting at the trade centre into
     const run = cleanupRun({ model, species: HIPPO, view: { leaving: ['Due'], pinned: ['Due'] } });
     assert.deepEqual(cleanMoves(run), [['Due', 'H1'], ['Bull', TRADE]]);
     assert.equal(run.clean.done, false);
+});
+
+test('clean up of chosen habitats empties only them: the rest of the species is left to Auto mode', () => {
+    const model = zoo([
+        animal('Cow', Sex.Female, 'H1'), animal('Bull', Sex.Male, 'H1'), animal('Cow2', Sex.Female, 'H2'), animal('Bull2', Sex.Male, 'H2'),
+        Object.assign(animal('Due', Sex.Female, TRADE), { preg: true }),
+    ]);
+    const run = cleanupRun({ model, species: HIPPO, habs: new Set(['H1']) });
+    assert.deepEqual(cleanMoves(run), [['Bull', TRADE], ['Cow', TRADE]], 'the male first, and nothing of H2 or the trade centre');
+    const done = cleanupRun({ model: zoo([animal('Cow', Sex.Female, TRADE), animal('Bull2', Sex.Male, 'H2')], { habitats: ['H1'] }), species: HIPPO, habs: new Set(['H1']) });
+    assert.equal(done.clean.done, true, 'done once H1 is empty, whatever lives elsewhere');
+});
+
+test('a breeding plan beside a habitat Clean up neither sees those animals nor goes into those habitats', () => {
+    const model = zoo([animal('Cow', Sex.Female, 'H1'), animal('Bull', Sex.Male, 'H1'), animal('Cow2', Sex.Female, 'H2')]);
+    const dest = { bySpecies: { [HIPPO]: { H1: { ok: true }, H2: { ok: true } } } };
+    const assigned = new Map([['H1', new Set([HIPPO])], ['H2', new Set([HIPPO])]]);
+    const out = withoutHabitats(model, dest, assigned, new Set(['H1']));
+    assert.deepEqual(Array.from(out.model.animals.keys()), ['Cow2']);
+    assert.equal(out.destinations.bySpecies[HIPPO].H1.ok, false);
+    assert.equal(out.destinations.bySpecies[HIPPO].H2.ok, true);
+    assert.deepEqual(Array.from(out.assignments.keys()), ['H2']);
+    assert.equal(dest.bySpecies[HIPPO].H1.ok, true, 'the destinations given stay as they are');
+    // two unrelated pairs in H2 and an empty H1 set aside: a plan fills H1, unless Clean up empties it
+    const herd = zoo(['Cow2', 'Bull2', 'Cow3', 'Bull3'].map((n, i) => animal(n, n.startsWith('Cow') ? Sex.Female : Sex.Male, 'H2', { par: [`P${i}`, `Q${i}`] })), { habitats: ['H1', 'H2'] });
+    const plan = o => planAutoRun({ model: o.model, species: HIPPO, info: HIPPO_INFO, destinations: o.destinations, assignments: o.assignments, settings: { thin: false }, view: {} });
+    assert.ok(plan({ model: herd, destinations: dest, assignments: assigned }).moves.some(m => m.to === 'H1'));
+    assert.ok(!plan(withoutHabitats(herd, dest, assigned, new Set(['H1']))).moves.some(m => m.to === 'H1'));
 });
 
 test('clean up waits when the trade centre is full', () => {

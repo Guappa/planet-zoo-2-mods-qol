@@ -16,7 +16,7 @@
 import { getKinModel, getKinSettings, onKin, requestKinScan, setContraception, setKinAlertFilter } from '/js/mods/pz2qol/kin.js';
 import { getPlanRun, moveOutcome, onPlanRun, requestDestinations, requestSpeciesInfo, requestStoredAdults, runPlan, stopPlan } from '/js/mods/pz2qol/kinmoves.js';
 import { getUserData, onUserData, setUserData, userDataEpoch, userDataStatus } from '/js/mods/pz2qol/userstore.js';
-import { getAssignments, onAssignments } from '/js/mods/pz2qol/kinassign.js';
+import { assignmentsOf, getAssignments, onAssignments, toggleAssignment } from '/js/mods/pz2qol/kinassign.js';
 import { breadcrumb, reportError } from '/js/mods/pz2qol/errors.js';
 import { dlog } from '/js/mods/pz2qol/debuglog.js';
 import { isCollective } from '/js/mods/pz2qol/kincore.js';
@@ -30,10 +30,10 @@ import { TUNE_PREF } from '/js/mods/pz2qol/kinprogtune.js';
 import { freshBloodNeeds } from '/js/mods/pz2qol/kinbloodline.js';
 import { storedRowAges } from '/js/mods/pz2qol/storedages.js';
 import {
-    AUTO_LIMITS, scheduledDue, bestForNeeds, bestFreshBlood, calendarMonths, genePercents, marketMatesFor, mergeStorageSuggestions, withAgeingAdvice, withoutAgeing, withoutParkAnimals, finishAutoRun, freshNotices, kinConflicts, marketDimFor, mergeSellAdvice, speciesToSwitchOn, cleanupRun, freeParked, groupSires, guardChanges, heldKinIds, sireStandard, withGuardsLifted, storageAdditions, storageTrial, storageUpgrades, waitingAtTradeCentre, observeChanges, prepareAutoRun, programmeOptionsFor, speciesFingerprints,
+    AUTO_LIMITS, scheduledDue, bestForNeeds, bestFreshBlood, calendarMonths, genePercents, marketMatesFor, mergeStorageSuggestions, withAgeingAdvice, withoutAgeing, withoutParkAnimals, finishAutoRun, freshNotices, kinConflicts, marketDimFor, mergeSellAdvice, speciesToSwitchOn, cleanupRun, withoutHabitats, freeParked, groupSires, guardChanges, heldKinIds, sireStandard, withGuardsLifted, storageAdditions, storageTrial, storageUpgrades, waitingAtTradeCentre, observeChanges, prepareAutoRun, programmeOptionsFor, speciesFingerprints,
 } from '/js/mods/pz2qol/kinautocore.js';
 import {
-    emptyLedger, fitBudget, forgetSpecies, guardedGuids, isManualAnimal, isPinnedAnimal, ledgerView, logAction, normalizeLedger, noteManualMoves, noteReversal,
+    cleanFor, cleanHabitatIds, emptyLedger, fitBudget, forgetSpecies, guardedGuids, isManualAnimal, isPinnedAnimal, ledgerView, logAction, normalizeLedger, noteManualMoves, noteReversal,
     noteGuard, noteTradeAges, noteUndone, pruneLedger, resumeSpecies, setSpeciesSettings, settleAction, speciesOn, speciesSettings, speciesSwitchedOn, togglePinAnimal, undoOf,
 } from '/js/mods/pz2qol/kinautoledger.js';
 
@@ -222,7 +222,7 @@ function saveLedger(force) {
 // not), or Clean up is emptying the zoo.
 export function autoManages(species) {
     const l = A.ledger && A.ledgerEpoch === userDataEpoch() ? A.ledger : null;
-    return !!l && (l.clean || speciesSwitchedOn(l).includes(species));
+    return !!l && (cleaningZoo(l) || speciesSwitchedOn(l).includes(species));
 }
 
 export function getAutopilotLedger() {
@@ -245,11 +245,40 @@ export function isAutopilotOn() {
     return !!A.ledger && (A.ledger.clean || speciesOn(A.ledger).length > 0);
 }
 
-// A plan may still move animals: a Clean up plan while the zoo is being
-// cleaned up, a breeding plan while its species is on and no Clean up runs.
+// A plan may still move animals: a Clean up plan while that Clean up runs, a
+// breeding plan while its species is on and the zoo is not being cleaned up.
+// One made before a Clean up started, stopped or changed is not (a breeding
+// plan from before could fill a habitat being emptied).
 function planLive(l, plan) {
     const sp = plan.species;
-    return plan.clean ? !!l.clean : !l.clean && !!(l.sp[sp] && l.sp[sp].on) && !l.stopped[sp];
+    if (plan.cleanKey !== cleanKey(l)) return false;
+    return plan.clean ? !!l.clean : !cleaningZoo(l) && !!(l.sp[sp] && l.sp[sp].on) && !l.stopped[sp];
+}
+
+function notLiveWhy(l, plan) {
+    if (plan.cleanKey === cleanKey(l)) return 'Auto mode was turned off';
+    if (!l.clean) return 'Clean up stopped';
+    return plan.clean ? 'Clean up changed its habitats' : 'Clean up started';
+}
+
+const cleanKey = l => JSON.stringify((l && l.clean) || false);
+const cleaningZoo = l => !!(l && l.clean && l.clean.zoo);
+
+// What Clean up empties this load: null, { zoo: true } or { habs: Set(habitat id) }.
+function cleanScope(l = A.ledger, model = A.model) {
+    if (!l || !l.clean) return null;
+    return l.clean.zoo ? { zoo: true } : { habs: cleanHabitatIds(l, model) };
+}
+
+// The species Clean up runs for: every one in the zoo, or those with an animal in its habitats.
+function cleanScopeSpecies(scope) {
+    if (!scope) return [];
+    if (scope.zoo) return zooSpecies(A.model);
+    const out = new Set();
+    for (const a of A.model ? A.model.animals.values() : []) {
+        if (a.species && !a.exhibit && a.alive !== false && scope.habs.has(String(a.hab))) out.add(a.species);
+    }
+    return Array.from(out).filter(sp => !isCollective(A.model, sp));
 }
 
 // The whole of it, for the UI: { storage, running, mode, acting, planning,
@@ -506,7 +535,8 @@ function onModel(model) {
 function guardKin(model, l) {
     // a species Auto mode stopped for stays guarded: never inbreed holds while the player looks
     const on = new Set(speciesSwitchedOn(l));
-    const mine = a => l.clean || on.has(a.species);
+    const scope = cleanScope(l, model);
+    const mine = a => (scope && (scope.zoo || scope.habs.has(String(a.hab)))) || on.has(a.species);
     const { on: guard, off: lift } = guardChanges(model, guardedGuids(l));
     const want = new Map();
     const guarding = guardOn();
@@ -962,7 +992,8 @@ function dequeue(species) {
 // Every species whose run is due joins the queue (once).
 function queueDue() {
     const l = A.ledger;
-    if (l && l.clean) return queueClean();
+    if (cleaningZoo(l)) return queueClean();
+    if (l && l.clean) queueClean();
     if (!A.cal || !l) return;
     for (const sp of speciesOn(l)) {
         const retry = (A.retryAt.get(sp) || Infinity) <= Date.now();
@@ -975,11 +1006,15 @@ function queueDue() {
     }
 }
 
-// Clean up: every habitat species in the zoo, each again a short while
-// after its last run (a birth or a young one growing up is seen soon).
+// Clean up: every species it runs for, each again a short while after its
+// last run (a birth or a young one growing up is seen soon). Habitats with
+// nothing left in them end it once the zoo is read.
 function queueClean() {
     const now = Date.now();
-    for (const sp of zooSpecies(A.model)) {
+    const scope = cleanScope();
+    const all = cleanScopeSpecies(scope);
+    if (scope.habs && !all.length && settled()) return endClean([]);
+    for (const sp of all) {
         if ((A.cleanAt.get(sp) || 0) > now) continue;
         if (A.planning === sp || (A.acting && A.acting.species === sp)) continue;
         enqueue(sp);
@@ -993,11 +1028,15 @@ function zooSpecies(model) {
     return Array.from(all).filter(sp => !isCollective(model, sp));
 }
 
+function cleansNow(species) {
+    return cleanScopeSpecies(cleanScope()).includes(species);
+}
+
 // The next species that can run now (it leaves the queue), or null.
 function takeNext() {
     const l = A.ledger;
     for (const sp of A.queue) {
-        if (!l || (!l.clean && (!l.sp[sp] || !l.sp[sp].on || l.stopped[sp]))) {
+        if (!l || (!cleansNow(sp) && (!l.sp[sp] || !l.sp[sp].on || l.stopped[sp]))) {
             dequeue(sp);
             return takeNext();
         }
@@ -1049,20 +1088,27 @@ async function makePlan(species) {
     if (!model) return null;
     const ids = [];
     for (const a of model.animals.values()) if (a.species === species && !a.exhibit) ids.push(a.id);
-    const dest = await requestDestinations(ids);
+    let dest = await requestDestinations(ids);
     const info0 = await requestSpeciesInfo(species, habitatsFor(A.model || model, species, dest));
     const info = info0 && !info0.error ? info0 : null;
     const gate = await askGate();
     if (!fresh()) return null;
     noteGate(gate);
     const l = A.ledger;
+    const key = cleanKey(l);
     // a female guarded against inbreeding is planned as the breeder she is (withGuardsLifted)
-    const cur = l ? withGuardsLifted(A.model, guardedGuids(l)) : A.model;
-    if (cur && l && l.clean) return cleanPlan(species, cur, dest);
+    let cur = l ? withGuardsLifted(A.model, guardedGuids(l)) : A.model;
+    const scope = cleanScope(l, cur);
+    if (cur && scope && (scope.zoo || cleanScopeSpecies(scope).includes(species))) {
+        const plan = cleanPlan(species, cur, dest, scope, key);
+        const breeds = !!(l.sp[species] && l.sp[species].on && !l.stopped[species]);
+        if (scope.zoo || plan.moves.length || !breeds) return plan;
+    }
     if (!cur || !l || !l.sp[species] || !l.sp[species].on) return null;
     const settings = l.sp[species];
     const ratio = ratioChoice(species);
-    const assignments = getAssignments(cur);
+    let assignments = getAssignments(cur);
+    if (scope) ({ model: cur, destinations: dest, assignments } = withoutHabitats(cur, dest, assignments, scope.habs));
     const view = ledgerView(l, cur, parkYears(), Date.now());
     // the ledger's hold on the species by name, so a trace replays as the run saw it (tools/trace-to-zoo.mjs)
     const held = set => Array.from(set).map(id => cur.animals.get(id)).filter(a => a && a.species === species).map(a => a.name).join(',');
@@ -1102,6 +1148,7 @@ async function makePlan(species) {
     r = withAgeingAdvice(r, cur, species, input.earlySale);
     const told = r && plan.moves.length ? Object.assign({}, r, { needs: [] }) : r;
     plan.fp = fp;
+    plan.cleanKey = key;
     plan.session = A.session;
     plan.at = Date.now();
     plan.destinations = dest;
@@ -1127,11 +1174,11 @@ async function makePlan(species) {
 }
 
 // Clean up's run for one species (kinautocore cleanupRun).
-function cleanPlan(species, cur, dest) {
+function cleanPlan(species, cur, dest, scope, key) {
     const l = A.ledger;
     const view = ledgerView(l, cur, parkYears(), Date.now());
-    const plan = cleanupRun({ model: cur, species, destinations: dest, view: Object.assign({}, view, { leaving: [...view.leaving, ...onTheirWay()] }), tradeFree: tradeFree(cur) });
-    Object.assign(plan, { fp: A.prints.get(species), session: A.session, at: Date.now(), destinations: dest });
+    const plan = cleanupRun({ model: cur, species, destinations: dest, view: Object.assign({}, view, { leaving: [...view.leaving, ...onTheirWay()] }), tradeFree: tradeFree(cur), habs: scope.habs });
+    Object.assign(plan, { fp: A.prints.get(species), cleanKey: key, session: A.session, at: Date.now(), destinations: dest });
     A.cleanAt.set(species, Date.now() + CLEAN_GAP_MS);
     const c = plan.clean;
     const nameOf = id => ((cur.animals.get(String(id)) || {}).name || String(id));
@@ -1141,47 +1188,72 @@ function cleanPlan(species, cur, dest) {
     return plan;
 }
 
-// Clean up ends by itself once every species is done (only elderly or
-// hands-off animals left), so animals bought afterwards are not swept up.
+// Clean up ends by itself once every species it runs for is done (only
+// elderly or hands-off animals left), so animals bought afterwards are not
+// swept up.
 function noteCleaned(species, c) {
     if (c.done) A.cleanDone.set(species, c);
     else A.cleanDone.delete(species);
-    const all = zooSpecies(A.model);
+    const all = cleanScopeSpecies(cleanScope());
     if (!all.every(sp => A.cleanDone.has(sp))) return;
-    const left = all.map(sp => Object.assign({ species: sp }, A.cleanDone.get(sp))).filter(x => x.elderly.length || x.kept.length);
+    endClean(all.map(sp => Object.assign({ species: sp }, A.cleanDone.get(sp))).filter(x => x.elderly.length || x.kept.length));
+}
+
+// An emptied habitat is set aside for nothing, so Auto mode does not fill it again.
+function endClean(left) {
+    const habs = A.ledger.clean && A.ledger.clean.habs ? A.ledger.clean.habs.map(x => x[0]).filter(Boolean) : null;
+    let unset = 0;
+    for (const hab of cleanHabitatIds(A.ledger, A.model)) {
+        for (const sp of assignmentsOf(A.model, hab)) {
+            safe(() => {
+                toggleAssignment(A.model, hab, sp);
+                unset++;
+            }, 'set aside');
+        }
+    }
     A.ledger.clean = false;
     A.cleanDone.clear();
     A.cleanAt.clear();
     saveLedger(true);
     breadcrumb('auto_clean_done');
-    toast('cleaned', { left });
+    toast('cleaned', { left, habs, unset });
     sync();
     notify();
 }
 
-// The zoo-wide Clean up switch: on turns breeding off for every species
-// (a move already sent finishes, nothing else of a breeding run does) and
-// empties the zoo; off stops emptying. -> false when the zoo's data can't be kept.
-export function setCleanUp(on) {
+// Clean up: 'zoo' turns breeding off for every species (a move already sent
+// finishes, nothing else of a breeding run does) and empties the zoo; a list
+// of habitat ids empties those while Auto mode breeds on in the others; null
+// stops. -> false when the zoo's data can't be kept or no habitat is known.
+export function setCleanUp(target) {
     if (!storeReady()) return false;
     const l = currentLedger();
-    if (on) {
+    const clean = target ? cleanFor(A.model || getKinModel(), target) : false;
+    if (target && !clean) return false;
+    if (clean && clean.zoo) {
         for (const s of Object.values(l.sp)) s.on = false;
         A.queue = [];
-        A.lastPlan.clear();
     }
-    l.clean = !!on;
+    if (clean) A.lastPlan.clear();
+    l.clean = clean;
     A.cleanDone.clear();
     A.cleanAt.clear();
-    breadcrumb(on ? 'auto_clean_on' : 'auto_clean_off');
+    if (!clean) breadcrumb('auto_clean_off');
+    else if (clean.zoo) breadcrumb('auto_clean_on');
+    else breadcrumb('auto_clean_habs');
     saveLedger(true);
     sync();
     notify();
     return true;
 }
 
-export function isCleaningUp() {
-    return !!(A.ledger && A.ledger.clean);
+// The Clean up running, for the UI: null, { zoo: true }, or { habs: [habitat
+// id] (this load's), names: [habitat name] (as kept) }.
+export function getCleanUp() {
+    const l = A.ledger;
+    if (!l || !l.clean) return null;
+    if (l.clean.zoo) return { zoo: true };
+    return { habs: Array.from(cleanHabitatIds(l, A.model || getKinModel())), names: l.clean.habs.map(x => x[0]).filter(Boolean) };
 }
 
 async function planOne(species) {
@@ -1425,7 +1497,7 @@ async function startRun(plans, how) {
                         safe(() => stopPlan(), 'stop run');
                         return 'another zoo was loaded';
                     }
-                    if (!planLive(l, plan)) return l.clean ? 'Clean up started' : 'Auto mode was turned off';
+                    if (!planLive(l, plan)) return notLiveWhy(l, plan);
                     const why = handsOffWhy(l, m.id, manualAtStart) || await gameGate();
                     if (why === GATE_SILENT_WHY) {
                         // the rest of the run would wait on the same silence
