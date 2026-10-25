@@ -900,3 +900,21 @@ All **offline** (decompiled `editors.animal.animalmovementeditmode.lua`,
 - `kinprogramme.js` option `spareOut` (default on): those adults are left out of the solver's fixed room. Afterwards `keepSpares` keeps per habitat and sex only the make-up places (`groupTarget(rule, room)`) that the placed breeders and other staying adults leave free: contracepted first, then own genes. The rest become moves to the trade centre (`spare: true`, reason "over the group make-up ...").
 - Exceptions: pregnant, away, pinned (`pinIds`, Auto mode hands off) animals, and mixed make-ups.
 - The engine benchmarks and the golden record run with `spareOut: false`. Tests: `tests/kinprogramme.test.mjs` "make-up: ..." cases.
+
+## Trading near elderly (proven, Franchise, 2026-10-24)
+
+- The Franchise market refuses every elderly animal, fertile or not (`NotAllowed`). Listing a fertile elderly
+  shark crashed the game on its render thread right after that answer: the mod never lists one (`scores.js
+  isElderly`, `pz2qol.lister.lua` skips maturity 3 and 6).
+- Close to elderly the server refuses too, while the row still says adult and the game still shows the buttons:
+  a listing 0.8 years short (the same crash), a sale 1.9 and releases 2.0 and 2.7 years short, while a release
+  3.1 years short goes through (giraffes, elderly at 32). The mod lists, sells and releases none within three
+  years of the species' elderly age (`isNearlyElderly`, `MARKET_ELDERLY_MARGIN_YEARS`, from the row's age). A
+  release far short of that can pay 0 CC.
+- Each species' elderly age (and its group limits, leader rules and pregnancy length) comes from the game's
+  `animals.fdb`: `speciesrules.js`, written by `tools/gen_species_rules.py --cobra-tools <dir>` (run it again
+  after a game update).
+- A listing the game won't make (`tradeAllowed` false) sends nothing, and most of its reasons pass (an
+  infection, an injury, a transport). The lister takes the run's "If refused" quick action for it only when a
+  reason never passes (`Lister.tLastingProblems`: `NoBirthZoo`, a Frontier zoo's animal); any other skips it,
+  since a quick action is permanent. Add a reason there only once the game has shown it never clears.

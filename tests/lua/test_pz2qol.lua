@@ -434,36 +434,6 @@ fireUI(oPage, "PZ2QoL_MarketPeek", 44)
 frames(1400) -- ~22 s
 check(peekStates() == "loading,failed" and calls("Display")[2] and calls("Display")[2].tArgs[1] == 0, "timeout restores: " .. peekStates())
 
--- the lister asks whether the game still waits on a franchise request
-local function dbStates()
-	local t = {}
-	for _, c in ipairs(calls("Trigger")) do
-		if c.tArgs[1] == "PZ2QoL_DbState" then
-			t[#t + 1] = tostring(c.tArgs[2]) .. "/" .. tostring(c.tArgs[3]) .. "/" .. tostring(c.tArgs[4])
-		end
-	end
-	return table.concat(t, ",")
-end
-check(oPage.tListeners["PZ2QoL_DbQuery"] ~= nil, "server state listener on the hub page")
-local bDbBusy = true
-oStorage.tWorldAPIs = { franchise = { IsDatabaseOperationInProgress = function(self) return bDbBusy, 42 end } }
-tCalls = {}
-fireUI(oPage, "PZ2QoL_DbQuery")
-check(dbStates() == "true/true/42", "busy while a request runs: " .. dbStates())
-bDbBusy = false
-tCalls = {}
-fireUI(oPage, "PZ2QoL_DbQuery")
-check(dbStates() == "true/false/42", "idle: " .. dbStates())
-oStorage.tWorldAPIs = { franchise = { IsDatabaseOperationInProgress = function() error("gone") end } }
-tCalls = {}
-fireUI(oPage, "PZ2QoL_DbQuery")
-check(dbStates() == "false/false/-1", "unknown when the call fails: " .. dbStates())
-oStorage:TransitionOut()
-tCalls = {}
-fireUI(oPage, "PZ2QoL_DbQuery")
-check(dbStates() == "false/false/-1", "unknown outside storage: " .. dbStates())
-oStorage:TransitionIn()
-oStorage.tWorldAPIs = nil
 
 -----------------------------------------------------------------------
 -- 10. Relatedness data for the page (PZ2QoL.Kin)

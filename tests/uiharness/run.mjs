@@ -158,21 +158,26 @@ async function shot(page, name) {
     return file;
 }
 
+// The Market lister is on by default in game; its panel sits over the
+// storage list, so harness pages start with it off (the player's prefs,
+// prefs.js, read from their mirror while no Lua answers) and the lister
+// scenario turns it on itself.
+function listerOff() {
+    try {
+        const prefs = JSON.parse(window.localStorage.getItem('PZ2QoL.prefs.v1') || '{}');
+        prefs.listerEnabled = false;
+        window.localStorage.setItem('PZ2QoL.prefs.v1', JSON.stringify(prefs));
+    }
+    catch (e) {
+        // no storage: on, as in game
+    }
+}
+
 async function openFrontend(browser, url, label) {
     const page = await browser.newPage({ viewport: { width: 1920, height: 1080 } });
     const rec = attachCollectors(page, label);
     await page.addInitScript(pageShims, { seed: SEED, css: GAMEFACE_COMPAT_CSS });
-    // the Market lister is on by default in game; its panel sits over the
-    // storage list, so harness pages start with it off and the lister
-    // scenario turns it on itself
-    await page.addInitScript(() => {
-        try {
-            window.localStorage.setItem('PZ2QoL.listerEnabled', 'false');
-        }
-        catch (e) {
-            // no storage: on, as in game
-        }
-    });
+    await page.addInitScript(listerOff);
     await page.goto(url, { waitUntil: 'load' });
     await page.waitForSelector('.FrontendModule_root', { timeout: 30000 });
     await page.waitForTimeout(1500);
@@ -1142,14 +1147,7 @@ async function openHud(browser, url, label) {
     const page = await browser.newPage({ viewport: { width: 1920, height: 1080 } });
     const rec = attachCollectors(page, label);
     await page.addInitScript(pageShims, { seed: SEED, css: GAMEFACE_COMPAT_CSS });
-    await page.addInitScript(() => {
-        try {
-            window.localStorage.setItem('PZ2QoL.listerEnabled', 'false');
-        }
-        catch (e) {
-            // no storage
-        }
-    });
+    await page.addInitScript(listerOff);
     await page.goto(url, { waitUntil: 'load' });
     await page.waitForTimeout(4000);
     return { page, rec };

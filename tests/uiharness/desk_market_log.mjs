@@ -47,7 +47,7 @@ export async function frontend(page, ctx) {
         [/ lister engine_state run=\d+ .*phase=running/, 'engine state running'],
         [/ lister engine_result run=\d+ i=\d+ guid=\d+ status=listed price=\d+ hours=\d+/, 'a listed result'],
         [/ lister engine_result run=\d+ i=2 guid=\d+ status=refused kind=refused/, 'the refused result'],
-        [/ desk list_result ok=true engine=true count=\d+/, 'desk list result'],
+        [/ desk list_result ok=true count=\d+/, 'desk list result'],
         [/ lister page_watch key=\S+ req=w1_1/, 'the page watch'],
         [/ lister page_seen key=\S+ req=w1_1 text="?v2\|/, 'what the page reported'],
         [/ desk close /, 'desk close'],

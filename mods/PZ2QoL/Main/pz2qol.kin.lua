@@ -74,6 +74,15 @@ local function trace(sMsg)
 	pcall(function() api.debug.Trace("[PZ2QoL] kin: " .. sMsg) end)
 end
 
+local function logEvent(sArea, sEvent, tData)
+	pcall(function()
+		local Core = global.package.loaded["pz2qol.core"]
+		if Core and Core.Log then
+			Core:Log(sArea, sEvent, tData)
+		end
+	end)
+end
+
 local function mark(sName)
 	local Core = global.package.loaded["pz2qol.core"]
 	if Core then
@@ -2318,6 +2327,18 @@ Kin._ZooKey = function(self, tAPIs, nWaited)
 	return "o_" .. sHub .. "_" .. keyPart(sName, 24) .. "_" .. hash(sName)
 end
 
+-- the active world's zoo: the park's own, or the one the hub's Send to Zoo goes to; nil while the game names none
+Kin.WorldZooKey = function(self)
+	local sKey = nil
+	pcall(function() sKey = self:_ZooKey(api.world.GetWorldAPIs(), 1e9) end)
+	return sKey
+end
+
+-- two zoo keys prove different zoos only when both are known
+Kin.ZoosDiffer = function(self, sZooA, sZooB)
+	return sZooA ~= nil and sZooB ~= nil and sZooA ~= sZooB
+end
+
 -- From the park tick (throttled) and from requests: finds the zoo's key
 -- and checks the player store. Tells the views when the answer changes.
 Kin._ResolveStore = function(self)
@@ -2555,6 +2576,82 @@ Kin.PrefsSave = function(self, oUI, sReq, sText)
 end
 
 -----------------------------------------------------------------------
+-- Values Lua keeps between the park and hub pages (each page keeps its own
+-- data; Lua outlives both). One page sets the JSON, the other asks for it:
+--   PZ2QoL_<name>Set(json), PZ2QoL_<name>Get(reqId) -> PZ2QoL_<name>Result(reqId, json)
+--   SellAdvice   park -> Storage window: the animals Auto mode advises selling
+--   MarketMates  park -> Market: each species' breeders (gene strands) and standard
+--   StoredAges   Storage window -> park: the stored animals' ages
+-- A value over nMax characters is refused (the last one kept stays) and
+-- logged once until one fits again.
+Kin.tRelays = {
+	SellAdvice = { sValue = "[]", nMax = 20000, sLog = "sell_advice" },
+	MarketMates = { sValue = "{}", nMax = 60000, sLog = "market_mates" },
+	StoredAges = { sValue = "[]", nMax = 60000, sLog = "stored_ages" },
+}
+
+Kin.SetRelay = function(self, sName, sJson)
+	local tRelay = self.tRelays[sName]
+	if tRelay == nil or type(sJson) ~= "string" then
+		return
+	end
+	if #sJson > tRelay.nMax then
+		if not tRelay.bTooBig then
+			tRelay.bTooBig = true
+			trace(tRelay.sLog .. " refused: " .. #sJson .. " characters, at most " .. tRelay.nMax .. " are kept")
+			logEvent("kin", tRelay.sLog .. "_too_big", { chars = #sJson, max = tRelay.nMax })
+		end
+		return
+	end
+	tRelay.bTooBig = false
+	tRelay.sValue = sJson
+end
+
+Kin.GetRelay = function(self, oUI, sName, sReq)
+	local tRelay = self.tRelays[sName]
+	if tRelay ~= nil then
+		pcall(oUI.TriggerEventAtNextAdvance, oUI, "PZ2QoL_" .. sName .. "Result", sReq, tRelay.sValue)
+	end
+end
+
+-----------------------------------------------------------------------
+-- Market listings' genes (hub page), for the calves its badges predict:
+-- the hub's own Compare Mates reads a listing's alleles this way (id type 7,
+-- a market GUID). Other id types answer false; each is logged once.
+--   PZ2QoL_MarketGenes(reqId, ids csv) -> PZ2QoL_MarketGenesResult(reqId, json { id: genes | false })
+-----------------------------------------------------------------------
+Kin.nMarketGenesMax = 60    -- ids per request
+Kin.nMarketsGUID = 7
+Kin.tMarketTypesLogged = {}
+
+Kin.MarketGenes = function(self, oUI, sReq, sCsv)
+	local hub = api.planetHub
+	local tOut = {}
+	if type(hub) == "table" and type(hub.GetIDAndAIDType) == "function" and type(hub.GetMarketListingAnimalGenes) == "function" then
+		local n = 0
+		for sId in string.gmatch(tostring(sCsv or ""), "[^,]+") do
+			n = n + 1
+			if n > self.nMarketGenesMax then
+				break
+			end
+			local tGenes = nil
+			local bOk, nID, nType = pcall(hub.GetIDAndAIDType, sId)
+			if bOk and nID ~= nil and nType == self.nMarketsGUID then
+				local bG, t = pcall(hub.GetMarketListingAnimalGenes, nID)
+				if bG then
+					tGenes = geneStrings(t)
+				end
+			elseif not self.tMarketTypesLogged[tostring(nType)] then
+				self.tMarketTypesLogged[tostring(nType)] = true
+				logEvent("market", "genes_unreadable", { idType = tostring(nType), ok = tostring(bOk) })
+			end
+			tOut[sId] = tGenes or false
+		end
+	end
+	pcall(oUI.TriggerEventAtNextAdvance, oUI, "PZ2QoL_MarketGenesResult", sReq, Kin.Encode(tOut))
+end
+
+-----------------------------------------------------------------------
 -- Auto mode's gate (asked only while a species is on Auto; reads only)
 -----------------------------------------------------------------------
 -- PZ2QoL_AutoGate(reqId) -> PZ2QoL_AutoGateResult(reqId, json):
@@ -2713,6 +2810,17 @@ Kin.Attach = function(self, oUI)
 		end), self)
 		oUI:AddEventListener("PZ2QoL_AutoGate", 1, guard("auto_gate", function(sReq)
 			self:AutoGate(oUI, sReq)
+		end), self)
+		for sName in pairs(self.tRelays) do
+			oUI:AddEventListener("PZ2QoL_" .. sName .. "Set", 1, guard("relay_set", function(sJson)
+				self:SetRelay(sName, sJson)
+			end), self)
+			oUI:AddEventListener("PZ2QoL_" .. sName .. "Get", 1, guard("relay_get", function(sReq)
+				self:GetRelay(oUI, sName, sReq)
+			end), self)
+		end
+		oUI:AddEventListener("PZ2QoL_MarketGenes", 2, guard("market_genes", function(sReq, sCsv)
+			self:MarketGenes(oUI, sReq, sCsv)
 		end), self)
 	end)
 	if not bOk then

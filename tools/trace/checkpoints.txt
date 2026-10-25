@@ -181,6 +181,8 @@ js_step_Kininzoomanagement
 js_step_Kinininfopanels
 js_step_KininCompareMatesandGenealogy
 js_step_KininAnimalStorage
+js_step_SelladviceinAnimalStorage
+js_step_CalvesofMarketlistings
 js_step_Kinplanner
 js_step_Kinalerts
 js_kin_move
@@ -821,3 +823,5 @@ js_kin_planner_open
 js_lister_legacy
 js_lister_skip_fatal
 js_lister_skip_unnamed
+js_lister_engine_unusable
+js_sell_advice

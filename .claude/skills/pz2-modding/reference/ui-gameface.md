@@ -133,6 +133,15 @@
   or the zoo's store becomes known. The store is the truth once read: data the page held before
   (another zoo's, the localStorage mirror) is not merged in, only this view's pending changes.
 
+## The game's windows over the mod's widgets
+
+- The mod's widgets live under `<body>` with a z-index, so they paint over the game's tooltips, search menus
+  and windows unless they step aside. `stepaside.js` hides a widget (`PZ2QoL_yield`: hidden, clicks pass
+  through, its place kept) while one covers it: `GAME_TOOLTIPS`, `GAME_DROPDOWNS` (a search box's suggestions,
+  the species filter), `GAME_WINDOWS` (the Zoopedia, a darkened modal Layer). It probes points across the
+  widget, so a window elsewhere on screen leaves it alone. Only elements that exist while they show: the HUD
+  keeps full-screen tooltip frames on the page, and matching those would hide a widget for good.
+
 ## Localisation (species names)
 
 - `/js/common/core/Localisation.js`: `translate(str)` wants a **bracketed** symbol

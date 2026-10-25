@@ -177,8 +177,9 @@ Run all of these before installing a build.
   exhaustive optimum on 160 random small zoos, determinism, and `planProgrammeAsync` (same plan,
   progress, cancel). ~7 s.
 - The Market lister is on by default in game since 2026-10-16. Its panel covers the storage list,
-  so `run.mjs` starts every page with `PZ2QoL.listerEnabled = 'false'` (init script) and the
-  lister scenario turns it on. Without that, the market, kin storage, mates, storagesend and HUD
+  so `run.mjs` starts every page with the lister off in the player's prefs (`listerOff`: `listerEnabled:
+  false` in the prefs mirror `PZ2QoL.prefs.v1`, read while no Lua answers) and the lister scenario turns it
+  on. Without that, the market, kin storage, mates, storagesend and HUD
   scenarios time out.
 - `kin_launcher.mjs` (harness): the park launcher above `.ToolsBar_root` (placed and aligned, clear
   of the alert column, autosave badge, autosave card sends `PZ2QoL_AutosaveSet` and
@@ -290,9 +291,9 @@ Run all of these before installing a build.
 - "Find a habitat": `node --test tests/storagesend.test.mjs` (`storagesendcore.js`: ranking, skip
   reasons, the one-at-a-time run with fake game and clock: pauses, 8 s after a refusal online, busy
   wait, Stop); Lua `tests/lua/test_storagesend.lua` (same `lua.exe` command; arm/take/disarm/expiry/
-  Franchise consent, facts JSON, one Kin move); harness `kin_storagesend.mjs` (frontend: the button
-  under Send to Zoo, Franchise switch, arm then exactly one game Send to Zoo; HUD: fake Lua, a 5-animal
-  run, Stop, Franchise block). The dummy hub data reads as Franchise: set
+  only a Move request from `SelectMode.Advance` taken, Franchise on the click alone, facts JSON, one Kin
+  move); harness `kin_storagesend.mjs` (frontend: the button under Send to Zoo, Franchise without a switch,
+  arm then exactly one game Send to Zoo; HUD: fake Lua, a 5-animal run, Stop, a Franchise run). The dummy hub data reads as Franchise: set
   `window.__PZ2QOL_TEST_FRANCHISE` explicitly. Localised strings (`stringLiteral`) show raw in the harness.
 - `kin_cull.mjs` (harness): Thin out on 5 lemur habitats × 12 animals (polygyny, social max 8). Checks the
   preview counts, that the too-old and extra males leave and the best male stays, that the fill level
