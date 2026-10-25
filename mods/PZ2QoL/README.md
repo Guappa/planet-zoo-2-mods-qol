@@ -86,8 +86,8 @@ you set a habitat aside for, newborn names and boxing an overdue mother.
 - **The park's own rules.** Franchise and Career zoos keep the game's group and room rules in full.
   In a sandbox park with social groups off, a habitat breeds through one male; with overcrowding
   off, habitats have no room limit.
-- **Young stay young.** Nothing moves a juvenile before it has grown up, and young waiting at the
-  trade centre always go back to a habitat.
+- **Juveniles grow up in a habitat.** Nothing moves a juvenile before it has grown up, and
+  juveniles waiting at the trade centre always go back to a habitat.
 - **Auto mode** runs a species as soon as relatives share a habitat or one of its young grows up,
   keeps the last breeder of a sex unless it would live beside a relative, and weighs a breeder
   parked at the trade centre again once its herd changes. It decides for its species: an animal you
