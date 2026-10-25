@@ -229,7 +229,7 @@ export function createMarketCalves({ now = () => Date.now() } = {}) {
             engine.trigger('PZ2QoL_MarketGenes', 'G' + (++seq), asked.map(([key]) => key).join(','));
         }
         catch (e) {
-            reportError('ui', 'Market calves: the game could not be asked for listing genes. Reopen the hub; if it stays, the mod\'s Lua part did not load.', e, { silent: true });
+            reportError('ui', 'Market juveniles: the game could not be asked for listing genes. Reopen the hub; if it stays, the mod\'s Lua part did not load.', e, { silent: true });
         }
     }
 

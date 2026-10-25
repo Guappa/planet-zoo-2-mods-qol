@@ -7,13 +7,13 @@ const target = (id, fields = {}) => Object.assign({ id, lifespan: 40, mature: 5,
 const asks = (...prices) => prices.map(price => ({ price, isCC: true }));
 const read = (listings, more = {}) => Object.assign({ ok: true, total: listings.length, pagesRead: 1, pages: 1, listings }, more);
 
-test('a female earns her calves a year times the median ask times the buyers left to her', () => {
+test('a female earns her juveniles a year times the median ask times the buyers left to her', () => {
     const s = scoreTarget(target('Slow', { interBirth: 4, releaseAnimals: 6 }), read(asks(1000, 3000, 2000, 9000)));
     assert.equal(s.perYear, 0.25);
     assert.equal(s.price, 2500);
     assert.equal(s.share, 0.6, '6 wanted against 4 listed');
     assert.equal(s.value, 0.25 * 2500 * 0.6);
-    assert.match(s.why, /4 listed, asking about 2,500 CC; 6 wanted across 1 reserve; a calf every 4 years per female, sellable after 6/);
+    assert.match(s.why, /4 listed, asking about 2,500 CC; 6 wanted across 1 reserve; a juvenile every 4 years per female, sellable after 6/);
 });
 
 test('a scarce, slow species outranks a common one that breeds every year when its price makes up for it', () => {

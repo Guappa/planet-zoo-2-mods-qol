@@ -91,7 +91,7 @@ step('Kin in Compare Mates and Genealogy', installKinMates);
 step('Kin in Animal Storage', installKinStorage);
 step('Sell advice in Animal Storage', installSellAdvice);
 step('Stored ages for Auto mode', installStoredAges);
-step('Calves of Market listings', installMarketCalves);
+step('Juveniles of Market listings', installMarketCalves);
 step('Your breeders for the Market picks', installMarketMates);
 step('Kin planner', installKinPlanner);
 step('Kin alerts', installKinAlerts);

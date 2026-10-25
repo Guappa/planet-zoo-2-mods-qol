@@ -643,7 +643,7 @@ All **offline** (decompiled `editors.animal.animalmovementeditmode.lua`,
   `IScenarioManager:GetScenarioSetting`), both true unless the park switched them off. With social
   groups on (every Franchise zoo) the game's group rules bind as below. Off (a sandbox park), no
   group rule binds: `sandboxRule` makes it one breeding male per habitat with any number of
-  females, so every calf's father is known; leader species and monogamous pairs keep their own
+  females, so every juvenile's father is known; leader species and monogamous pairs keep their own
   make-up. With overcrowding off (`overcrowdingOn`), a habitat holds any number of adults (the
   programme, Thin out and the growing-up alerts).
 - **The game's own composition data** (**offline**, decompiled 1.0.5 Lua): the world API

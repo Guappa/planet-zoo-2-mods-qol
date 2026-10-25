@@ -779,7 +779,7 @@ export function storageUpgrades(model, species, stored, { assignments, endOf = a
         }
         if (!options.some(o => o.s === s)) {
             onSkip(s, !places ? 'no habitat breeds its sex' : related === places ? 'related to the breeders of the other sex'
-                : bestGain == null ? 'no gene data to compare' : `its calves would be only ${bestGain} better`);
+                : bestGain == null ? 'no gene data to compare' : `its juveniles would be only ${bestGain} better`);
         }
     }
     options.sort((x, y) => y.gain - x.gain);

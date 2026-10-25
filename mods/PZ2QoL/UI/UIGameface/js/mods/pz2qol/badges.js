@@ -213,18 +213,18 @@ function applyToRow({ rowEl, screen, a }, picks) {
 function buildBadge(a, screen, g, b, v, tags, calves, bestCalves, floor) {
     const tips = [`Gene score ${fmt(g)} (average of ${relevantGenes(a).join(', ') || 'no genes'})`, `Breeder score ${fmt(b)} (fertility-weighted)`];
     if (calves != null) {
-        tips.push(`Calves ${calves}: ${sexOf(a) === 'm' ? 'his average calf score with your females (he fathers every litter)' : 'her best calf score with your males'}`
-            + (floor != null ? `; faded when its best calves fall under ${floor}, your breeding standard` : ''));
+        tips.push(`Juveniles ${calves}: ${sexOf(a) === 'm' ? 'his average juvenile score with your females (he fathers every litter)' : 'her best juvenile score with your males'}`
+            + (floor != null ? `; faded when its best juveniles fall under ${floor}, your breeding standard` : ''));
     }
     if (v != null) tips.push(`Value ${v}: gene score per ${a.isCC ? '100 CC' : '1,000 cash'}`);
     const best = tags && tags.best;
     if (best && best.basis === 'yours') {
-        tips.push(`Best of your ${sexOf(a) === 'm' ? 'males' : 'females'} on this screen: ${sexOf(a) === 'm' ? 'the best average calves with your females' : 'the best calves with your males'} (${best.score}), the same score a Market listing gets`);
+        tips.push(`Best of your ${sexOf(a) === 'm' ? 'males' : 'females'} on this screen: ${sexOf(a) === 'm' ? 'the best average juveniles with your females' : 'the best juveniles with your males'} (${best.score}), the same score a Market listing gets`);
     }
     else if (best) {
         tips.push(best.basis === 'calves'
-            ? `Best buy of this sex among the ${best.of} you paged through: ${sexOf(a) === 'm' ? 'the best average calves with your females' : 'the best calves with your males'} (${best.score})`
-            : `Best buy of this sex by its own genes (${best.score}): none of yours of the other sex in the zoo or the trade centre to judge its calves by`);
+            ? `Best buy of this sex among the ${best.of} you paged through: ${sexOf(a) === 'm' ? 'the best average juveniles with your females' : 'the best juveniles with your males'} (${best.score})`
+            : `Best buy of this sex by its own genes (${best.score}): none of yours of the other sex in the zoo or the trade centre to judge its juveniles by`);
     }
     if (screen == 'market' && zeroFertility(a)) tips.push('0% fertility: it never breeds, so it is never a pick');
     if (tags && tags.value) tips.push('Best value of this sex: the most genes per price among those that meet your standard');
@@ -237,10 +237,10 @@ function buildBadge(a, screen, g, b, v, tags, calves, bestCalves, floor) {
         geneBars(a.genes, relevantGenes(a)),
         h('div.PZ2QoL_badgeStat', null, h('span.PZ2QoL_badgeKey', { text: 'B' }), h('span', { text: fmt(b) })),
         // a male's average, and his best match where it differs: the fading follows the best
-        calves != null && h('div.PZ2QoL_badgeStat.calves', null, h('span.PZ2QoL_badgeKey', { text: 'C' }),
+        calves != null && h('div.PZ2QoL_badgeStat.calves', null, h('span.PZ2QoL_badgeKey', { text: 'J' }),
             h('span', { text: bestCalves != null && bestCalves !== calves ? `${calves} \u00b7 best ${bestCalves}` : String(calves) })),
         v != null && h('div.PZ2QoL_badgeStat.value', null, h('span.PZ2QoL_badgeKey', { text: 'V' }), h('span', { text: String(v) })),
-        best && h('div.PZ2QoL_badgeTag.best', { text: best.basis === 'yours' ? 'Best of yours' : `Best buy · ${best.basis === 'calves' ? 'calves' : 'genes'} ${best.score} (of ${best.of})` }),
+        best && h('div.PZ2QoL_badgeTag.best', { text: best.basis === 'yours' ? 'Best of yours' : `Best buy · ${best.basis === 'calves' ? 'juveniles' : 'genes'} ${best.score} (of ${best.of})` }),
         tags && tags.value && h('div.PZ2QoL_badgeTag.value', { text: 'Best value' }),
         advice && h(`div.PZ2QoL_badgeTag.${advice.keep ? 'keep' : 'sell'}`, { text: advice.keep ? 'Keep' : quick ? 'Quick trade' : 'Sell' }));
 }

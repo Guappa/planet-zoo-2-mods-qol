@@ -83,7 +83,7 @@ export const RATIO_SOURCE_WORDS = Object.freeze({
     groups: "the game's social groups",
     mating: 'the mating system',
     none: 'not known',
-    sandbox: "your sandbox settings: with social groups off, one male per habitat (so every calf's father is known) and any number of females",
+    sandbox: "your sandbox settings: with social groups off, one male per habitat (so every juvenile's father is known) and any number of females",
 });
 
 // ------------------------------------------------------------- slider

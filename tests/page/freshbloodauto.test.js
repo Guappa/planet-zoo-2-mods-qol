@@ -41,7 +41,7 @@ test('a run on a herd of one bull tells, once, that his daughter will need fresh
     const title = 'Hippopotamus Common: fresh blood needed for 1 young';
     assert.equal(nodesWithText(title).length, 1);
     assert.equal(nodesWithText('Market').length > 0, true, 'the Market button is there');
-    assert.equal(nodesWithText("Daughter (H1): once grown, it has no male in the zoo to breed with. The males here are related, or their calves would score well below your best pair's. None in Animal Storage fits: buy an unrelated adult male on the market before it grows up.").length, 1);
+    assert.equal(nodesWithText("Daughter (H1): once grown, it has no male in the zoo to breed with. The males here are related, or their juveniles would score well below your best pair's. None in Animal Storage fits: buy an unrelated adult male on the market before it grows up.").length, 1);
     const first = nodesWithText(title)[0];
     auto.runSpeciesNow(HIPPO);
     await runFinished();

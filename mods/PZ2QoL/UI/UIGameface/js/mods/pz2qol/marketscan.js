@@ -66,7 +66,7 @@ function resultRow(s) {
         h('div.PZ2QoL_tableName', { text: speciesName(marketSpecies(s.target)) }),
         h('div.PZ2QoL_scanCell', { text: listed }),
         h('div.PZ2QoL_scanCell', { text: s.price == null ? '–' : `${fmtInt(s.price)} CC`, title: 'Median asking price' }),
-        h('div.PZ2QoL_scanCell', { text: `${perYearText(s)} calves`, title: 'Calves a breeding female has a year at best' }),
+        h('div.PZ2QoL_scanCell', { text: `${perYearText(s)} juveniles`, title: 'Juveniles a breeding female has a year at best' }),
         h(`div.PZ2QoL_tablePrice${s.value == null ? '.conf_none' : ''}`, { text: s.value == null ? '–' : `${fmtInt(s.value)} CC`, title: 'CC a year per breeding female' }));
 }
 

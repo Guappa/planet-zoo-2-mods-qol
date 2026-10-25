@@ -15,8 +15,8 @@ What's in the toolbox:
 | Area | Tools |
 |---|---|
 | **Scores** | Gene, breeder and value badges on every Market and Storage row |
-| **Market** | Quick filters (Top genes, Breeders, Long-lived, Ending ≤1h, Cash, CC), Dim below a gene score, the calves each listing would give, Best buy and Best value per sex, Best to breed |
-| **Animal Storage** | Filters (Pregnant, Alpha, Adults / Fertile adults / Juveniles, Sellable, Sell advice, Not listed, Has pair, Surplus, Gene ≥, Kin), the calves each stored animal would give, lister on/off, sort by score, summary line, Find a habitat |
+| **Market** | Quick filters (Top genes, Breeders, Long-lived, Ending ≤1h, Cash, CC), Dim below a gene score, the juveniles each listing would give, Best buy and Best value per sex, Best to breed |
+| **Animal Storage** | Filters (Pregnant, Alpha, Adults / Fertile adults / Juveniles, Sellable, Sell advice, Not listed, Has pair, Surplus, Gene ≥, Kin), the juveniles each stored animal would give, lister on/off, sort by score, summary line, Find a habitat |
 | **Zoo Animals list** | Filter bar (habitat, sex, age, pregnant, alpha, contraception, unhappy, gene and fertility minimums, Kin) and sort by gene, breeder or welfare |
 | **Kin (inbreeding)** | Risk badges in every animal screen, alerts, Kin planner, Find a mate, Compare Mates and Genealogy additions, fertility over a life |
 | **Species board** | Plan moves by drag and drop, Suggest fixes, Breeding programme, Thin out, habitat assignments, Execute plan one move at a time, Auto mode per species |
@@ -36,10 +36,10 @@ you set a habitat aside for, newborn names and boxing an overdue mother.
 
 **New features**
 
-- **Calves on the Market.** Each listing's badge shows the calves it would give with your breeders,
+- **Juveniles on the Market.** Each listing's badge shows the juveniles it would give with your breeders,
   by the game's own gene model, and the best buy and best value of each sex are tagged across every
   page. A male is scored by all your females; his badge names his best match where it differs.
-- **Calves in Animal Storage.** Your stored animals are scored the same way, so a stored breeder and
+- **Juveniles in Animal Storage.** Your stored animals are scored the same way, so a stored breeder and
   a Market one compare on one scale.
 - **Best to breed** (Market lister). One Market check of every breeding target, ranked by the CC a
   breeding female earns a year at the asking prices of the moment. The Market shows asks, not sales,
@@ -49,9 +49,9 @@ you set a habitat aside for, newborn names and boxing an overdue mother.
   animal comes off the market first). Also young animals waiting in storage, which never grow up
   there, and animals too old to trade, with Bring from storage.
 - **What a habitat needs.** A notice when a habitat has no partner to go on breeding, when growing
-  calves will need fresh blood, when a sire breeds well under the standard, and whether to keep or
+  juveniles will need fresh blood, when a sire breeds well under the standard, and whether to keep or
   sell a good breeder a better one replaces. Its Market button opens on the sex wanted, with the
-  listings whose calves fall short hidden.
+  listings whose juveniles fall short hidden.
 - **Missed notices.** A notice that goes by itself waits behind a round button in the corner.
 - **Sell advice** (Animal Storage). A chip for the animals the Breeding programme advises letting
   go, cycled by how each can leave: the market, release or Quick trade. **Sellable** cycles every
@@ -75,9 +75,9 @@ you set a habitat aside for, newborn names and boxing an overdue mother.
 
 **Changes**
 
-- **Breeding programme.** A pair is worth its expected calves times the game's conception chance
-  times the years both can still breed, and animals rank by the calves they give. A breeder whose
-  calves fall well below the best pair's waits at the trade centre, keeping one of each sex per
+- **Breeding programme.** A pair is worth its expected juveniles times the game's conception chance
+  times the years both can still breed, and animals rank by the juveniles they give. A breeder whose
+  juveniles fall well below the best pair's waits at the trade centre, keeping one of each sex per
   habitat set aside. Every habitat set aside gets a breeding pair while the breeders allow one.
 - **Never inbreed.** Relatives of the other sex never share a habitat in any plan, and the game's
   most adults per sex is a hard limit. The "Related pairs together" tuning is gone.
@@ -731,7 +731,7 @@ which male and female in the same habitat are related and would inbreed. Collect
 - **Breeding programme** (Species board, next to Suggest fixes): plans the best layout of a
   species' breeders for **genetics**: expected young (the game's gene formula) × the chance of
   conception (the game's own probability) × the years both can still breed. Animals rank by the
-  calves they give, and every habitat set aside gets a breeding pair while the breeders allow one.
+  juveniles they give, and every habitat set aside gets a breeding pair while the breeders allow one.
   Franchise and Career zoos keep the game's group and room rules in full; in a sandbox park with
   social groups off a habitat breeds through one male, and with overcrowding off it has no room
   limit. It follows the species' **group make-up** (pairs; one

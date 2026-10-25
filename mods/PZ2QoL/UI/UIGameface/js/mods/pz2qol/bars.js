@@ -128,13 +128,13 @@ function buildMarketBar() {
     dim.appendChild(handedOver);
     // a species you keep fades by your breeding standard instead of a step
     const standard = h('div.PZ2QoL_pill.subtle.standard', {
-        title: "Listings whose best calves with your breeders fall under your breeding standard (your best pair's young less 10, as Auto mode judges a newcomer) are faded, and so is any with 0% fertility. The Dim below steps are for a species you don't keep yet.",
+        title: "Listings whose best juveniles with your breeders fall under your breeding standard (your best pair's young less 10, as Auto mode judges a newcomer) are faded, and so is any with 0% fertility. The Dim below steps are for a species you don't keep yet.",
     });
     // a notice's Market: the listings whose calves miss its floor are hidden
     const strictText = h('span');
     const strictToggle = chip('Show them', 'Show the hidden listings, faded', () => setShowWeak(!strictState().showWeak));
     const strict = h('div.PZ2QoL_pill.subtle.standard', {
-        title: "From a notice: the listings whose calves with the animals they would breed with fall under the minimum the notice asks for are hidden (a male by his average over the females, as he fathers every litter). Only CC listings with fertility above 0% are asked for: a calf's fertility and immunity come from how unlike its parents' genes are, so higher minimums would hide good mates.",
+        title: "From a notice: the listings whose juveniles with the animals they would breed with fall under the minimum the notice asks for are hidden (a male by his average over the females, as he fathers every litter). Only CC listings with fertility above 0% are asked for: a juvenile's fertility and immunity come from how unlike its parents' genes are, so higher minimums would hide good mates.",
     }, strictText, strictToggle);
     const syncDim = () => {
         const below = getMarketDimBelow();
@@ -146,10 +146,10 @@ function buildMarketBar() {
         setText(handedOver, offStep ? String(below) : '');
         handedOver.title = `From a needs notice: listings with gene score below ${below} are faded. Pick a step to replace it.`;
         standard.style.display = fading.standard == null ? 'none' : '';
-        setText(standard, typeof fading.standard === 'number' ? `Faded: calves < ${fading.standard} (your standard)` : 'Faded: calves under your standard');
+        setText(standard, typeof fading.standard === 'number' ? `Faded: juveniles < ${fading.standard} (your standard)` : 'Faded: juveniles under your standard');
         const st = strictState();
         strict.style.display = st.on ? '' : 'none';
-        setText(strictText, st.showWeak ? `Showing listings with calves under ${st.floor}, faded` : `${st.hidden} hidden: calves under ${st.floor}`);
+        setText(strictText, st.showWeak ? `Showing listings with juveniles under ${st.floor}, faded` : `${st.hidden} hidden: juveniles under ${st.floor}`);
         setChip(strictToggle, false, st.showWeak ? 'Hide them' : 'Show them');
         strictToggle.style.display = st.showWeak || st.hidden ? '' : 'none';
     };

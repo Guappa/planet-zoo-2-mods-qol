@@ -47,7 +47,7 @@ export function scoreTarget(target, read) {
     const share = demand / (demand + count);
     const value = price == null ? null : perYear * price * share;
     const supply = count === 0 ? 'none listed' : `${approx ? 'about ' : ''}${count} listed, asking about ${cc(price)} CC`;
-    const why = `${supply}; ${demand} wanted across ${target.reserves} reserve${target.reserves === 1 ? '' : 's'}; a calf every ${years(target.interBirth)} years per female, sellable after ${years(firstSale)}`;
+    const why = `${supply}; ${demand} wanted across ${target.reserves} reserve${target.reserves === 1 ? '' : 's'}; a juvenile every ${years(target.interBirth)} years per female, sellable after ${years(firstSale)}`;
     return Object.assign(base, { ok: true, count, approx, price, share, value, why });
 }
 

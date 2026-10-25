@@ -451,7 +451,7 @@ function needsNotices(d) {
         // n.bring: the best fitting stored animals (kinauto noteNeeds), when storage was read
         const picked = Array.isArray(n.bring) ? n.bring : null;
         const have = picked ? picked.length : !stored ? null : n.sex === 'pair' ? Math.min(stored.m, stored.f) : n.sex === Sex.Male ? stored.m : stored.f;
-        const how = picked && picked.length ? `Best fit in Animal Storage: ${picked.map(b => b.name).join(' and ')}${picked[0].young != null ? `, calves of about ${picked[0].young}%` : ''}. Bring ${picked.length === 1 ? 'it' : 'them'} and Auto mode places ${picked.length === 1 ? 'it' : 'them'}.`
+        const how = picked && picked.length ? `Best fit in Animal Storage: ${picked.map(b => b.name).join(' and ')}${picked[0].young != null ? `, juveniles of about ${picked[0].young}%` : ''}. Bring ${picked.length === 1 ? 'it' : 'them'} and Auto mode places ${picked.length === 1 ? 'it' : 'them'}.`
             : have == null ? `Bring one from Animal Storage if you have one, or buy ${buy} on the market.`
                 : have > 0 ? `${have} in Animal Storage may do: bring them to the trade centre and the next run places the best one. Else buy ${buy} on the market.`
                     : `None in the zoo, the trade centre or Animal Storage fits: buy ${buy} on the market.`;
@@ -515,11 +515,11 @@ function listedNote(list) {
 function storageNotice(d) {
     const model = getKinModel();
     const sexOf = sex => sexMark({ sex });
-    const calves = x => (x.young != null ? ` (calves about ${x.young}%)` : '');
+    const calves = x => (x.young != null ? ` (juveniles about ${x.young}%)` : '');
     const line = x => {
         const who = `${x.name}${listedMark(x)} ${sexOf(x.sex)} \u2192 ${habNameIn(model, x.hab)}`;
         if (x.role === 'fill') return `${who}, which has no breeding ${sexWord(x.sex)}${calves(x)}`;
-        if (x.role === 'replace') return `${who} in place of ${x.replacesName} (calves about ${x.young}%, against ${x.replacesYoung}%)`;
+        if (x.role === 'replace') return `${who} in place of ${x.replacesName} (juveniles about ${x.young}%, against ${x.replacesYoung}%)`;
         return `${who}${calves(x)}`;
     };
     const n = d.items.length;
@@ -545,13 +545,13 @@ function freshBloodNotices(d) {
         const many = n.calves.length > 1;
         const habs = Array.from(new Set(n.calves.map(c => habNameIn(model, c.hab)))).join(', ');
         const grows = many ? 'they grow' : 'it grows';
-        const how = n.bring ? `Best fit in Animal Storage: ${n.bring.name}, calves with ${many ? 'them' : 'it'} about ${n.bring.young}%. Bring it now and Auto mode places it.`
+        const how = n.bring ? `Best fit in Animal Storage: ${n.bring.name}, juveniles with ${many ? 'them' : 'it'} about ${n.bring.young}%. Bring it now and Auto mode places it.`
             : n.bring === null ? `None in Animal Storage fits: buy an unrelated adult ${want} on the market before ${grows} up.`
                 : `Bring an unrelated ${want} from Animal Storage, or buy one on the market, before ${grows} up.`;
         kinToast({
             severity: 'future', level: 'action', kind: 'fresh', species: d.species,
             title: `${name}: fresh blood needed for ${n.calves.length} young`,
-            text: `${n.calves.map(c => c.name).join(', ')} (${habs}): once grown, ${many ? 'they have' : 'it has'} no ${want} in the zoo to breed with. The ${want}s here are related, or their calves would score well below your best pair's. ${how}`,
+            text: `${n.calves.map(c => c.name).join(', ')} (${habs}): once grown, ${many ? 'they have' : 'it has'} no ${want} in the zoo to breed with. The ${want}s here are related, or their juveniles would score well below your best pair's. ${how}`,
             actions: [
                 n.bring !== null ? { label: 'Bring from storage', icon: 'IconTrade', primary: true, run: () => bringFromStorage(getKinModel(), d.species, { match: n.bring ? [{ sex: n.bring.sex, name: n.bring.name, genes: n.bring.genes }] : null }) } : null,
                 marketAction(d.species, { sex: n.sex === Sex.Male ? 'm' : 'f', dimBelow: n.dimBelow, mates: n.mates, floor: null, strict: true }, { primary: n.bring === null }),
