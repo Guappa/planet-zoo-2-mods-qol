@@ -39,9 +39,10 @@
   storage toolbar covered Animal Storage's species-search suggestions (`InputField` renders them as
   `.InputField_resultsMenu` in a Layer, only while editing with matches) and stayed over the Zoopedia
   opened from storage (a Layer with `.Layer_background.darken`). In the park HUD the Zoopedia is a
-  plain `.ZoopediaModule_root` (`.hidden` when closed). PZ2QoL's `cover.js` `gameOnTop()` checks all
-  of these plus `.PopupActionsModule_root.show`; the storage/market toolbars (`bars.js`), the lister
-  panel and the zoo toolbar hide while it is true. **offline** (UI source; harness `kin_storage.mjs`
+  plain `.ZoopediaModule_root` (`.hidden` when closed). PZ2QoL's `stepaside.js` lists these
+  (`GAME_DROPDOWNS`, `GAME_WINDOWS`): the storage/market toolbars (`bars.js`), the lister panel and
+  the zoo toolbar step aside while one of them covers them, and hide while a game popup is open
+  (`ui.js` `isGamePopupOpen`, `.PopupActionsModule_root.show`). **offline** (UI source; harness `kin_storage.mjs`
   section 5)
 
 ## CSS rules for Gameface

@@ -11,6 +11,7 @@ Run all of these before installing a build.
 | Lua syntax | `luac.exe -p <file>` (same folder) | Syntax only |
 | Module load | `cd tests/uiharness && node probe_imports.mjs` | Every UI module imports in a real browser (`node --check` misses errors in these ES modules) |
 | Browser harness | `node tests/uiharness/run.mjs [--no-vanilla] [--jobs N]` | See below |
+| Page modules | `cd tests/page && npm install && npm test` (PZ2_LUA: the luadec `lua.exe`, runs the `tests/page/*.lua`; PZ2H_GAME: the unpacked game UI, checks the imports against it; each is skipped while unset) | The pages' modules in Node with a fake game (`pageloader.js`, `fakepage.js`, `tests/page/stubs`): Auto mode runs, the breeding rules on random zoos (`rules.test.js`, fast-check), the board, the Breeding window, the lister, storage, alerts |
 
 ## Fast vs full runs (2026-10-18)
 
@@ -75,6 +76,11 @@ Run all of these before installing a build.
     picker, that select-all only ticks visible rows, Clear, and toolbar height.
 - Screenshots go to the scratchpad `harness/out`. **Look at them**: layout bugs pass the
   assertions surprisingly often.
+- Scenario helpers: `dock.mjs` `dockButton(page, label)` finds a launcher button by its label (a
+  button added to the dock moves none of the others); `kin_fixture.mjs` `settleStoredAsks(page,
+  species)` waits out a storage ask another module sent before a scenario's fake Lua side
+  answers (a Franchise snapshot lets the Market's fresh-blood check ask at once), then empties
+  the stored cache.
 - It prints `OK` or `FAIL` with `HARNESS ERRORS`.
 - **Pitfall:** the harness runs detached, so `Engine.isCoherentPlayer()` is **true**. The game's
   debug-player-only listeners, such as `SetAnimalMarketScreen`, work here but **not in game**.
@@ -432,10 +438,10 @@ Run all of these before installing a build.
   one `PZ2QoL_KinContracept` per click and none while waiting, the advice gone after the scan,
   Use this plan without them, `runPlan` skipping a plan's pregnant move and running a `byPlayer` one.
 - Auto mode (`docs/DESIGN-autopilot.md` section 16): `node --test tests/engines_equivalence.test.mjs`
-  (the board's engines answer as before on 40 seeded zoos; golden in
-  `tests/fixtures/engines_golden.json`, recorded by `tests/helpers/record_engines_golden.mjs` from
-  main's code before any Auto mode engine change (2026-10-18): never re-record it to make a
-  failure go away), `tests/kinauto.test.mjs` (a run, locks, Thin out first, cooldown, growing up,
+  (the board's engines answer as recorded on 40 seeded zoos; golden in
+  `tests/fixtures/engines_golden.json`, recorded by `tests/helpers/record_engines_golden.mjs`
+  after a deliberate change to what an engine answers: never re-record it to make a failure go
+  away), `tests/kinauto.test.mjs` (a run, locks, Thin out first, cooldown, growing up,
   the last breeder, runs settling on 50 seeded zoos, the ledger), `tests/kinauto_runtime.test.mjs`
   (fake engine: nothing on Auto sends nothing, an offline run, the schedule, Franchise waits for
   the click), `tests/kinauto_soak.test.mjs` (50 park years, 3 settings x 3 seeds, about 2 minutes;
