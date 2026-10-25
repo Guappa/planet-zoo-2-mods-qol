@@ -682,7 +682,7 @@ function autoOnAssign() {
     return (getKinSettings() || {}).autoOnAssign !== false;
 }
 
-// The Kin setting Sell breeders before elderly (kinageing sellsBeforeElderly)
+// The Kin setting Breeders to storage before elderly (kinageing sellsBeforeElderly)
 function earlySale() {
     return (getKinSettings() || {}).autoEarlySale !== false;
 }

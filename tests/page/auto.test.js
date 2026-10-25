@@ -437,7 +437,7 @@ test('with Bring waiting animals into a habitat off, a pregnant female waits at 
     assert.ok(off.moves.some(m => m.id === 'Calf' && m.to !== TRADE), `off: the young one goes back: ${JSON.stringify(off.moves)}`);
 });
 
-test('with Sell breeders before elderly off, a hippo four years from elderly keeps breeding with no sell advice', async () => {
+test('with Breeders to storage before elderly off, a hippo four years from elderly keeps breeding with no sell advice', async () => {
     const { withAgeingAdvice } = await import('../../mods/PZ2QoL/UI/UIGameface/js/mods/pz2qol/kinautocore.js');
     const model = zoo([animal('Bull', Sex.Male, 'H1'), animal('Cow', Sex.Female, 'H1'), animal('Greying', Sex.Female, 'H1', { age: 36.5 })]);
     const on = planAutoRun({ model, species: HIPPO, view: {}, settings: {} });

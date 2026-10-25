@@ -16,7 +16,7 @@ export const ELDERLY_WARNING_YEARS = MARKET_ELDERLY_MARGIN_YEARS + 1;
 // breeds to the end and lives out its life where it is (pastSelling).
 export const EARLY_SALE_MIN_ELDERLY_AGE = 10 * ELDERLY_WARNING_YEARS;
 
-// earlySale: the Kin setting Sell breeders before elderly (off: none is)
+// earlySale: the Kin setting Breeders to storage before elderly (off: none is)
 export function sellsBeforeElderly(species, earlySale = true) {
     const rules = speciesRules(species);
     return earlySale !== false && !!rules && rules.elderlyAge >= EARLY_SALE_MIN_ELDERLY_AGE;

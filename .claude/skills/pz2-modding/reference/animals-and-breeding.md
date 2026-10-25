@@ -941,9 +941,10 @@ What the programme, Auto mode and the Species board keep to; `tests/rules.test.j
   of elderly) waiting there goes into a habitat with room, within the game's most per sex and
   beside no relative of the other sex (`adultBackMoves`); off, Auto mode holds those moves and
   they wait.
-- **Selling before elderly:** Kin setting `autoEarlySale` (Sell breeders before elderly, off by
-  default): an Auto species' adult within four years of elderly goes to the trade centre with sell
-  advice, in a species that turns elderly at 40 or later (`kinageing.js sellsBeforeElderly`).
+- **Selling before elderly:** Kin setting `autoEarlySale` (Breeders to storage before elderly, off
+  by default): an Auto species' adult within four years of elderly goes to the trade centre with
+  sell advice, in a species that turns elderly at 40 or later (`kinageing.js sellsBeforeElderly`).
+  The player sells it; Auto mode never sells.
   Within the server's three years it is never sent at all (see "Trading near elderly").
 - **Animals rank by the young they give** (`youngQuality`); an animal with a 0 % fertility gene
   never breeds. A breeder whose young would score well below the best pair's waits at the trade

@@ -117,7 +117,7 @@ New Kin settings and their defaults:
 | Setting | Section | Default |
 |---|---|---|
 | Habitat set aside turns Auto on | Auto mode | off |
-| Sell breeders before elderly | Auto mode | off |
+| Breeders to storage before elderly | Auto mode | off |
 | Bring waiting animals into a habitat | Auto mode | off |
 | Contraception near a relative | Auto mode | off |
 | Change juvenile names automatically (and its name groups) | Names | off |

@@ -17,8 +17,8 @@ export const KIN_SETTINGS = Object.freeze([
         tip: "Setting a habitat aside for a species turns that species' Auto mode on, so its breeding runs by itself from then on (Franchise too). A species you turned Auto mode off for stays off. Off: you turn Auto mode on per species on the Species board.",
     },
     {
-        key: 'autoEarlySale', default: false, section: 'Auto mode', label: 'Sell breeders before elderly',
-        tip: "Auto mode sends a breeder to the trade centre with sell advice four years before it turns elderly, so there is a year to sell it before the server refuses every trade (three years short of elderly). Only in species that turn elderly at 40 or later, where those years are a tenth of a life at most. Off: breeders breed to the end and live out their lives in their habitat.",
+        key: 'autoEarlySale', default: false, section: 'Auto mode', label: 'Breeders to storage before elderly',
+        tip: "Auto mode sends a breeder to the trade centre with sell advice four years before it turns elderly, so there is a year to sell it before the server refuses every trade (three years short of elderly). Only in species that turn elderly at 40 or later, where those years are a tenth of a life at most. You sell it; Auto mode never sells. Off: breeders breed to the end and live out their lives in their habitat.",
     },
     {
         key: 'autoHouseWaiting', default: false, section: 'Auto mode', label: 'Bring waiting animals into a habitat',
