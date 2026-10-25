@@ -29,6 +29,10 @@ export const KIN_SETTINGS = Object.freeze([
         ],
     },
     {
+        key: 'errorBanner', default: true, section: 'Alerts', label: "The mod's errors on screen",
+        tip: 'A banner when something in the mod goes wrong (a server error, a refused request, a script error), with Details. Off: nothing pops up; debug builds still write them to dbg/trace.log.',
+    },
+    {
         key: 'boxedAlert', default: true, section: 'Alerts', label: 'Boxed with nowhere to go',
         tip: 'A Needs-you alert when an animal waits in its transport box with no destination (the game only warns after a long time)',
     },

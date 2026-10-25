@@ -176,6 +176,7 @@ js_kincontracept
 js_kinlocate
 js_kinheatmap
 js_step_KinData
+js_step_Errorbannersetting
 js_step_Kininzoomanagement
 js_step_Kininfopanels
 js_step_KininCompareMatesandGenealogy

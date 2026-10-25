@@ -1,7 +1,7 @@
 // PZ2QoL UI entry. Loaded by PZ2QoLFrontend.html after the game's own
 // Frontend.js, so it shares the game's module instances.
 import { loadCSS } from '/js/common/util/CSSUtil.js';
-import { breadcrumb, installErrorCapture, reportError } from '/js/mods/pz2qol/errors.js';
+import { breadcrumb, installErrorCapture, reportError, setErrorBanner } from '/js/mods/pz2qol/errors.js';
 import { installDebugLog } from '/js/mods/pz2qol/debuglog.js';
 import { installListFilter, installSelectAllGuard } from '/js/mods/pz2qol/listfilter.js';
 import { installBadges } from '/js/mods/pz2qol/badges.js';
@@ -9,7 +9,7 @@ import { installBars } from '/js/mods/pz2qol/bars.js';
 import { installPriceBook } from '/js/mods/pz2qol/pricebook.js';
 import { installLister } from '/js/mods/pz2qol/lister.js';
 import { installZoo } from '/js/mods/pz2qol/zoo.js';
-import { installKin } from '/js/mods/pz2qol/kin.js';
+import { getKinSettings, installKin, onKinSettings } from '/js/mods/pz2qol/kin.js';
 import { installKinZoo } from '/js/mods/pz2qol/kinzoo.js';
 import { installKinPanels } from '/js/mods/pz2qol/kinhabitat.js';
 import { installKinMates } from '/js/mods/pz2qol/kinmates.js';
@@ -68,6 +68,10 @@ step('Market lister', installLister);
 step('Zoo animal filters', installZoo);
 // Kin: relatedness and inbreeding risk
 step('Kin data', installKin);
+step('Error banner setting', () => {
+    setErrorBanner(getKinSettings().errorBanner);
+    onKinSettings(s => setErrorBanner(s.errorBanner));
+});
 step('Kin in zoo management', installKinZoo);
 step('Kin in info panels', installKinPanels);
 step('Kin in Compare Mates and Genealogy', installKinMates);

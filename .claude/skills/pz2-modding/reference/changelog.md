@@ -197,3 +197,4 @@ One line per update: date, what changed, why.
 - 2026-10-21: debugging: the 3.2.0 probe crash fixed offline (probe only in debug builds, 1 s / loadingItems guard). animals-and-breeding: exhibit animal UIDs can be GUIDs; Kin keeps the scanned value (`Kin.tExhibitUids`).
 - 2026-10-21: debugging: script profiler is debug-builds-only from 3.2.1. archives-and-build: v3.2.1 tagged.
 - 2026-10-25: ui-gameface: Kin settings are one table (`kinsettings.js`), the Settings popover drawn from it; Kin settings are kept in the player's settings, not session-only.
+- 2026-10-25: debugging: the error banner and the Kin setting `errorBanner` that switches it off.

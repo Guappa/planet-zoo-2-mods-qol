@@ -21,6 +21,12 @@ There is no `io` library and no visible log, so the mod logs by **loading tiny D
 - The crash reporter creates a 0-byte `.dmp` at game launch and fills it in on a crash, so ignore
   0-byte dumps.
 
+## The error banner
+
+- `errors.js` shows every `reportError` not marked silent, and Lua's `PZ2QoL_Error` (`Errors:Flush`), in a banner with Details and Dismiss.
+- The Kin setting `errorBanner` (default on, under Alerts) switches the banner off: `main.js` passes it to `setErrorBanner`. Every report is still kept (`getErrorLog`, its entry `shown: false`), written to the detailed log and the console, and heard by `onErrorReported` (the lister stops a run on server errors either way).
+- With no mod page up, Lua's fallback dialog for server errors is outside the setting.
+
 ## Detailed log (debug builds, 2026-10-18)
 
 Free-text lines **with values** in the same `dbg\trace.log`, so one play session can be read back

@@ -1339,6 +1339,20 @@ try {
         results.screenshots.errorBannerExpanded = await shot(page, '7_modded_error_banner_expanded');
         results.facts.errorBanner = (await domFacts(page)).errorBanner;
         await page.locator('.PZ2QoL_errorBanner .PZ2QoL_errorButton', { hasText: 'Dismiss' }).click();
+        // the Kin setting errorBanner off: the error is logged, the banner stays hidden
+        results.facts.errorBannerOff = await page.evaluate(async () => {
+            const kin = await import('/js/mods/pz2qol/kin.js');
+            const errors = await import('/js/mods/pz2qol/errors.js');
+            kin.setKinSettings({ errorBanner: false });
+            engine.trigger('PZ2QoL_Error', 'server', 'Server error: banner off', 'test detail');
+            await new Promise(r => setTimeout(r, 600));
+            const last = errors.getErrorLog().pop();
+            const out = { hidden: document.querySelector('.PZ2QoL_errorBanner').classList.contains('hidden'), logged: !!last && last.title === 'Server error: banner off', shown: !!last && last.shown };
+            kin.setKinSettings({ errorBanner: true });
+            return out;
+        });
+        const off = results.facts.errorBannerOff;
+        if (!off.hidden || !off.logged || off.shown) throw new Error(`error banner off: ${JSON.stringify(off)}`);
     });
     await step('market lister', async () => {
         results.facts.lister = await runListerScenario(page);
