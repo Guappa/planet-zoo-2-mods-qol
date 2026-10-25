@@ -920,7 +920,7 @@
 .PZ2QoL_kpSwitch.on .PZ2QoL_kpSwitchKnob { transform: translateX(0.93rem); }
 .PZ2QoL_kpSwitchLabel { margin-left: 0.5rem; font-size: 0.82rem; font-weight: bold; white-space: nowrap; }
 .PZ2QoL_kpSwitch.disabled { opacity: 0.4; cursor: default; }
-.PZ2QoL_kpSeg.kpBoxedAfter { margin: 0.1rem 0 0.15rem 2.6rem; }
+.PZ2QoL_kpSeg.dependent { margin: 0.1rem 0 0.15rem 2.6rem; }
 .PZ2QoL_kpSeg.disabled { opacity: 0.4; }
 
 /* ----------------------------------------------------- minimised bar */

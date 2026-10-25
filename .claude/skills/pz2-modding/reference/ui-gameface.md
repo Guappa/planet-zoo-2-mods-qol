@@ -147,7 +147,7 @@
 - PZ2QoL: `speciesnames.js` `speciesName(raw)` (game name, else the internal name with spaces;
   caches successes only, reports a failure once, silently), pure logic in `speciesnamecore.js`
   (node-tested; node tests can't import game modules). Kin setting `gameSpeciesNames` (default on,
-  session-only like every Kin setting; switch in the Kin planner's Settings) turns it off
+  kept in the player's settings like every Kin setting; switch in the Kin planner's Settings) turns it off
   everywhere: Species board, Kin planner, kin cards, Find a habitat, Market lister and desk.
   Sorts, matching (`lister.js` `speciesUid`) and `data-species` keep the ids.
 - The harness has no loc files (`.locxml` 404, dictionary empty), so names fall back to the ids;
@@ -276,6 +276,7 @@
 - So mod JS runs on the UI thread only, and long work must be sliced (as `planProgrammeAsync` is). Multi-core work needs a native helper (`lua-runtime.md`, "Loaders and a native return channel").
 
 - **Settings must not live in localStorage** (**proven**: the developer's Kin settings reset on every restart, 2026-10-18). Keep player-wide settings in `prefs.js` (the player save) and per-zoo data in `userstore.js`. `marketdesk.js` filters, `kinmates.js` sort, `bars.js` collapsed bars and `lister.js` enabled/offset are still session-only.
+- **Kin settings are one table** (`kinsettings.js`, pure): each entry holds a setting's key, default and, for a switch in the Kin planner's Settings, its section, sub-section, label, tip, choices (a pick-one row), note and `needs` (the setting it depends on: greyed out and inert while that one is off). `kin.js` takes `DEFAULT_KIN_SETTINGS` from it; `kinplanner.js renderPopover` draws the popover from it in table order (the muted species close the Trade centre section). A new setting is one entry. Pick-one rows carry `data-setting="<key>"` and their items `data-value`, which the harness selects by. An entry with no section has no switch (`enabled`, `allowPlansOnline`).
 
 - **Gamepad buttons on a mod panel** (2026-10-18, **offline**; harness proven): `import { onShouldBlockInput } from '/js/common/core/Input.js'`
   and add a listener `e => ...`: every UI input (`e.inputName` `UI_Select` = A, `UI_Cancel` = B/back; `e.button.isPressed()` /
