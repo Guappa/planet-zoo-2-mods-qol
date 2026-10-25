@@ -198,3 +198,4 @@ One line per update: date, what changed, why.
 - 2026-10-21: debugging: script profiler is debug-builds-only from 3.2.1. archives-and-build: v3.2.1 tagged.
 - 2026-10-25: ui-gameface: Kin settings are one table (`kinsettings.js`), the Settings popover drawn from it; Kin settings are kept in the player's settings, not session-only.
 - 2026-10-25: debugging: the error banner and the Kin setting `errorBanner` that switches it off.
+- 2026-10-25: debugging: 39 page breadcrumbs and install steps (Auto mode runs, the Species board, the desk, the planner) added to `checkpoints.txt`, two misspelled names corrected; `tests/checkpoints.test.mjs` guards the list.
