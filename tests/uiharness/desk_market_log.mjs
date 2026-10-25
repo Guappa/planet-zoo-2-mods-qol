@@ -111,9 +111,9 @@ export async function frontend(page, ctx) {
         if (facts.panel.overlap) problems.push(`log panel header items overlap (${facts.panel.overlap})`);
         if (!/writing to dbg\/trace\.log/.test(facts.panel.info)) problems.push(`log panel state: "${facts.panel.info}"`);
     }
-    // Area filter: lister only
-    await page.locator('.PZ2QoL_dlog .PZ2QoL_dlogBtn', { hasText: /^Area:/ }).click();
-    await page.locator('.PZ2QoL_dlog .PZ2QoL_dlogBtn', { hasText: /^Area:/ }).click();
+    // Area filter: lister only (each click steps to the next area)
+    const areaBtn = page.locator('.PZ2QoL_dlog .PZ2QoL_dlogBtn', { hasText: /^Area:/ });
+    for (let i = 0; i < 20 && !/^Area: lister$/.test((await areaBtn.innerText()).trim()); i++) await areaBtn.click();
     await page.waitForTimeout(150);
     facts.panelLister = await page.evaluate(() => [...document.querySelectorAll('.PZ2QoL_dlog .PZ2QoL_dlogLine')].map(n => n.textContent));
     if (!facts.panelLister.length || facts.panelLister.some(l => !/ lister /.test(l))) problems.push(`Area: lister shows other lines: ${facts.panelLister.slice(0, 2)}`);
