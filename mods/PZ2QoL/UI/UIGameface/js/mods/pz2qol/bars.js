@@ -390,7 +390,7 @@ function place() {
             reserve(s, bottom - r.bottom + 10);
         }
         catch (e) {
-            reportError('ui', 'Toolbar placement failed', e);
+            reportError('ui', 'Toolbar placement failed', e, { silent: true });
         }
     }
 }

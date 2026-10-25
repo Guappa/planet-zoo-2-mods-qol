@@ -77,7 +77,7 @@ export function createMarketCalves({ now = () => Date.now() } = {}) {
     }
 
     // a strict hand-over's listing under its floor: by a male's average over
-    // the females (in a harem, the owner's rule, he fathers every litter), a
+    // the females (in a harem he fathers every litter), a
     // female's best male; not while its genes are still read
     function hides(a) {
         if (!strictOn() || matesFor(a) !== target) return false;
@@ -168,8 +168,8 @@ export function createMarketCalves({ now = () => Date.now() } = {}) {
 
     // a Market row (readAnimal) -> { score, best } of its calves with the
     // mates; null without mates for it, or while its genes are not in (yet).
-    // score: a male's average over the females (in a harem, the owner's rule,
-    // he fathers every litter, so he has to suit them all), a female's best
+    // score: a male's average over the females (in a harem he fathers every
+    // litter, so he has to suit them all), a female's best
     // male (she joins the pride whose male suits her); best: its best young,
     // the one Auto mode's standard is judged on. The game is asked by the
     // list key, as its own Compare Mates does (the row's id is its place on
@@ -229,7 +229,7 @@ export function createMarketCalves({ now = () => Date.now() } = {}) {
             engine.trigger('PZ2QoL_MarketGenes', 'G' + (++seq), asked.map(([key]) => key).join(','));
         }
         catch (e) {
-            reportError('ui', 'Market calves: the game could not be asked for listing genes. Reopen the hub; if it stays, the mod\'s Lua part did not load.', e);
+            reportError('ui', 'Market calves: the game could not be asked for listing genes. Reopen the hub; if it stays, the mod\'s Lua part did not load.', e, { silent: true });
         }
     }
 
@@ -285,7 +285,7 @@ export function createMarketCalves({ now = () => Date.now() } = {}) {
             engine.trigger('PZ2QoL_MarketMatesGet', 'M' + (++seq));
         }
         catch (e) {
-            reportError('ui', "Market picks: the game could not be asked for your breeders. Reopen the hub; if it stays, the mod's Lua part did not load.", e);
+            reportError('ui', "Market picks: the game could not be asked for your breeders. Reopen the hub; if it stays, the mod's Lua part did not load.", e, { silent: true });
         }
     }
 

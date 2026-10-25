@@ -201,7 +201,7 @@ function applyToRow({ rowEl, screen, a }, picks) {
     // one fade at a time: by its best calves against your standard (Auto
     // mode's) where it can be judged so, not while its genes are still read;
     // else by the player's Dim below step on its own score. A 0% fertility
-    // gene never breeds (the owner's standard)
+    // gene never breeds
     const shouldDim = screen == 'market' && (zeroFertility(a) || strictWeak(a) || (judgedByStandard(a)
         ? bestCalves != null && bestCalves < floor
         : marketDimBelow > 0 && (g == null || g < marketDimBelow)));

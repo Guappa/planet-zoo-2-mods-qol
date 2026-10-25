@@ -2,7 +2,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-    applyStorageFilters, breederScore, DEFAULT_STORAGE_FILTERS, Gender, geneScore, isBestValueCandidate, Maturity,
+    applyStorageFilters, breederScore, DEFAULT_STORAGE_FILTERS, Gender, geneScore, Maturity, PICK_MIN_SCORE,
     speciesStats, storageFiltersActive, storageSummary, surplusIds, valueIndex,
 } from '../mods/PZ2QoL/UI/UIGameface/js/mods/pz2qol/scores.js';
 import { tierOf } from '../mods/PZ2QoL/UI/UIGameface/js/mods/pz2qol/ui.js';
@@ -42,12 +42,12 @@ test('valueIndex per 1k cash and per 100 CC', () => {
     assert.equal(valueIndex(animal('d', { price: undefined })), null);
 });
 
-test('best value needs a decent gene score', () => {
+// a Market pick (marketpickcore.js) is only an animal worth having at all
+test('a pick needs a decent gene score', () => {
     const cheapPoor = animal('a', { price: 100, genes: { size: .3, longevity: .3, fertility: .3, immunity: .3 } });
     const fairGood = animal('b', { price: 5000, genes: { size: .7, longevity: .7, fertility: .7, immunity: .7 } });
-    assert.equal(isBestValueCandidate(cheapPoor), false);
-    assert.equal(isBestValueCandidate(fairGood), true);
-    assert.equal(isBestValueCandidate(animal('c', { price: 0 })), false);
+    assert.ok(geneScore(cheapPoor) < PICK_MIN_SCORE);
+    assert.ok(geneScore(fairGood) >= PICK_MIN_SCORE);
 });
 
 test('score tier thresholds (the badge colour, ui.js tierOf)', () => {

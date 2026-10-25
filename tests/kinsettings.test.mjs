@@ -11,8 +11,11 @@ test('every Kin setting has one entry and one default', () => {
     assert.equal(new Set(keys).size, keys.length, 'no key twice');
     assert.deepEqual(Object.keys(DEFAULT_KIN_SETTINGS), keys);
     assert.equal(DEFAULT_KIN_SETTINGS.closeKinship, DEFAULT_CLOSE_KINSHIP);
-    assert.equal(DEFAULT_KIN_SETTINGS.allowPlansOnline, false);
     assert.equal(DEFAULT_KIN_SETTINGS.releaseBoxed, true);
+});
+
+test('what the mod does by itself that it did not do before starts off', () => {
+    for (const key of ['autoOnAssign', 'autoEarlySale', 'autoHouseWaiting', 'autoContraception', 'uniqueNames', 'overdueBox']) assert.equal(DEFAULT_KIN_SETTINGS[key], false, key);
 });
 
 test('a setting shown in Settings has words, a valid default and a known dependency', () => {
@@ -23,9 +26,9 @@ test('a setting shown in Settings has words, a valid default and a known depende
     }
 });
 
-test('the Settings sections keep their order: Alerts, Trade centre, Show, Names, Close kin from', () => {
+test('the Settings sections, by what each setting affects', () => {
     const sections = [...new Set(KIN_SETTINGS.filter(s => s.section).map(s => s.section))];
-    assert.deepEqual(sections, ['Alerts', 'Trade centre', 'Show', 'Names', 'Close kin from']);
+    assert.deepEqual(sections, ['Auto mode', 'Names', 'Transport boxes', 'Trade centre', 'Alerts', 'Show', 'Close kin from']);
 });
 
 test('isChoice matches the close-kin fraction however it was kept', () => {

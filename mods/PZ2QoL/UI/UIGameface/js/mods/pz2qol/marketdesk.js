@@ -386,7 +386,7 @@ async function readRows(force = false) {
         queueRender();
     }
     catch (e) {
-        reportError('ui', 'Market desk: reading storage failed', e);
+        reportError('ui', 'Market desk: reading storage failed', e, { silent: true });
     }
     finally {
         D.reading = false;
@@ -908,7 +908,7 @@ function renderAll(force = false) {
         setTimeout(() => refreshBars(D.boxes), 0);
     }
     catch (e) {
-        reportError('ui', 'Market desk: drawing failed', e);
+        reportError('ui', 'Market desk: drawing failed', e, { silent: true });
     }
 }
 
@@ -1662,7 +1662,7 @@ async function seeAllStorage() {
     }
     catch (e) {
         D.unfilter = 'failed';
-        reportError('ui', 'Market desk: showing all of storage failed', e);
+        reportError('ui', 'Market desk: showing all of storage failed', e, { silent: true });
     }
     finally {
         queueRender();
@@ -1769,7 +1769,7 @@ export function closeMarketDesk() {
         // a run keeps going: it lives in the game-side engine
     }
     catch (e) {
-        reportError('ui', 'Market desk could not close', e);
+        reportError('ui', 'Market desk could not close', e, { silent: true });
     }
     return true;
 }

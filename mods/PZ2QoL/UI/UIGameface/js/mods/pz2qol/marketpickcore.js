@@ -5,7 +5,7 @@
 // score per price among the listings that meet the standard (best calves at
 // or above it, as Auto mode judges a newcomer, or with none of yours known
 // a gene score of at least PICK_MIN_SCORE).
-// A 0% fertility gene never breeds (the owner's standard): never a pick.
+// A 0% fertility gene never breeds: never a pick.
 // Equal calves: the better breeder score, then the better value, wins.
 //   rows: [{ id, sex: 'm' | 'f', adult, infertile, gene, breeder, value, calves, bestCalves, floor, known }]
 //     calves: the score it is ranked by, null while its genes are still being

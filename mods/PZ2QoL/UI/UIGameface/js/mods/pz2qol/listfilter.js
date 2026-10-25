@@ -46,7 +46,7 @@ export function rebindList(key) {
             col.bindToContext(col._context, col._sortField, col._interval);
         }
         catch (e) {
-            reportError('ui', 'List rebind failed', e);
+            reportError('ui', 'List rebind failed', e, { silent: true });
         }
     }
 }

@@ -194,7 +194,7 @@ export function installPriceBook() {
             recordVisibleListings();
         }
         catch (e) {
-            reportError('ui', 'Price recording failed', e);
+            reportError('ui', 'Price recording failed', e, { silent: true });
         }
     }, 1500);
 }

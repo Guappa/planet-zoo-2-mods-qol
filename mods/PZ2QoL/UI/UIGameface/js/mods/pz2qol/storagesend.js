@@ -106,7 +106,7 @@ function wrapActions(inst) {
         catch (e) {
             if (++panelPatch.failures >= 3) {
                 panelPatch.off = true;
-                reportError('mod', '"Find a habitat" turned off', e);
+                reportError('mod', '"Find a habitat" turned off', e, { silent: true });
             }
         }
         return out;
@@ -127,7 +127,7 @@ function patchPanel(mod) {
             wrapActions(this);
         }
         catch (e) {
-            reportError('mod', '"Find a habitat" panel hook failed', e);
+            reportError('mod', '"Find a habitat" panel hook failed', e, { silent: true });
         }
         return ret;
     };
@@ -148,10 +148,10 @@ function installHub() {
             stringLiteral = (await import('/js/common/util/LocalisationUtil.js')).stringLiteral || stringLiteral;
         }
         catch (e) {
-            reportError('mod', '"Find a habitat": game button not found', e);
+            reportError('mod', '"Find a habitat": game button not found', e, { silent: true });
         }
-        if (!patchPanel(await gameModule(MOD_PANEL))) reportError('mod', '"Find a habitat" not installed', 'storage info panel');
-    })().catch(e => reportError('mod', '"Find a habitat" failed to start', e));
+        if (!patchPanel(await gameModule(MOD_PANEL))) reportError('mod', '"Find a habitat" not installed', 'storage info panel', { silent: true });
+    })().catch(e => reportError('mod', '"Find a habitat" failed to start', e, { silent: true }));
 }
 
 // ---------------------------------------------------------- park: the run

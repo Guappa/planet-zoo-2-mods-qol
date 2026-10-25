@@ -617,7 +617,7 @@ export function offspringScore(pred) {
 }
 
 // A breeder's calves with each of `mates` (gene sets) as one score: a male's
-// average over them (in a harem, the owner's rule, he fathers every litter,
+// average over them (in a harem he fathers every litter,
 // so he has to suit them all), a female's best (she joins the pride whose
 // male suits her); best is its best young. -> { score, best, mates } | null
 export function calfScores(genes, mates, male) {

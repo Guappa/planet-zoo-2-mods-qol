@@ -79,7 +79,7 @@ export function installSellAdvice() {
             engine.trigger('PZ2QoL_SellAdviceGet', 'A' + (++seq));
         }
         catch (e) {
-            reportError('ui', 'Sell advice: the game could not be asked. Reopen the hub; if it stays, the mod\'s Lua part did not load.', e);
+            reportError('ui', 'Sell advice: the game could not be asked. Reopen the hub; if it stays, the mod\'s Lua part did not load.', e, { silent: true });
         }
     }
 

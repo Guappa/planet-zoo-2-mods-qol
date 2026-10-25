@@ -171,7 +171,7 @@ function buildRow(model, species, opts) {
                         onOpened();
                     }
                     catch (e) {
-                        reportError('ui', 'Bring to the trade centre: closing the board failed', e);
+                        reportError('ui', 'Bring to the trade centre: closing the board failed', e, { silent: true });
                     }
                     return;
                 }
@@ -549,7 +549,7 @@ function hubTick() {
         });
     }
     catch (e) {
-        reportError('ui', 'Bring to the trade centre: the storage step failed', e);
+        reportError('ui', 'Bring to the trade centre: the storage step failed', e, { silent: true });
     }
 }
 

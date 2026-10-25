@@ -611,7 +611,7 @@ async function startListingJob(animals, { hours, onRefused, refusedMax, advise, 
     if (!engineUsable(caps, pageRows)) {
         const why = `${engineWhyNot(caps, pageRows)} Reopen Animal Storage and try again.`;
         breadcrumb('lister_engine_unusable');
-        reportError('lister', 'Nothing was listed: the listing engine is not ready', why);
+        reportError('lister', 'Nothing was listed: the listing engine is not ready', why, { silent: true });
         return { ok: false, count: 0, message: `Nothing was listed. ${why}` };
     }
     // asked again at the click (one round trip): ids may have come since the desk read them
@@ -1221,7 +1221,7 @@ export function installLister() {
             place();
         }
         catch (e) {
-            reportError('ui', 'Lister panel failed', e);
+            reportError('ui', 'Lister panel failed', e, { silent: true });
         }
     }, 300);
 }

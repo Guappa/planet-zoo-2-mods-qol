@@ -69,11 +69,6 @@ export function valueIndex(a) {
 // Judged by its own genes, a Market pick (marketpickcore) is only an animal worth having at all.
 export const PICK_MIN_SCORE = 60;
 
-export function isBestValueCandidate(a) {
-    const g = geneScore(a);
-    return g != null && g >= PICK_MIN_SCORE && valueIndex(a) != null;
-}
-
 export function isAdult(a) {
     return a.maturity != undefined && a.maturity != Maturity.Infant;
 }

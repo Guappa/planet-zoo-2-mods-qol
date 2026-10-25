@@ -20,7 +20,7 @@ import {
     SEVERITY_INFO, Sex, canLocate, explainRelation, habitatSummary, holdReason, mateCandidates, offspringScore, percent, predictOffspring, relationWord,
 } from '/js/mods/pz2qol/kincore.js';
 import {
-    COUNTED, buildMatrix, countWord, kinshipFraction, matrixSig, mateSections, overviewGroups, plannerHabitats, resolveState,
+    buildMatrix, countWord, kinshipFraction, matrixSig, mateSections, overviewGroups, plannerHabitats, resolveState, visibleCounts,
     speciesTabs, stateFromOpen, tierNote, zooCounts,
 } from '/js/mods/pz2qol/kinplannercore.js';
 import {
@@ -35,15 +35,17 @@ import { cachedStoredAdults, isAskingStored, requestStoredAdults } from '/js/mod
 import { withStored } from '/js/mods/pz2qol/kincore.js';
 import { mutedSpecies, onMuted, setMuted } from '/js/mods/pz2qol/kinmute.js';
 import { KIN_SETTINGS, isChoice } from '/js/mods/pz2qol/kinsettings.js';
+import { byName } from '/js/mods/pz2qol/breedwincore.js';
 import { tradeRow } from '/js/mods/pz2qol/tradejump.js';
 import {
-    btn as kitBtn, closeButton, closeOtherPanels, countPills, makeGuard, makeScroll, panelApi, placePanel, refreshBars as kitRefreshBars,
+    ago, btn as kitBtn, closeButton, closeOtherPanels, countPills, makeGuard, makeScroll, panelApi, placePanel, refreshBars as kitRefreshBars,
     registerPanel, restoreScroll, speciesName, switchEl as kitSwitch, trunc, wheelScroll,
 } from '/js/mods/pz2qol/kinpanel.js';
 
 const TICK_MS = 2000;           // markKinActive + "updated N s ago"
 const MATE_LIMIT = 24;          // mate rows before "Show all"
 const CONTRA_PENDING_MS = 6000; // a contraception click waits this long for the scan
+
 const guard = makeGuard('Kin planner');
 const btn = (...args) => kitBtn(guard, ...args);
 const switchEl = (...args) => kitSwitch(guard, ...args);
@@ -108,7 +110,7 @@ function ensureRoot() {
     el.heat = btn('Breeding heat map', 'Icon_Heatmap', toggleHeatmap, {
         title: "Shows the game's own inbreeding-risk overlay in the world. The overlay uses the game's rule, which may differ from Kin's.",
     });
-    el.settingsBtn = btn('Settings', 'IconSettings', () => setPopover(!S.popover), { title: 'Alerts, names and what counts as close kin' });
+    el.settingsBtn = btn('Settings', 'IconSettings', () => setPopover(!S.popover), { title: 'Every setting of the mod: Auto mode, names, escapes and boxes, vivariums, the trade centre, alerts and what counts as close kin' });
     el.popover = h('div.PZ2QoL_kpPopover');
     el.popover.addEventListener('mousedown', e => e.stopPropagation());
     const settingsWrap = h('div.PZ2QoL_kpPopWrap', null, el.settingsBtn, el.popover);
@@ -117,8 +119,7 @@ function ensureRoot() {
         S.scanAsked = Date.now();
         renderFoot();
     }, { title: 'Read the animals again now' });
-    el.close = h('div.PZ2QoL_kpClose', { title: 'Close (Esc)', onClick: guard('Close', () => closeKinPlanner()) },
-        h('div.PZ2QoL_kpCloseX.a'), h('div.PZ2QoL_kpCloseX.b'));
+    el.close = closeButton(guard, 'Close (Esc)', () => closeKinPlanner());
     const head = h('div.PZ2QoL_kpHead', null,
         h('div.PZ2QoL_kpLogo'),
         h('div.PZ2QoL_kpTitles', null,
@@ -156,14 +157,16 @@ function ensureRoot() {
     // the minimised pill (after Locate or the heat map)
     if (S.mini && S.mini.parentNode) S.mini.parentNode.removeChild(S.mini);
     el.miniText = h('div.PZ2QoL_kpMiniText');
-    el.miniHeat = h('div.PZ2QoL_kpBtn.small', { onClick: guard('Heat map', () => { setBreedingHeatmap(false); restore(); }) }, h('span', { text: 'Turn heat map off' }));
+    el.miniHeat = btn('Turn heat map off', null, () => {
+        setBreedingHeatmap(false);
+        restore();
+    }, { cls: 'small' });
     S.mini = h('div.PZ2QoL_kpMini.hidden', null,
         h('div.PZ2QoL_kpLogo.small'),
         h('div.PZ2QoL_kpMiniTitles', null, h('div.PZ2QoL_kpMiniTitle', { text: 'Kin planner' }), el.miniText),
         el.miniHeat,
-        h('div.PZ2QoL_kpBtn.small.primary', { onClick: guard('Back', restore) }, h('span', { text: 'Back to planner' })),
-        h('div.PZ2QoL_kpClose.small', { title: 'Close the planner', onClick: guard('Close', () => closeKinPlanner()) },
-            h('div.PZ2QoL_kpCloseX.a'), h('div.PZ2QoL_kpCloseX.b')));
+        btn('Back to planner', null, restore, { cls: 'small.primary' }),
+        closeButton(guard, 'Close the planner', () => closeKinPlanner(), true));
     S.mini.addEventListener('mousedown', e => e.stopPropagation());
     document.body.appendChild(S.mini);
     return root;
@@ -262,8 +265,8 @@ function setPopover(on) {
 }
 
 // The Settings popover: every setting with a section (kinsettings.js), in
-// the table's order, under its section's and sub-section's headings; the
-// muted species close the Trade centre section.
+// its order, under its section and sub heads; the muted species after the
+// Trade centre ones.
 function renderPopover(settings) {
     const p = S.el.popover;
     clear(p);
@@ -313,8 +316,7 @@ function settingChoices(s, settings) {
 
 // Muted species (no alerts, this zoo): click one to unmute it.
 function renderMutedList(p) {
-    const muted = Array.from(mutedSpecies()).map(sp => ({ sp, name: speciesName(sp) }))
-        .sort((x, y) => (x.name < y.name ? -1 : x.name > y.name ? 1 : 0));
+    const muted = Array.from(mutedSpecies()).map(sp => ({ sp, name: speciesName(sp) })).sort(byName);
     p.appendChild(h('div.PZ2QoL_kpPopSub', { text: `Muted species (${muted.length})` }));
     if (!muted.length) {
         p.appendChild(h('div.PZ2QoL_kpPopNote', { text: 'None. Mute a species from an alert or the Species board; its badges stay.' }));
@@ -490,7 +492,7 @@ function renderHabitat(model, settings) {
     }, 'Show juveniles in the matrix (they are future risks, not current ones)');
     el.appendChild(mainHead(trunc(sum.name || 'Habitat', 34),
         `${sum.kind === 'exhibit' ? 'Exhibit' : 'Habitat'} · ${animals} animal${animals === 1 ? '' : 's'} · ${sum.species.length} species`,
-        h('div.PZ2QoL_kpMainTools', null, countPills(settingsCounts(sum.counts, settings)), young), showPlaceButton(sum)));
+        h('div.PZ2QoL_kpMainTools', null, countPills(visibleCounts(sum.counts, settings.showCovered)), young), showPlaceButton(sum)));
     const tabs = speciesTabs(sum, settings.showCovered);
     if (tabs.length > 1) {
         el.appendChild(h('div.PZ2QoL_kpTabs', null, tabs.map(t => {
@@ -544,10 +546,6 @@ function showPlaceButton(sum) {
             if (locatePlace(sum.id, sample ? sample.id : '')) minimize(`Showing ${sum.name || 'the ' + what}`);
         }),
     }, icon('IconLocation', 'brown', 'xs'), h('span', { text: 'Show in park' }));
-}
-
-function settingsCounts(counts, settings) {
-    return Object.assign({}, counts, { covered: settings.showCovered ? counts.covered : 0 });
 }
 
 function noPairsState(m) {
@@ -903,7 +901,8 @@ function pairDetail(model, settings) {
     if (cover && / by the time /.test(cover)) notes.push(`${cover}, so this pair will not breed.`);
     else {
         for (const x of [a, b]) {
-            if (x.juv || (x.fert && x.fert.state === 'young')) notes.push(`${x.name} is still young (${fertilityText(x)})${pair ? ': this becomes a risk when it grows up.' : '.'}`);
+            // only a 'future' pair turns into a risk: a distant, covered or bonded one does not
+            if (x.juv || (x.fert && x.fert.state === 'young')) notes.push(`${x.name} is still young (${fertilityText(x)})${pair && pair.severity === 'future' ? ': this becomes a risk when it grows up.' : '.'}`);
         }
     }
     for (const n of notes) kids.push(h('div.PZ2QoL_kpBullet', null, h('div.PZ2QoL_kpBulletDot'), h('span', { text: n })));
@@ -1086,14 +1085,6 @@ function mateRow(model, self, cand, rank) {
 
 // ---------------------------------------------------------------- footer
 
-function ago(ms) {
-    const s = Math.round(ms / 1000);
-    if (s < 5) return 'just now';
-    if (s < 60) return `${s} s ago`;
-    const m = Math.round(s / 60);
-    return `${m} min ago`;
-}
-
 function renderFoot() {
     const el = S.el.status;
     if (!el) return;
@@ -1215,6 +1206,8 @@ export function openKinPlanner(opts = {}) {
         requestKinScan('planner');
         markKinActive();
         renderAll();
+        // the park dock's Settings: the planner with its settings open
+        if (o.settings) setPopover(true);
         return true;
     }
     catch (e) {

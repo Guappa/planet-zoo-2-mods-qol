@@ -39,8 +39,7 @@
    container, or children stack like blocks. Listed first so the specific
    display:none / display:flex rules further down win. */
 .PZ2QoL_card, .PZ2QoL_card *,
-.PZ2QoL_badge, .PZ2QoL_badge *,
-.PZ2QoL_errorBanner, .PZ2QoL_errorBanner * {
+.PZ2QoL_badge, .PZ2QoL_badge * {
   display: flex;
   flex-direction: row;
 }
@@ -603,89 +602,6 @@
 .PZ2QoL_scan .PZ2QoL_tableScroll { max-height: 10.5rem; }
 .PZ2QoL_scanCell { width: 6rem; justify-content: flex-end; font-size: 0.78rem; color: var(--qol-ink-soft); }
 .PZ2QoL_scanNote { margin-top: 0.35rem; font-size: 0.68rem; color: var(--qol-ink-faint); }
-
-/* --------------------------------------------------------- error toast */
-
-.PZ2QoL_errorBanner {
-  position: fixed;
-  z-index: 1000;
-  top: 0.9rem;
-  left: 27%;
-  right: 27%;
-  flex-direction: column;
-  border-radius: var(--qol-radius);
-  background-color: var(--qol-card);
-  border: 0.08rem solid var(--qol-line);
-  border-left: 0.35rem solid var(--qol-red);
-  box-shadow: 0 0.5rem 1.6rem rgba(60, 45, 30, 0.32);
-  color: var(--qol-ink);
-  font-size: 0.95rem;
-  animation: PZ2QoL_slideIn 0.28s ease-out 1;
-}
-@keyframes PZ2QoL_slideIn {
-  0% { transform: translateY(-1.5rem); opacity: 0; }
-  100% { transform: translateY(0); opacity: 1; }
-}
-.PZ2QoL_errorBanner.hidden { display: none; }
-.PZ2QoL_errorBanner.sev_warn { border-left-color: var(--qol-amber); }
-.PZ2QoL_errorBanner.sev_info { border-left-color: var(--qol-good); }
-.PZ2QoL_errorHeader { flex-direction: row; align-items: center; padding: 0.55rem 0.7rem; }
-.PZ2QoL_errorIcon {
-  flex-shrink: 0;
-  width: 1.5rem;
-  height: 1.5rem;
-  margin-right: 0.65rem;
-  background-repeat: no-repeat;
-  background-size: contain;
-  background-position: center;
-  filter: var(--brown-filter);
-}
-.PZ2QoL_errorTexts { flex: 1; flex-direction: column; overflow: hidden; }
-.PZ2QoL_errorTitleMain { font-weight: bold; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.PZ2QoL_errorCount { font-size: 0.8rem; color: var(--qol-ink-soft); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.PZ2QoL_errorBubble {
-  display: none;
-  align-items: center;
-  justify-content: center;
-  min-width: 1.3rem;
-  height: 1.3rem;
-  margin-left: 0.5rem;
-  padding: 0 0.35rem;
-  border-radius: 0.65rem;
-  background-color: var(--qol-red);
-  color: #FFFFFF;
-  font-size: 0.72rem;
-  font-weight: bold;
-}
-.PZ2QoL_errorBubble.show { display: flex; }
-.PZ2QoL_errorButton {
-  align-items: center;
-  height: 1.6rem;
-  margin-left: 0.45rem;
-  padding: 0 0.7rem;
-  border-radius: 0.8rem;
-  background-color: var(--qol-chip);
-  font-size: 0.82rem;
-  font-weight: bold;
-  cursor: pointer;
-  transition: background-color 0.15s ease-out;
-}
-.PZ2QoL_errorButton:hover { background-color: var(--qol-chip-hover); }
-.PZ2QoL_errorButton.ghost { background-color: transparent; color: var(--qol-ink-soft); }
-.PZ2QoL_errorDrawer { display: none; flex-direction: column; padding: 0 0.7rem 0.6rem 0.7rem; border-top: 0.08rem solid var(--qol-line); }
-.PZ2QoL_errorBanner.expanded .PZ2QoL_errorDrawer { display: flex; }
-.PZ2QoL_errorDrawerHead { flex-direction: row; align-items: center; padding: 0.4rem 0 0.2rem 0; }
-.PZ2QoL_errorDrawerTitle { font-size: 0.7rem; font-weight: bold; letter-spacing: 0.07rem; text-transform: uppercase; color: var(--qol-ink-faint); }
-.PZ2QoL_errorList { flex-direction: column; max-height: 18rem; overflow-y: auto; }
-.PZ2QoL_errorRow { flex-direction: column; margin-top: 0.3rem; padding: 0.35rem 0.5rem; border-radius: 0.5rem; background-color: var(--qol-card-2); border-left: 0.2rem solid var(--qol-good); }
-.PZ2QoL_errorRow.sev_error { border-left-color: var(--qol-red); }
-.PZ2QoL_errorRow.sev_warn { border-left-color: var(--qol-amber); }
-.PZ2QoL_errorRowHead { flex-direction: row; align-items: center; }
-.PZ2QoL_errorRowHead > .PZ2QoL_icon { margin-right: 0.4rem; }
-.PZ2QoL_errorSource { margin-right: 0.45rem; padding: 0 0.35rem; border-radius: 0.3rem; background-color: var(--qol-chip); font-size: 0.7rem; font-weight: bold; text-transform: uppercase; }
-.PZ2QoL_errorTitle { font-size: 0.85rem; font-weight: bold; }
-.PZ2QoL_errorTime { font-size: 0.72rem; color: var(--qol-ink-faint); }
-.PZ2QoL_errorDetail { margin-top: 0.15rem; font-size: 0.78rem; line-height: 1.05rem; color: var(--qol-ink-soft); }
 
 /* ----------------------------------------------- zoo: habitat picker */
 .PZ2QoL_pickerWrap { position: relative; flex-direction: column; }
