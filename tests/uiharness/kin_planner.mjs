@@ -302,6 +302,22 @@ export async function hud(page, ctx) {
     }));
     facts.layoutSettings = await layoutFacts(page);
     layoutProblems('settings', facts.layoutSettings, problems);
+    // the popover ends inside the planner and the wheel reaches its last setting
+    await page.locator('.PZ2QoL_kpPopover.open .PZ2QoL_kpViewport').hover();
+    for (let i = 0; i < 30; i++) await page.mouse.wheel(0, 300);
+    await page.waitForTimeout(150);
+    facts.settingsFit = await page.evaluate(() => {
+        const pop = document.querySelector('.PZ2QoL_kpPopover.open').getBoundingClientRect();
+        const root = document.querySelector('.PZ2QoL_kp').getBoundingClientRect();
+        const rows = document.querySelectorAll('.PZ2QoL_kpPopover.open .PZ2QoL_kpSwitch');
+        const last = rows[rows.length - 1].getBoundingClientRect();
+        return { popBottom: Math.round(pop.bottom), rootBottom: Math.round(root.bottom), lastBottom: Math.round(last.bottom), bar: !!document.querySelector('.PZ2QoL_kpPopover.open .PZ2QoL_kpBar.show') };
+    });
+    await ctx.shot(page, 'kp_5b_settings_end');
+    if (facts.settingsFit.popBottom > facts.settingsFit.rootBottom) problems.push(`settings popover runs past the planner: ${JSON.stringify(facts.settingsFit)}`);
+    if (facts.settingsFit.lastBottom > facts.settingsFit.popBottom) problems.push(`settings: the last setting is out of reach: ${JSON.stringify(facts.settingsFit)}`);
+    for (let i = 0; i < 30; i++) await page.mouse.wheel(0, -300);
+    await page.waitForTimeout(150);
     // other features may add switches: check the ones this scenario knows are there
     for (const label of ['New inbreeding risks', 'Close kin too', 'Covered pairs', 'Pair bonds count as protection', "Species names in the game's language"]) {
         if (!facts.settings.switches.includes(label)) problems.push(`settings switch "${label}" missing: ${facts.settings.switches}`);

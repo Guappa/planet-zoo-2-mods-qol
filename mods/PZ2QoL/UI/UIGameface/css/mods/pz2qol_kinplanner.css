@@ -867,13 +867,13 @@
   z-index: 10;
   width: 20.5rem; /* fits "Species names in the game's language" */
   flex-direction: column;
-  padding: 0.55rem 0.8rem 0.7rem 0.8rem;
   border-radius: 0.8rem;
   background-color: var(--qol-card);
   border: 0.08rem solid rgba(114, 91, 74, 0.22);
   box-shadow: var(--qol-shadow);
 }
 .PZ2QoL_kpPopover.open { display: flex; }
+.PZ2QoL_kpScroll.popover > .PZ2QoL_kpViewport > .PZ2QoL_kpContent { padding: 0.55rem 0.8rem 0.7rem 0.8rem; }
 .PZ2QoL_kpPopHead { margin: 0.45rem 0 0.2rem 0; font-size: 0.66rem; font-weight: bold; letter-spacing: 0.07rem; text-transform: uppercase; color: var(--qol-ink-faint); }
 .PZ2QoL_kpPopNote { margin-top: 0.35rem; font-size: 0.72rem; line-height: 1rem; color: var(--qol-ink-soft); white-space: normal; }
 .PZ2QoL_kpPopLabel { margin: 0.3rem 0 0.2rem 0; font-size: 0.74rem; color: var(--qol-ink-soft); }

@@ -39,7 +39,7 @@ import { byName } from '/js/mods/pz2qol/breedwincore.js';
 import { tradeRow } from '/js/mods/pz2qol/tradejump.js';
 import {
     ago, btn as kitBtn, closeButton, closeOtherPanels, countPills, makeGuard, makeScroll, panelApi, placePanel, refreshBars as kitRefreshBars,
-    registerPanel, restoreScroll, speciesName, switchEl as kitSwitch, trunc, wheelScroll,
+    registerPanel, remPx, restoreScroll, speciesName, switchEl as kitSwitch, trunc, updateBars, wheelScroll,
 } from '/js/mods/pz2qol/kinpanel.js';
 
 const TICK_MS = 2000;           // markKinActive + "updated N s ago"
@@ -111,7 +111,8 @@ function ensureRoot() {
         title: "Shows the game's own inbreeding-risk overlay in the world. The overlay uses the game's rule, which may differ from Kin's.",
     });
     el.settingsBtn = btn('Settings', 'IconSettings', () => setPopover(!S.popover), { title: 'Every setting of the mod: Auto mode, names, escapes and boxes, vivariums, the trade centre, alerts and what counts as close kin' });
-    el.popover = h('div.PZ2QoL_kpPopover');
+    el.popScroll = makeScroll('popover');
+    el.popover = h('div.PZ2QoL_kpPopover', null, el.popScroll.wrap);
     el.popover.addEventListener('mousedown', e => e.stopPropagation());
     const settingsWrap = h('div.PZ2QoL_kpPopWrap', null, el.settingsBtn, el.popover);
     el.rescan = btn('Rescan', 'Icon_CircleWithArrows', () => {
@@ -268,7 +269,7 @@ function setPopover(on) {
 // its order, under its section and sub heads; the muted species after the
 // Trade centre ones.
 function renderPopover(settings) {
-    const p = S.el.popover;
+    const p = S.el.popScroll.content;
     clear(p);
     let section = null, sub = null;
     for (const s of KIN_SETTINGS) {
@@ -287,6 +288,18 @@ function renderPopover(settings) {
         p.appendChild(s.choices ? settingChoices(s, settings) : settingSwitch(s, settings));
         if (s.note) p.appendChild(h('div.PZ2QoL_kpPopNote', { text: s.note }));
     }
+    setTimeout(guard('Settings', fitPopover), 0);
+}
+
+// The popover hangs from the head: it ends at the planner's bottom edge and
+// scrolls the rest, so the last settings stay in reach on a short screen.
+function fitPopover() {
+    const pop = S.el.popover, box = S.el.popScroll;
+    if (!S.popover || !S.root) return;
+    const room = S.root.getBoundingClientRect().bottom - pop.getBoundingClientRect().top - remPx() * 0.6;
+    const want = box.content.getBoundingClientRect().height + (pop.offsetHeight - pop.clientHeight);
+    pop.style.height = `${Math.round(Math.max(remPx() * 8, Math.min(want, room)))}px`;
+    updateBars(box);
 }
 
 // A setting that needs another one on does nothing while that one is off.
@@ -1263,6 +1276,7 @@ export function installKinPlanner() {
         if (!S.open || S.minimized) return;
         placeRoot();
         setTimeout(refreshBars, 0);
+        if (S.popover) setTimeout(guard('Settings', fitPopover), 0);
     });
     return true;
 }
